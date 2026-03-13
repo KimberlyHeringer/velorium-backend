@@ -2,10 +2,13 @@ from __future__ import annotations
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional, Any
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import HTTPException
 
-load_dotenv()
+# Carrega o .env da raiz do backend
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
 MONGO_URI = os.getenv("MONGO_URI")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "velorium_db")
@@ -15,7 +18,6 @@ if not MONGO_URI:
 
 client: Optional[AsyncIOMotorClient] = None
 db: Any = None
-
 
 async def connect_to_mongo():
     global client, db
@@ -28,7 +30,8 @@ async def connect_to_mongo():
             connectTimeoutMS=10000,
             socketTimeoutMS=20000,
             retryWrites=True,
-            w="majority"
+            w="majority",
+            tlsAllowInvalidCertificates=True  # <-- ADICIONADO
         )
         await client.admin.command('ping')
         db = client[DATABASE_NAME]
@@ -36,8 +39,7 @@ async def connect_to_mongo():
     except Exception as e:
         print(f"❌ Erro ao conectar ao MongoDB: {e}")
         raise HTTPException(status_code=503, detail="Banco de dados indisponível")
-
-
+    
 async def close_mongo_connection():
     global client, db
     if client:
@@ -45,12 +47,10 @@ async def close_mongo_connection():
         db = None
         print("✅ Conexão com MongoDB fechada")
 
-
 def get_database():
     if db is None:
         raise HTTPException(status_code=503, detail="Banco de dados não conectado")
     return db
-
 
 async def health_check() -> dict:
     try:
