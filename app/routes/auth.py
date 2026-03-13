@@ -1,119 +1,88 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, EmailStr
-from passlib.context import CryptContext
-from datetime import datetime, timedelta
-from jose import jwt
-import os
+from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+from typing import Annotated
 
-router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from app.database import get_database
+from app.models.user import UserCreate, UserLogin, UserResponse
+from app.utils.auth import (
+    get_password_hash,
+    verify_password,
+    generate_token_pair,
+    TokenPair,
+    get_current_user
+)
 
-class UserRegister(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
-    monthly_income: float
-    location: str
-    profession_type: str = ""
-    occupation: str = ""
-    financial_goal: str = ""
+router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
 
-# Simulação de banco de dados (por enquanto)
-fake_db = {}
-@router.post("/register")
-async def register(user: UserRegister):
+@router.post("/register", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def register(user_data: UserCreate, db=Depends(get_database)):
+    # Verificar se email já existe
+    existing = await db.users.find_one({"email": user_data.email.lower()})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email já cadastrado")
+
+    # Criar hash da senha
+    hashed = get_password_hash(user_data.password)
+
+    # Preparar documento
+    user_dict = user_data.model_dump(exclude={"password"})
+    user_dict["password_hash"] = hashed
+    user_dict["email"] = user_data.email.lower()
+    user_dict["created_at"] = datetime.now(timezone.utc)
+    user_dict["updated_at"] = datetime.now(timezone.utc)
+    
+    # Converter Decimal para float (MongoDB não aceita Decimal)
+    user_dict["monthly_income"] = float(user_dict["monthly_income"])
+
+    result = await db.users.insert_one(user_dict)
+    return {"message": "Usuário criado com sucesso", "id": str(result.inserted_id)}
+
+
+@router.post("/login", response_model=dict)  # Altere o response_model para dict
+async def login(user_data: UserLogin, db=Depends(get_database)):
+    db_user = await db.users.find_one({"email": user_data.email.lower()})
+    if not db_user or not verify_password(user_data.password, db_user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email ou senha inválidos")
+
+    token_pair = generate_token_pair(str(db_user["_id"]))
+
+    # Converter ObjectId para string
+    db_user["_id"] = str(db_user["_id"])
+    # Remover campos sensíveis
+    del db_user["password_hash"]
+
+    return {
+        "access_token": token_pair.access_token,
+        "refresh_token": token_pair.refresh_token,
+        "token_type": "bearer",
+        "expires_in": token_pair.expires_in,
+        "user": db_user  # ✅ inclui os dados do usuário
+    }
+
+
+@router.post("/refresh", response_model=TokenPair)
+async def refresh_token(refresh_token_data: dict, db=Depends(get_database)):
+    from app.utils.auth import refresh_access_token
+    refresh_token = refresh_token_data.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="Refresh token não fornecido")
     try:
-        print(f"===== RECEBENDO REGISTRO =====")
-        print(f"Email: {user.email}")
-        print(f"Nome: {user.name}")
-        print(f"Renda: {user.monthly_income}")
-        print(f"Localização: {user.location}")
-        print(f"Tipo de perfil: {user.profession_type}")
-        print(f"Ocupação: {user.occupation}")
-        print(f"Objetivo: {user.financial_goal}")
-        
-        # Verificar se usuário já existe
-        if user.email in fake_db:
-            print(f"Email já cadastrado: {user.email}")
-            raise HTTPException(status_code=400, detail="Email já cadastrado")
-        
-        # Criar novo usuário
-        print("Criando hash da senha...")
-        password_hash = pwd_context.hash(user.password)
-        print("Hash criado com sucesso")
-        
-        user_data = {
-            "id": len(fake_db) + 1,
-            "name": user.name,
-            "email": user.email,
-            "password_hash": password_hash,
-            "monthly_income": user.monthly_income,
-            "location": user.location,
-            "profession_type": user.profession_type,
-            "occupation": user.occupation,
-            "financial_goal": user.financial_goal,
-            "created_at": datetime.utcnow()
-        }
-        
-        print(f"Salvando usuário no banco de dados...")
-        fake_db[user.email] = user_data
-        print(f"Usuário {user.email} cadastrado com sucesso! ID: {user_data['id']}")
-        print(f"Total de usuários no banco: {len(fake_db)}")
-        
-        return {"message": "Usuário criado com sucesso!", "id": user_data["id"]}
-        
-    except HTTPException:
-        print("Exceção HTTP capturada")
-        raise
-    except Exception as e:
-        print(f"❌ ERRO DETALHADO: {str(e)}")
-        print(f"Tipo do erro: {type(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
-@router.post("/login")
-async def login(user: UserLogin):
-    try:
-        print(f"Tentativa de login: {user.email}")
-        
-        # Buscar usuário
-        db_user = fake_db.get(user.email)
-        if not db_user:
-            raise HTTPException(status_code=401, detail="Email ou senha inválidos")
-        
-        # Verificar senha
-        if not pwd_context.verify(user.password, db_user["password_hash"]):
-            raise HTTPException(status_code=401, detail="Email ou senha inválidos")
-        
-        # Gerar token JWT
-        JWT_SECRET = os.getenv("JWT_SECRET", "minha-chave-secreta-temporaria")
-        token = jwt.encode(
-            {
-                "user_id": db_user["id"],
-                "email": db_user["email"],
-                "exp": datetime.utcnow() + timedelta(days=7)
-            },
-            JWT_SECRET,
-            algorithm="HS256"
-        )
-        
-        print(f"Login bem-sucedido: {user.email}")
-        
-        return {
-            "token": token,
-            "user": {
-                "id": db_user["id"],
-                "name": db_user["name"],
-                "email": db_user["email"]
-            }
-        }
-        
+        return await refresh_access_token(refresh_token)
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Erro no login: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Refresh token inválido ou expirado")
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(
+    current_user: Annotated[UserResponse, Depends(get_current_user)]
+):
+    return current_user
+
+
+@router.post("/logout", response_model=dict)
+async def logout(current_user: Annotated[UserResponse, Depends(get_current_user)]):
+    # Em produção: adicionar token a uma blacklist
+    return {"message": "Logout realizado com sucesso. Descarte os tokens no cliente."}

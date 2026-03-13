@@ -1,23 +1,89 @@
-from datetime import datetime
-from pydantic import BaseModel, EmailStr
+# backend/app/models/user.py
+from pydantic import BaseModel, Field, EmailStr, field_validator, ConfigDict
 from typing import Optional
+from datetime import datetime, timezone
+from decimal import Decimal
+from bson import ObjectId
+import re
 
-class UserModel:
-    def __init__(self, db):
-        self.collection = db.users
+
+class User(BaseModel):
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str},
+        populate_by_name=True,
+        from_attributes=True
+    )
     
-    async def create_user(self, user_data):
-        user = {
-            "name": user_data.name,
-            "email": user_data.email,
-            "password_hash": user_data.password,  # Vamos hashear depois
-            "monthly_income": user_data.monthly_income,
-            "location": user_data.location,
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
-        }
-        result = await self.collection.insert_one(user)
-        return result.inserted_id
+    id: Optional[str] = Field(None, alias="_id")
+    name: str = Field(..., min_length=2, max_length=100)
+    email: EmailStr
+    password_hash: str
+    monthly_income: Decimal = Field(default=Decimal("0"), ge=0)
+    location: str = Field(default="", max_length=200)
+    profession_type: str = Field(default="", max_length=50)
+    occupation: str = Field(default="", max_length=100)
+    financial_goal: str = Field(default="", max_length=500)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UserCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     
-    async def get_user_by_email(self, email):
-        return await self.collection.find_one({"email": email})
+    name: str = Field(..., min_length=2, max_length=100)
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    monthly_income: Decimal = Field(default=Decimal("0"), ge=0)
+    location: str = Field(default="", max_length=200)
+    profession_type: str = Field(default="", max_length=50)
+    occupation: str = Field(default="", max_length=100)
+    financial_goal: str = Field(default="", max_length=500)
+
+    @field_validator('password')
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('A senha deve ter pelo menos 8 caracteres')
+        if not re.search(r"[A-Z]", v):
+            raise ValueError('A senha deve conter pelo menos uma letra maiúscula')
+        if not re.search(r"\d", v):
+            raise ValueError('A senha deve conter pelo menos um número')
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError('A senha deve conter pelo menos um caractere especial')
+        return v
+
+
+class UserLogin(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    
+    email: EmailStr
+    password: str
+
+
+class UserResponse(BaseModel):
+    """Modelo seguro para respostas - SEM password_hash"""
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str},
+        populate_by_name=True,
+        from_attributes=True
+    )
+    
+    id: Optional[str] = Field(None, alias="_id")
+    name: str
+    email: EmailStr
+    monthly_income: Decimal
+    location: str
+    profession_type: str
+    occupation: str
+    financial_goal: str
+    created_at: datetime
+
+
+class Token(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse

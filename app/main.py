@@ -1,37 +1,40 @@
+# backend/app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from app.database import connect_to_mongo, close_mongo_connection
+from app.routes import auth, transactions
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configuração MongoDB
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-client = AsyncIOMotorClient(MONGO_URI)
-db = client.finance_app
+app = FastAPI(title="Velorium API")
 
-app = FastAPI(title="API Financeira Inteligente")
-
-# Configuração CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Em produção, restrinja para seu frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Importar rotas (vamos criar depois)
-from app.routes import auth
+# Eventos de inicialização e encerramento
+@app.on_event("startup")
+async def startup():
+    await connect_to_mongo()
 
-# Incluir rotas
-app.include_router(auth.router, prefix="/auth", tags=["Autenticação"])
+@app.on_event("shutdown")
+async def shutdown():
+    await close_mongo_connection()
+
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(transactions.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
-    return {"message": "API Financeira Inteligente - Online"}
+    return {"message": "Velorium API - Online"}
 
 @app.get("/health")
-async def health_check():
-    return {"status": "ok", "database": "connected" if client else "disconnected"}
+async def health():
+    return {"status": "ok"}
