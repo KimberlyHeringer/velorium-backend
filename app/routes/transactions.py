@@ -18,16 +18,24 @@ async def create_transaction(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    transaction_dict = transaction_data.model_dump()
-    transaction_dict["user_id"] = str(current_user.id)
-    if transaction_dict.get("date") is None:
-        transaction_dict["date"] = datetime.now(timezone.utc)
-    transaction_dict["created_at"] = datetime.now(timezone.utc)
-    transaction_dict["updated_at"] = datetime.now(timezone.utc)
+    try:
+        transaction_dict = transaction_data.model_dump()
+        transaction_dict["user_id"] = str(current_user.id)
+        if transaction_dict.get("date") is None:
+            transaction_dict["date"] = datetime.now(timezone.utc)
+        # Converte Decimal para float (MongoDB não aceita Decimal)
+        transaction_dict["amount"] = float(transaction_dict["amount"])
+        transaction_dict["created_at"] = datetime.now(timezone.utc)
+        transaction_dict["updated_at"] = datetime.now(timezone.utc)
 
-    result = await db.transactions.insert_one(transaction_dict)
-    return {"id": str(result.inserted_id), "message": "Transação criada com sucesso"}
-
+        result = await db.transactions.insert_one(transaction_dict)
+        return {"id": str(result.inserted_id), "message": "Transação criada com sucesso"}
+    except Exception as e:
+        # Log detalhado do erro
+        print(f"❌ Erro ao criar transação: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/", response_model=List[TransactionResponse])
 async def get_transactions(
