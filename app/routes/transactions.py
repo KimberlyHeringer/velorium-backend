@@ -12,7 +12,7 @@ from app.utils.auth import get_current_user
 router = APIRouter(prefix="/transactions", tags=["Transações"])
 
 
-@router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     transaction_data: TransactionCreate,
     current_user: UserResponse = Depends(get_current_user),
@@ -29,10 +29,9 @@ async def create_transaction(
 
         result = await db.transactions.insert_one(transaction_dict)
         # Buscar o documento inserido para retornar os dados completos
-        # created = await db.transactions.find_one({"_id": result.inserted_id})
-        # created["_id"] = str(created["_id"])
-        # return created  # TransactionResponse
-        return {"id": str(result.inserted_id), "message": "Transação criada com sucesso"}
+        created = await db.transactions.find_one({"_id": result.inserted_id})
+        created["_id"] = str(created["_id"])
+        return created  # TransactionResponse
     except Exception as e:
         print(f"❌ Erro ao criar transação: {e}")
         import traceback
