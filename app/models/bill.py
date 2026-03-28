@@ -55,3 +55,4 @@ class BillResponse(BaseModel):
     paid_date: Optional[datetime]
     created_at: datetime
     updated_at: datetime
+    
