@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import HTTPException
+import certifi  # <-- IMPORT CORRETA
 
-# Carrega o .env da raiz do backend
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
@@ -31,7 +31,9 @@ async def connect_to_mongo():
             socketTimeoutMS=20000,
             retryWrites=True,
             w="majority",
-            tlsAllowInvalidCertificates=True  # <-- ADICIONADO
+            tls=True,
+            tlsAllowInvalidCertificates=True,
+            tlsCAFile=certifi.where()  # <-- USANDO certifi
         )
         await client.admin.command('ping')
         db = client[DATABASE_NAME]
@@ -39,7 +41,7 @@ async def connect_to_mongo():
     except Exception as e:
         print(f"❌ Erro ao conectar ao MongoDB: {e}")
         raise HTTPException(status_code=503, detail="Banco de dados indisponível")
-    
+
 async def close_mongo_connection():
     global client, db
     if client:

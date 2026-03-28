@@ -5,8 +5,9 @@ from app.database import connect_to_mongo, close_mongo_connection
 from app.routes import auth, transactions
 import os
 from dotenv import load_dotenv
-
 load_dotenv()
+from app.routes import bills
+app.include_router(bills.router, prefix="/api/v1")
 
 app = FastAPI(title="Velorium API")
 
