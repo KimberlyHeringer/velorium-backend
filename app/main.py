@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 
 from app.database import connect_to_mongo, close_mongo_connection
-from app.routes import auth, transactions, bills  # importe bills junto com os outros
+from app.routes import auth, transactions, bills  # import único
 
 load_dotenv()
 

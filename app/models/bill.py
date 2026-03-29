@@ -56,3 +56,12 @@ class BillResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
+class BillUpdate(BaseModel):
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    installments: Optional[InstallmentInfo] = None
+    category: Optional[str] = None
+    notes: Optional[str] = None
+    notification: Optional[NotificationInfo] = None
+    paid: Optional[bool] = None
+    paid_date: Optional[datetime] = None
