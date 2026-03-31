@@ -1,38 +1,33 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List
+# app/models/credit_card.py
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
 
-from app.database import get_database
-from app.models.credit_card import CreditCardCreate, CreditCardResponse
-from app.models.user import UserResponse
-from app.utils.auth import get_current_user
+class CreditCard(BaseModel):
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str},
+        populate_by_name=True,
+        from_attributes=True
+    )
+    id: Optional[str] = Field(None, alias="_id")  # ← alias garante que o campo "_id" do MongoDB vire "id"
+    user_id: str
+    name: str
+    brand: Optional[str] = None
+    closing_day: int = Field(..., ge=1, le=31)
+    due_day: int = Field(..., ge=1, le=31)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-router = APIRouter(prefix="/credit-cards", tags=["Cartões de Crédito"])
+# Modelo para criar (não tem id)
+class CreditCardCreate(BaseModel):
+    name: str
+    brand: Optional[str] = None
+    closing_day: int
+    due_day: int
 
-@router.post("/", response_model=CreditCardResponse, status_code=status.HTTP_201_CREATED)
-async def create_credit_card(
-    card_data: CreditCardCreate,
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    card_dict = card_data.model_dump()
-    card_dict["user_id"] = str(current_user.id)
-    card_dict["created_at"] = datetime.now(timezone.utc)
-    card_dict["updated_at"] = datetime.now(timezone.utc)
-
-    result = await db.credit_cards.insert_one(card_dict)
-    created = await db.credit_cards.find_one({"_id": result.inserted_id})
-    created["_id"] = str(created["_id"])
-    return created
-
-@router.get("/", response_model=List[CreditCardResponse])
-async def list_credit_cards(
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    cursor = db.credit_cards.find({"user_id": str(current_user.id)}).sort("created_at", -1)
-    cards = await cursor.to_list(length=100)
-    for c in cards:
-        c["_id"] = str(c["_id"])
-    return cards
+# Modelo de resposta (apenas id, sem user_id e datas internas? na verdade reutiliza CreditCard)
+class CreditCardResponse(CreditCard):
+    # herdamos todos os campos, inclusive id com alias
+    pass
