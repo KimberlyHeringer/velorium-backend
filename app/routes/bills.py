@@ -17,22 +17,37 @@ async def create_bill(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    bill_dict = bill_data.model_dump()
-    bill_dict["user_id"] = str(current_user.id)
-    bill_dict["paid"] = False
-    bill_dict["paid_date"] = None               # <-- NOVO: define paid_date como None
-    bill_dict["created_at"] = datetime.now(timezone.utc)
-    bill_dict["updated_at"] = datetime.now(timezone.utc)
+    try:
+        bill_dict = bill_data.model_dump()
+        bill_dict["user_id"] = str(current_user.id)
+        bill_dict["paid"] = False
+        bill_dict["paid_date"] = None
+        bill_dict["created_at"] = datetime.now(timezone.utc)
+        bill_dict["updated_at"] = datetime.now(timezone.utc)
 
-    # Converte Decimal para float (se houver Decimal)
-    if "amount" in bill_dict:
-        bill_dict["amount"] = float(bill_dict["amount"])
+        if "amount" in bill_dict:
+            bill_dict["amount"] = float(bill_dict["amount"])
 
-    result = await db.bills.insert_one(bill_dict)
-    created = await db.bills.find_one({"_id": result.inserted_id})
-    # CONVERSÃO EXPLÍCITA (opcional, mas recomendada)
-    created["id"] = str(created.pop("_id"))   # <-- ALTERADO AQUI
-    return created
+        # Converte data de string para datetime se necessário
+        if "installments" in bill_dict and isinstance(bill_dict["installments"], dict):
+            start_date = bill_dict["installments"].get("start_date")
+            if start_date and isinstance(start_date, str):
+                bill_dict["installments"]["start_date"] = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+
+        result = await db.bills.insert_one(bill_dict)
+        created = await db.bills.find_one({"_id": result.inserted_id})
+        created["_id"] = str(created["_id"])
+        created["id"] = created["_id"]
+        # Garante que paid_date exista (mesmo que None)
+        if "paid_date" not in created:
+            created["paid_date"] = None
+        
+        return created
+    except Exception as e:
+        print(f"❌ Erro ao criar conta: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/", response_model=List[BillResponse])
 async def list_bills(
@@ -48,7 +63,7 @@ async def list_bills(
     bills = await cursor.to_list(length=100)
     for b in bills:
         b["_id"] = str(b["_id"])
-        b["id"] = b["_id"]          # <-- ADICIONADO PARA CONSISTÊNCIA
+        b["id"] = b["_id"]
     return bills
 
 @router.get("/{bill_id}", response_model=BillResponse)
@@ -64,7 +79,7 @@ async def get_bill(
     if not bill:
         raise HTTPException(status_code=404, detail="Conta não encontrada")
     bill["_id"] = str(bill["_id"])
-    bill["id"] = bill["_id"]        # <-- ADICIONADO PARA CONSISTÊNCIA
+    bill["id"] = bill["_id"]
     return bill
 
 @router.put("/{bill_id}", response_model=BillResponse)
@@ -91,7 +106,7 @@ async def update_bill(
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
     updated["_id"] = str(updated["_id"])
-    updated["id"] = updated["_id"]   # <-- ADICIONADO
+    updated["id"] = updated["_id"]
     return updated
 
 @router.delete("/{bill_id}", response_model=dict)
