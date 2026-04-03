@@ -34,15 +34,13 @@ async def create_purchase(
     # Inserir compra
     result = await db.credit_card_purchases.insert_one(purchase_dict)
 
-    # Calcular valor da parcela (divisão igual)
-    amount_per_installment = purchase_data.total_amount / purchase_data.installments
-    # Usar duas casas decimais (arredondar)
-    amount_per_installment = round(amount_per_installment, 2)
+    # Calcular valor da parcela
+    amount_per_installment = round(purchase_data.total_amount / purchase_data.installments, 2)
 
     # Gerar parcelas
     installments = []
     for i in range(purchase_data.installments):
-        due_date = purchase_data.first_due_date + timedelta(days=30 * i)  # simplificado: +30 dias
+        due_date = purchase_data.first_due_date + timedelta(days=30 * i)
         installment = {
             "purchase_id": str(result.inserted_id),
             "user_id": str(current_user.id),
@@ -56,14 +54,17 @@ async def create_purchase(
         }
         installments.append(installment)
 
-    # Inserir parcelas
     await db.credit_card_installments.insert_many(installments)
 
-    # Buscar a compra criada para retornar
+    # Buscar a compra criada e formatar para resposta
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
-    created["id"] = str(created["_id"])
+    if created:
+        created["id"] = str(created["_id"])
+        # Remove o _id para evitar duplicidade (opcional, mas evita warnings)
+        # del created["_id"]
+    
+    # Forçar a conversão para dict e retornar
     return created
-
 
 @router.get("/faturas", response_model=List[dict])
 async def get_faturas(
