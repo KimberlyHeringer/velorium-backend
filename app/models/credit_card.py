@@ -31,3 +31,9 @@ class CreditCardResponse(CreditCard):
 class CreditCardResponse(CreditCard):
     # herda todos os campos, inclusive id com alias
     pass
+
+class CreditCardUpdate(BaseModel):
+    name: Optional[str] = None
+    brand: Optional[str] = None
+    closing_day: Optional[int] = Field(None, ge=1, le=31)
+    due_day: Optional[int] = Field(None, ge=1, le=31)
