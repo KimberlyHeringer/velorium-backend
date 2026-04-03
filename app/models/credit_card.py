@@ -27,3 +27,7 @@ class CreditCardCreate(BaseModel):
 
 class CreditCardResponse(CreditCard):
     id: str
+    
+class CreditCardResponse(CreditCard):
+    # herda todos os campos, inclusive id com alias
+    pass

@@ -61,7 +61,7 @@ async def create_purchase(
 
     # Buscar a compra criada para retornar
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
-    created["_id"] = str(created["_id"])
+    created["id"] = str(created["_id"])
     return created
 
 

@@ -10,7 +10,7 @@ class CreditCardPurchase(BaseModel):
         populate_by_name=True,
         from_attributes=True
     )
-    id: Optional[str] = Field(None, alias="_id")
+    id: str = Field(..., alias="_id")
     user_id: str
     card_id: str
     description: str
@@ -32,4 +32,4 @@ class CreditCardPurchaseCreate(BaseModel):
     notes: Optional[str] = None
 
 class CreditCardPurchaseResponse(CreditCardPurchase):
-    id: str
+    pass
