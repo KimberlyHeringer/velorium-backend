@@ -4,11 +4,23 @@ from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from app.database import get_database
 from app.models.credit_card_purchase import CreditCardPurchaseCreate, CreditCardPurchaseResponse
-from app.models.credit_card_installment import CreditCardInstallmentResponse
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
+
+def serialize_doc(doc: dict) -> dict:
+    """Converte ObjectId e datas para tipos serializáveis JSON."""
+    if doc is None:
+        return None
+    doc["id"] = str(doc.pop("_id"))
+    if "first_due_date" in doc and isinstance(doc["first_due_date"], datetime):
+        doc["first_due_date"] = doc["first_due_date"].isoformat()
+    if "created_at" in doc and isinstance(doc["created_at"], datetime):
+        doc["created_at"] = doc["created_at"].isoformat()
+    if "updated_at" in doc and isinstance(doc["updated_at"], datetime):
+        doc["updated_at"] = doc["updated_at"].isoformat()
+    return doc
 
 @router.post("/", response_model=CreditCardPurchaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_purchase(
@@ -17,8 +29,8 @@ async def create_purchase(
     db=Depends(get_database)
 ):
     print(f"🔍 Recebida compra: {purchase_data}")
-    
-    # Verificar cartão
+
+    # Validar cartão
     try:
         card = await db.credit_cards.find_one({
             "_id": ObjectId(purchase_data.card_id),
@@ -29,7 +41,7 @@ async def create_purchase(
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
 
-    # Converter first_due_date de string para datetime se necessário
+    # Converter first_due_date para datetime (se string)
     first_due = purchase_data.first_due_date
     if isinstance(first_due, str):
         first_due = datetime.fromisoformat(first_due.replace('Z', '+00:00'))
@@ -64,24 +76,24 @@ async def create_purchase(
         }
         installments.append(installment)
 
-    await db.credit_card_installments.insert_many(installments)
+    if installments:
+        await db.credit_card_installments.insert_many(installments)
 
-    # Buscar a compra criada e formatar resposta
+    # Buscar a compra criada e serializar
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
-    if created:
-        created["id"] = str(created["_id"])
-        # del created["_id"]  # opcional
-    return created
+    if not created:
+        raise HTTPException(status_code=500, detail="Erro ao recuperar compra criada")
+    return serialize_doc(created)
 
 @router.get("/faturas", response_model=List[dict])
 async def get_faturas(
     card_id: str,
-    month: int = None,
-    year: int = None,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    print(f"🔍 get_faturas chamado: card_id={card_id}, month={month}, year={year}")
+    print(f"🔍 get_faturas: card_id={card_id}, month={month}, year={year}")
     try:
         card = await db.credit_cards.find_one({
             "_id": ObjectId(card_id),
@@ -92,7 +104,6 @@ async def get_faturas(
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
 
-    # Construir query para parcelas
     query = {
         "card_id": card_id,
         "user_id": str(current_user.id)
@@ -105,25 +116,24 @@ async def get_faturas(
             end_date = datetime(year, month + 1, 1)
         query["due_date"] = {"$gte": start_date, "$lt": end_date}
 
-    # Buscar parcelas diretamente (sem aggregation complexa)
     installments_cursor = db.credit_card_installments.find(query)
     installments = await installments_cursor.to_list(length=100)
-    
-    # Agrupar por purchase_id para obter detalhes da compra
-    from collections import defaultdict
+
+    # Agrupar por purchase_id
     purchases_map = {}
     for inst in installments:
         pid = inst["purchase_id"]
         if pid not in purchases_map:
-            # Buscar compra
             purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
             if purchase:
                 purchase["id"] = str(purchase["_id"])
                 purchases_map[pid] = purchase
         inst["_id"] = str(inst["_id"])
         inst["id"] = inst["_id"]
-    
-    # Estruturar resultado
+        # Converter datas para string
+        if "due_date" in inst and isinstance(inst["due_date"], datetime):
+            inst["due_date"] = inst["due_date"].isoformat()
+
     result = []
     for pid, purchase in purchases_map.items():
         purchase_installments = [i for i in installments if i["purchase_id"] == pid]
@@ -138,6 +148,74 @@ async def get_faturas(
             "total": total
         })
     return result
+
+@router.get("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
+async def get_purchase(
+    purchase_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    purchase = await db.credit_card_purchases.find_one({
+        "_id": ObjectId(purchase_id),
+        "user_id": str(current_user.id)
+    })
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Compra não encontrada")
+    return serialize_doc(purchase)
+
+@router.put("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
+async def update_purchase(
+    purchase_id: str,
+    purchase_data: CreditCardPurchaseCreate,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    # Verificar existência
+    purchase = await db.credit_card_purchases.find_one({
+        "_id": ObjectId(purchase_id),
+        "user_id": str(current_user.id)
+    })
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Compra não encontrada")
+
+    # Atualizar dados
+    update_dict = purchase_data.model_dump()
+    update_dict["updated_at"] = datetime.now(timezone.utc)
+
+    # Converter first_due_date para datetime se necessário
+    if "first_due_date" in update_dict and isinstance(update_dict["first_due_date"], str):
+        update_dict["first_due_date"] = datetime.fromisoformat(update_dict["first_due_date"].replace('Z', '+00:00'))
+
+    await db.credit_card_purchases.update_one(
+        {"_id": ObjectId(purchase_id)},
+        {"$set": update_dict}
+    )
+
+    # Recriar parcelas
+    await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
+
+    first_due = update_dict["first_due_date"]
+    amount_per_installment = round(update_dict["total_amount"] / update_dict["installments"], 2)
+    installments = []
+    for i in range(update_dict["installments"]):
+        due_date = first_due + timedelta(days=30 * i)
+        installment = {
+            "purchase_id": purchase_id,
+            "user_id": str(current_user.id),
+            "card_id": update_dict["card_id"],
+            "amount": amount_per_installment,
+            "due_date": due_date,
+            "paid": False,
+            "paid_date": None,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc)
+        }
+        installments.append(installment)
+    if installments:
+        await db.credit_card_installments.insert_many(installments)
+
+    updated = await db.credit_card_purchases.find_one({"_id": ObjectId(purchase_id)})
+    return serialize_doc(updated)
 
 @router.delete("/purchases/{purchase_id}", response_model=dict)
 async def delete_purchase(
@@ -154,144 +232,6 @@ async def delete_purchase(
     await db.credit_card_purchases.delete_one({"_id": ObjectId(purchase_id)})
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
     return {"message": "Compra e parcelas excluídas com sucesso"}
-
-@router.put("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
-async def update_purchase(
-    purchase_id: str,
-    purchase_data: CreditCardPurchaseCreate,  # ou crie um modelo de atualização
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    # Verificar se a compra existe e pertence ao usuário
-    purchase = await db.credit_card_purchases.find_one({
-        "_id": ObjectId(purchase_id),
-        "user_id": str(current_user.id)
-    })
-    if not purchase:
-        raise HTTPException(status_code=404, detail="Compra não encontrada")
-
-    # Atualizar dados da compra
-    update_dict = purchase_data.model_dump()
-    update_dict["updated_at"] = datetime.now(timezone.utc)
-    # Não permitir alterar card_id? Vamos manter
-    await db.credit_card_purchases.update_one(
-        {"_id": ObjectId(purchase_id)},
-        {"$set": update_dict}
-    )
-
-    # Recalcular parcelas? Vamos remover as antigas e recriar (simplificado)
-    await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
-    
-    first_due = update_dict["first_due_date"]
-    if isinstance(first_due, str):
-        first_due = datetime.fromisoformat(first_due.replace('Z', '+00:00'))
-    amount_per_installment = round(update_dict["total_amount"] / update_dict["installments"], 2)
-    installments = []
-    for i in range(update_dict["installments"]):
-        due_date = first_due + timedelta(days=30 * i)
-        installment = {
-            "purchase_id": purchase_id,
-            "user_id": str(current_user.id),
-            "card_id": update_dict["card_id"],
-            "amount": amount_per_installment,
-            "due_date": due_date,
-            "paid": False,
-            "paid_date": None,
-            "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc)
-        }
-        installments.append(installment)
-    await db.credit_card_installments.insert_many(installments)
-
-    updated = await db.credit_card_purchases.find_one({"_id": ObjectId(purchase_id)})
-    updated["id"] = str(updated["_id"])
-    return updated
-
-@router.delete("/purchases/{purchase_id}", response_model=dict)
-async def delete_purchase_full(
-    purchase_id: str,
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    # Já existe uma função delete_purchase, mas vamos garantir
-    purchase = await db.credit_card_purchases.find_one({
-        "_id": ObjectId(purchase_id),
-        "user_id": str(current_user.id)
-    })
-    if not purchase:
-        raise HTTPException(status_code=404, detail="Compra não encontrada")
-    await db.credit_card_purchases.delete_one({"_id": ObjectId(purchase_id)})
-    await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
-    return {"message": "Compra e parcelas excluídas"}
-
-@router.put("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
-async def update_purchase(
-    purchase_id: str,
-    purchase_data: CreditCardPurchaseCreate,  # ou crie um modelo de atualização
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    # Verificar se a compra existe e pertence ao usuário
-    purchase = await db.credit_card_purchases.find_one({
-        "_id": ObjectId(purchase_id),
-        "user_id": str(current_user.id)
-    })
-    if not purchase:
-        raise HTTPException(status_code=404, detail="Compra não encontrada")
-
-    # Atualizar dados da compra
-    update_dict = purchase_data.model_dump()
-    update_dict["updated_at"] = datetime.now(timezone.utc)
-    # Não permitir alterar card_id? Vamos manter
-    await db.credit_card_purchases.update_one(
-        {"_id": ObjectId(purchase_id)},
-        {"$set": update_dict}
-    )
-
-    # Recalcular parcelas? Vamos remover as antigas e recriar (simplificado)
-    await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
-    
-    first_due = update_dict["first_due_date"]
-    if isinstance(first_due, str):
-        first_due = datetime.fromisoformat(first_due.replace('Z', '+00:00'))
-    amount_per_installment = round(update_dict["total_amount"] / update_dict["installments"], 2)
-    installments = []
-    for i in range(update_dict["installments"]):
-        due_date = first_due + timedelta(days=30 * i)
-        installment = {
-            "purchase_id": purchase_id,
-            "user_id": str(current_user.id),
-            "card_id": update_dict["card_id"],
-            "amount": amount_per_installment,
-            "due_date": due_date,
-            "paid": False,
-            "paid_date": None,
-            "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc)
-        }
-        installments.append(installment)
-    await db.credit_card_installments.insert_many(installments)
-
-    updated = await db.credit_card_purchases.find_one({"_id": ObjectId(purchase_id)})
-    updated["id"] = str(updated["_id"])
-    return updated
-
-@router.delete("/purchases/{purchase_id}", response_model=dict)
-async def delete_purchase_full(
-    purchase_id: str,
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    # Já existe uma função delete_purchase, mas vamos garantir
-    purchase = await db.credit_card_purchases.find_one({
-        "_id": ObjectId(purchase_id),
-        "user_id": str(current_user.id)
-    })
-    if not purchase:
-        raise HTTPException(status_code=404, detail="Compra não encontrada")
-    await db.credit_card_purchases.delete_one({"_id": ObjectId(purchase_id)})
-    await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
-    return {"message": "Compra e parcelas excluídas"}
 
 @router.put("/installments/{installment_id}", response_model=dict)
 async def mark_installment_paid(
