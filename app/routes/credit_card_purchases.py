@@ -10,16 +10,17 @@ from app.utils.auth import get_current_user
 router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 
 def serialize_doc(doc: dict) -> dict:
-    """Converte ObjectId e datas para tipos serializáveis JSON."""
+    """Converte ObjectId e datas para tipos serializáveis JSON, mantendo _id como string."""
     if doc is None:
         return None
-    doc["id"] = str(doc.pop("_id"))
-    if "first_due_date" in doc and isinstance(doc["first_due_date"], datetime):
-        doc["first_due_date"] = doc["first_due_date"].isoformat()
-    if "created_at" in doc and isinstance(doc["created_at"], datetime):
-        doc["created_at"] = doc["created_at"].isoformat()
-    if "updated_at" in doc and isinstance(doc["updated_at"], datetime):
-        doc["updated_at"] = doc["updated_at"].isoformat()
+    # Converte _id para string e mantém no dicionário
+    doc["_id"] = str(doc["_id"])
+    # Adiciona campo 'id' (opcional, mas útil para o frontend)
+    doc["id"] = doc["_id"]
+    # Converte campos de data para string ISO
+    for field in ["first_due_date", "created_at", "updated_at"]:
+        if field in doc and isinstance(doc[field], datetime):
+            doc[field] = doc[field].isoformat()
     return doc
 
 @router.post("/", response_model=CreditCardPurchaseResponse, status_code=status.HTTP_201_CREATED)
