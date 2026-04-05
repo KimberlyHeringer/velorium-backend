@@ -110,15 +110,23 @@ async def get_faturas(
         "user_id": str(current_user.id)
     }
     if month is not None and year is not None:
-        start_date = datetime(year, month, 1)
+        # Criar datas com timezone UTC para compatibilidade
+        start_date = datetime(year, month, 1, tzinfo=timezone.utc)
         if month == 12:
-            end_date = datetime(year + 1, 1, 1)
+            end_date = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
         else:
-            end_date = datetime(year, month + 1, 1)
+            end_date = datetime(year, month + 1, 1, tzinfo=timezone.utc)
         query["due_date"] = {"$gte": start_date, "$lt": end_date}
+        print(f"📅 Filtrando due_date entre {start_date} e {end_date}")
 
+    # Buscar parcelas
     installments_cursor = db.credit_card_installments.find(query)
     installments = await installments_cursor.to_list(length=100)
+    print(f"📦 Parcelas encontradas: {len(installments)}")
+
+    # Se não houver parcelas, retorna lista vazia
+    if not installments:
+        return []
 
     # Agrupar por purchase_id
     purchases_map = {}
@@ -131,7 +139,6 @@ async def get_faturas(
                 purchases_map[pid] = purchase
         inst["_id"] = str(inst["_id"])
         inst["id"] = inst["_id"]
-        # Converter datas para string
         if "due_date" in inst and isinstance(inst["due_date"], datetime):
             inst["due_date"] = inst["due_date"].isoformat()
 
@@ -148,6 +155,7 @@ async def get_faturas(
             "installments": purchase_installments,
             "total": total
         })
+    print(f"📊 Resultado final: {len(result)} compras encontradas")
     return result
 
 @router.get("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
