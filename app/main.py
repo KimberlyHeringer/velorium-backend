@@ -7,6 +7,8 @@ from app.database import connect_to_mongo, close_mongo_connection
 from app.routes import auth, transactions, bills  # import único
 from app.routes import credit_cards
 from app.routes import credit_card_purchases
+from app.routes import ia
+from routes.ia_routes import router as ia_router
 
 
 load_dotenv()
@@ -37,6 +39,8 @@ app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(bills.router, prefix="/api/v1")
 app.include_router(credit_cards.router, prefix="/api/v1")
 app.include_router(credit_card_purchases.router, prefix="/api/v1")
+app.include_router(ia.router)
+app.include_router(ia_router)
 
 @app.get("/")
 async def root():
