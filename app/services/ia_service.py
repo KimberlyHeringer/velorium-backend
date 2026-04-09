@@ -1,20 +1,29 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from app.services.ia_service import obter_resposta_ia
+import os
+from openai import OpenAI
+from dotenv import load_dotenv
 
-router = APIRouter()
+load_dotenv()
 
-class PerguntaRequest(BaseModel):
-    prompt_context: str
-    pergunta_usuario: str
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-class RespostaResponse(BaseModel):
-    resposta: str
+client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1",
+)
 
-@router.post("/perguntar", response_model=RespostaResponse)
-async def perguntar_ia(request: PerguntaRequest):
+def obter_resposta_ia(prompt_context: str, pergunta_usuario: str) -> str:
     try:
-        resposta = obter_resposta_ia(request.prompt_context, request.pergunta_usuario)
-        return RespostaResponse(resposta=resposta)
+        messages = [
+            {"role": "system", "content": prompt_context},
+            {"role": "user", "content": pergunta_usuario}
+        ]
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            stream=False,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Erro ao chamar a API da Groq: {e}")
+        return "Desculpe, ocorreu um erro ao processar sua pergunta. Tente novamente mais tarde."
