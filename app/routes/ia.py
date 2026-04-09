@@ -5,19 +5,37 @@ from app.services.ia_service import obter_resposta_ia
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 
-router = APIRouter(prefix="/ia", tags=["Inteligência Artificial"])
+router = APIRouter()
 
+# ========== ROTA SIMPLES (já existente) ==========
+class PerguntaRequest(BaseModel):
+    prompt_context: str
+    pergunta_usuario: str
+
+class RespostaResponse(BaseModel):
+    resposta: str
+
+@router.post("/perguntar", response_model=RespostaResponse)
+async def perguntar_ia(request: PerguntaRequest):
+    try:
+        resposta = obter_resposta_ia(request.prompt_context, request.pergunta_usuario)
+        return RespostaResponse(resposta=resposta)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ========== ROTA COMPLETA (com autenticação e contexto) ==========
 class ChatRequest(BaseModel):
     pergunta: str
     perfil: Optional[Dict] = None
     score: Optional[int] = None
     resumo_transacoes: Optional[Dict] = None
 
-@router.post("/chat")
+@router.post("/ia/chat")
 async def chat(
     request: ChatRequest,
     current_user: UserResponse = Depends(get_current_user),
 ):
+    # Monta o contexto com os dados do perfil, score e resumo
     contexto = f"""
     Perfil do Usuário:
     - Sentimento sobre dinheiro: {request.perfil.get('money_feeling', 'não informado') if request.perfil else 'não informado'}
