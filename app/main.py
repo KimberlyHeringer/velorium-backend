@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from app.database import connect_to_mongo, close_mongo_connection
 from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile
+from app.routes import score, goals
 
 load_dotenv()
 
@@ -36,6 +37,8 @@ app.include_router(credit_cards.router, prefix="/api/v1")
 app.include_router(credit_card_purchases.router, prefix="/api/v1")
 app.include_router(ia.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")   # <--- ESTA É A LINHA FALTANDO
+app.include_router(score.router, prefix="/api/v1")
+app.include_router(goals.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
