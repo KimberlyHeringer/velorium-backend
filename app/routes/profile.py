@@ -1,6 +1,7 @@
 # backend/app/routes/profile.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Optional
+from datetime import datetime, timezone  # <-- IMPORT FALTANTE
 from bson import ObjectId
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
@@ -25,13 +26,12 @@ async def save_profile(
 ):
     db = get_database()
     existing = await db.user_profiles.find_one({"user_id": current_user.id})
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)  # <-- AGORA FUNCIONA
     profile_dict = profile_data.model_dump(exclude_unset=True)
     profile_dict["user_id"] = current_user.id
     profile_dict["updated_at"] = now
 
     if existing:
-        # Atualiza
         await db.user_profiles.update_one(
             {"_id": existing["_id"]},
             {"$set": profile_dict}
@@ -39,7 +39,6 @@ async def save_profile(
         profile_dict["_id"] = str(existing["_id"])
         profile_dict["created_at"] = existing.get("created_at", now)
     else:
-        # Cria novo
         profile_dict["created_at"] = now
         result = await db.user_profiles.insert_one(profile_dict)
         profile_dict["_id"] = str(result.inserted_id)
