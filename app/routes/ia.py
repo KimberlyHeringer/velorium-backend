@@ -7,7 +7,7 @@ from app.models.user import UserResponse
 
 router = APIRouter()
 
-# ========== ROTA SIMPLES (já existente) ==========
+# ========== ROTA SIMPLES (mantida por compatibilidade) ==========
 class PerguntaRequest(BaseModel):
     prompt_context: str
     pergunta_usuario: str
@@ -23,7 +23,7 @@ async def perguntar_ia(request: PerguntaRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ========== ROTA COMPLETA (com autenticação e contexto) ==========
+# ========== ROTA COMPLETA (COM AUTENTICAÇÃO E CONTEXTO) ==========
 class ChatRequest(BaseModel):
     pergunta: str
     perfil: Optional[Dict] = None
@@ -35,7 +35,7 @@ async def chat(
     request: ChatRequest,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    # Instruções de sistema (o papel da IA)
+    # ========== 1. INSTRUÇÕES DE SISTEMA (comportamento da IA) ==========
     instrucoes = """
     Você é a Veloria, uma assistente financeira pessoal, amigável, empática e prática.
     
@@ -49,7 +49,7 @@ async def chat(
     7. Mantenha as respostas concisas (máximo 3-4 parágrafos), a menos que o usuário peça mais detalhes.
     """
 
-    # Dados do perfil e transações (já existentes)
+    # ========== 2. DADOS DO USUÁRIO (contexto estático) ==========
     contexto_dados = f"""
     Perfil do Usuário:
     - Sentimento sobre dinheiro: {request.perfil.get('money_feeling', 'não informado') if request.perfil else 'não informado'}
@@ -68,8 +68,9 @@ async def chat(
     - Gastos com Moradia: R$ {request.resumo_transacoes.get('Moradia', 0) if request.resumo_transacoes else 0}
     """
 
-    # Monta o prompt completo (instruções + dados + pergunta do usuário)
-    prompt_completo = f"{instrucoes}\n\n{contexto_dados}\n\nPergunta do usuário: {request.pergunta}"
+    # ========== 3. SEPARAÇÃO SYSTEM / USER ==========
+    system_message = f"{instrucoes}\n\n{contexto_dados}"
+    user_message = request.pergunta
 
-    resposta_ia = obter_resposta_ia(prompt_completo, "")  # a pergunta já está no prompt
+    resposta_ia = obter_resposta_ia(system_message, user_message)
     return {"resposta": resposta_ia}

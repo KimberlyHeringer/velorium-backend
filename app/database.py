@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import HTTPException
-import certifi  # <-- IMPORT CORRETA
+import certifi
 
 env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
@@ -33,7 +33,7 @@ async def connect_to_mongo():
             w="majority",
             tls=True,
             tlsAllowInvalidCertificates=True,
-            tlsCAFile=certifi.where()  # <-- USANDO certifi
+            tlsCAFile=certifi.where()
         )
         await client.admin.command('ping')
         db = client[DATABASE_NAME]
@@ -62,3 +62,30 @@ async def health_check() -> dict:
         return {"status": "healthy", "database": DATABASE_NAME}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
+
+# ========== ÍNDICES PARA PERFORMANCE ==========
+async def create_indexes():
+    """Cria índices essenciais para consultas rápidas com muitos usuários"""
+    db = get_database()
+    
+    # Transações
+    await db.transactions.create_index([("user_id", 1)])
+    await db.transactions.create_index([("user_id", 1), ("date", -1)])
+    
+    # Contas a pagar
+    await db.bills.create_index([("user_id", 1)])
+    await db.bills.create_index([("user_id", 1), ("installments.start_date", 1)])
+    
+    # Metas
+    await db.goals.create_index([("user_id", 1)])
+    
+    # Perfil financeiro
+    await db.user_profiles.create_index([("user_id", 1)], unique=True)
+    
+    # Histórico de score
+    await db.score_history.create_index([("user_id", 1), ("date", -1)])
+    
+    # Cartões de crédito
+    await db.credit_cards.create_index([("user_id", 1)])
+    
+    print("✅ Índices criados/verificados com sucesso")

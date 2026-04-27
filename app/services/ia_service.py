@@ -11,11 +11,12 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
 )
 
-def obter_resposta_ia(prompt_context: str, pergunta_usuario: str) -> str:
+# ========== FUNÇÃO MODIFICADA: ACEITA SYSTEM MESSAGE E USER MESSAGE SEPARADAS ==========
+def obter_resposta_ia(system_message: str, user_message: str) -> str:
     try:
         messages = [
-            {"role": "system", "content": prompt_context},
-            {"role": "user", "content": pergunta_usuario}
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
         ]
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
