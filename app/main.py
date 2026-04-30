@@ -1,17 +1,16 @@
-# ========== IMPORTS ==========
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
-from app.database import connect_to_mongo, close_mongo_connection
-from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile
-from app.routes import score, goals
+
+from app.database import connect_to_mongo, close_mongo_connection, create_indexes
+from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals
 
 load_dotenv()
 
 app = FastAPI(title="Velorium API")
 
-# ========== CORS ==========
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,23 +19,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ========== EVENTOS ==========
 @app.on_event("startup")
 async def startup():
     await connect_to_mongo()
+    await create_indexes()
 
 @app.on_event("shutdown")
 async def shutdown():
     await close_mongo_connection()
 
-# ========== ROTAS ==========
+# Rotas
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(bills.router, prefix="/api/v1")
 app.include_router(credit_cards.router, prefix="/api/v1")
 app.include_router(credit_card_purchases.router, prefix="/api/v1")
 app.include_router(ia.router, prefix="/api/v1")
-app.include_router(profile.router, prefix="/api/v1")   # <--- ESTA É A LINHA FALTANDO
+app.include_router(profile.router, prefix="/api/v1")   # <-- ESSENCIAL
 app.include_router(score.router, prefix="/api/v1")
 app.include_router(goals.router, prefix="/api/v1")
 

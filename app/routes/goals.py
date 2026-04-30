@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from bson import ObjectId
+from datetime import datetime, timezone  # <-- IMPORT FALTANTE
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 from app.models.goal import Goal, GoalCreate, GoalUpdate
@@ -27,6 +28,8 @@ async def create_goal(goal: GoalCreate, current_user: UserResponse = Depends(get
     goal_dict["updatedAt"] = datetime.now(timezone.utc)
     result = await db.goals.insert_one(goal_dict)
     goal_dict["_id"] = str(result.inserted_id)
+    # Remove campos que não estão no modelo de resposta? Opcional, mas por segurança:
+    # return Goal(**goal_dict)
     return goal_dict
 
 @router.put("/{goal_id}", response_model=Goal)
@@ -39,10 +42,16 @@ async def update_goal(goal_id: str, updates: GoalUpdate, current_user: UserRespo
         raise HTTPException(status_code=404, detail="Meta não encontrada")
     update_data = {k: v for k, v in updates.model_dump(exclude_unset=True).items() if v is not None}
     update_data["updatedAt"] = datetime.now(timezone.utc)
-    if "completed" not in update_data and updates.current == existing.get("current"):
-        # se só atualizou current, verifica se completou
-        new_current = updates.current if updates.current is not None else existing["current"]
+    # Se o usuário atualizou o current, verifica se completou
+    if updates.current is not None and not existing.get("completed"):
+        new_current = updates.current
         if new_current >= existing["target"]:
+            update_data["completed"] = True
+    # Se o target foi alterado, talvez reavaliar completed
+    if updates.target is not None and not existing.get("completed"):
+        new_target = updates.target
+        current_current = updates.current if updates.current is not None else existing["current"]
+        if current_current >= new_target:
             update_data["completed"] = True
     await db.goals.update_one({"_id": ObjectId(goal_id)}, {"$set": update_data})
     updated = await db.goals.find_one({"_id": ObjectId(goal_id)})
