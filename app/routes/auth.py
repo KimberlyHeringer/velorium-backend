@@ -1,3 +1,8 @@
+"""
+Rotas de Autenticação
+Arquivo: backend/app/routes/auth.py
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import datetime, timezone
 from typing import Annotated
@@ -12,8 +17,28 @@ from app.utils.auth import (
     get_current_user
 )
 
+from pydantic import BaseModel
+
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
+
+# ========== SCHEMAS PARA AUTENTICAÇÃO ==========
+
+class RefreshTokenRequest(BaseModel):
+    """Schema para requisição de refresh token"""
+    refresh_token: str
+
+
+class LoginResponse(BaseModel):
+    """Schema para resposta de login bem-sucedido"""
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: UserResponse
+
+
+# ========== ENDPOINTS ==========
 
 @router.post("/register", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, db=Depends(get_database)):
@@ -32,14 +57,14 @@ async def register(user_data: UserCreate, db=Depends(get_database)):
     user_dict["created_at"] = datetime.now(timezone.utc)
     user_dict["updated_at"] = datetime.now(timezone.utc)
     
-    # Converter Decimal para float (MongoDB não aceita Decimal)
-    user_dict["monthly_income"] = float(user_dict["monthly_income"])
+    # Converter Decimal para float (MongoDB não aceita Decimal) e arredondar
+    user_dict["monthly_income"] = round(user_dict["monthly_income"], 2)
 
     result = await db.users.insert_one(user_dict)
     return {"message": "Usuário criado com sucesso", "id": str(result.inserted_id)}
 
 
-@router.post("/login", response_model=dict)  # Altere o response_model para dict
+@router.post("/login", response_model=LoginResponse)
 async def login(user_data: UserLogin, db=Depends(get_database)):
     db_user = await db.users.find_one({"email": user_data.email.lower()})
     if not db_user or not verify_password(user_data.password, db_user["password_hash"]):
@@ -47,28 +72,34 @@ async def login(user_data: UserLogin, db=Depends(get_database)):
 
     token_pair = generate_token_pair(str(db_user["_id"]))
 
-    # Converter ObjectId para string
-    db_user["_id"] = str(db_user["_id"])
-    # Remover campos sensíveis
-    del db_user["password_hash"]
+    # Constrói UserResponse seguro (sem campos sensíveis)
+    user_response = UserResponse(
+        id=str(db_user["_id"]),
+        name=db_user["name"],
+        email=db_user["email"],
+        monthly_income=db_user.get("monthly_income", 0.0),
+        location=db_user.get("location", ""),
+        profession_type=db_user.get("profession_type", ""),
+        occupation=db_user.get("occupation", ""),
+        financial_goal=db_user.get("financial_goal", ""),
+        created_at=db_user["created_at"]
+    )
 
-    return {
-        "access_token": token_pair.access_token,
-        "refresh_token": token_pair.refresh_token,
-        "token_type": "bearer",
-        "expires_in": token_pair.expires_in,
-        "user": db_user  # ✅ inclui os dados do usuário
-    }
+    return LoginResponse(
+        access_token=token_pair.access_token,
+        refresh_token=token_pair.refresh_token,
+        token_type="bearer",
+        expires_in=token_pair.expires_in,
+        user=user_response
+    )
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh_token(refresh_token_data: dict, db=Depends(get_database)):
+async def refresh_token(req: RefreshTokenRequest, db=Depends(get_database)):
+    """Renova o access token usando um refresh token válido"""
     from app.utils.auth import refresh_access_token
-    refresh_token = refresh_token_data.get("refresh_token")
-    if not refresh_token:
-        raise HTTPException(status_code=400, detail="Refresh token não fornecido")
     try:
-        return await refresh_access_token(refresh_token)
+        return await refresh_access_token(req.refresh_token)
     except HTTPException:
         raise
     except Exception:
@@ -79,10 +110,12 @@ async def refresh_token(refresh_token_data: dict, db=Depends(get_database)):
 async def get_current_user_profile(
     current_user: Annotated[UserResponse, Depends(get_current_user)]
 ):
+    """Retorna o perfil do usuário autenticado"""
     return current_user
 
 
 @router.post("/logout", response_model=dict)
 async def logout(current_user: Annotated[UserResponse, Depends(get_current_user)]):
-    # Em produção: adicionar token a uma blacklist
+    """Realiza logout (no MVP apenas descarta tokens no cliente)"""
+    # Em produção: adicionar token a uma blacklist (Redis)
     return {"message": "Logout realizado com sucesso. Descarte os tokens no cliente."}

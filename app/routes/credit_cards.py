@@ -1,3 +1,8 @@
+"""
+Rotas de Cartões de Crédito
+Arquivo: backend/app/routes/credit_cards.py
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
 from datetime import datetime, timezone
@@ -9,6 +14,23 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/credit-cards", tags=["Cartões de Crédito"])
+
+
+# ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO ==========
+
+def format_card_doc(card: dict) -> dict:
+    """
+    Converte _id para id e garante tipos numéricos.
+    Usado para padronizar respostas da API.
+    """
+    if card and "_id" in card:
+        card["id"] = str(card.pop("_id"))
+        card["closing_day"] = int(card["closing_day"])
+        card["due_day"] = int(card["due_day"])
+    return card
+
+
+# ========== ENDPOINTS ==========
 
 @router.post("/", response_model=CreditCardResponse, status_code=status.HTTP_201_CREATED)
 async def create_credit_card(
@@ -25,18 +47,14 @@ async def create_credit_card(
         result = await db.credit_cards.insert_one(card_dict)
         created = await db.credit_cards.find_one({"_id": result.inserted_id})
         
-        # Converte _id para id e remove o campo original
-        created["id"] = str(created.pop("_id"))
-        # Garante tipos numéricos
-        created["closing_day"] = int(created["closing_day"])
-        created["due_day"] = int(created["due_day"])
+        return format_card_doc(created)
         
-        return created
     except Exception as e:
         print(f"❌ Erro ao criar cartão: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/", response_model=List[CreditCardResponse])
 async def list_credit_cards(
@@ -45,11 +63,8 @@ async def list_credit_cards(
 ):
     cursor = db.credit_cards.find({"user_id": str(current_user.id)}).sort("created_at", -1)
     cards = await cursor.to_list(length=100)
-    for c in cards:
-        c["id"] = str(c.pop("_id"))  # remove _id e cria id
-        c["closing_day"] = int(c["closing_day"])
-        c["due_day"] = int(c["due_day"])
-    return cards
+    return [format_card_doc(c) for c in cards]
+
 
 @router.put("/{card_id}", response_model=CreditCardResponse)
 async def update_credit_card(
@@ -66,8 +81,15 @@ async def update_credit_card(
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
-    update_data = {k: v for k, v in card_data.model_dump().items() if v is not None}
+    # Preparar dados para atualização
+    update_data = {k: v for k, v in card_data.model_dump(exclude_unset=True).items() if v is not None}
     update_data["updated_at"] = datetime.now(timezone.utc)
+    
+    # Arredondar valores monetários se presentes
+    if "limit_total" in update_data:
+        update_data["limit_total"] = round(update_data["limit_total"], 2)
+    if "committed_amount" in update_data:
+        update_data["committed_amount"] = round(update_data["committed_amount"], 2)
     
     await db.credit_cards.update_one(
         {"_id": ObjectId(card_id)},
@@ -75,10 +97,8 @@ async def update_credit_card(
     )
     
     updated = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
-    updated["id"] = str(updated.pop("_id"))
-    updated["closing_day"] = int(updated["closing_day"])
-    updated["due_day"] = int(updated["due_day"])
-    return updated
+    return format_card_doc(updated)
+
 
 @router.delete("/{card_id}", response_model=dict)
 async def delete_credit_card(
@@ -86,6 +106,18 @@ async def delete_credit_card(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    # ========== VERIFICAR SE EXISTEM COMPRAS ASSOCIADAS ==========
+    # Evita deletar cartão que já tem compras vinculadas (dados órfãos)
+    purchase = await db.credit_card_purchases.find_one({
+        "card_id": card_id,
+        "user_id": str(current_user.id)
+    })
+    if purchase:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível excluir o cartão porque existem compras vinculadas. Exclua as compras primeiro."
+        )
+    
     result = await db.credit_cards.delete_one({
         "_id": ObjectId(card_id),
         "user_id": str(current_user.id)
@@ -93,3 +125,19 @@ async def delete_credit_card(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     return {"message": "Cartão excluído com sucesso"}
+
+
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Adicionada função format_card_doc() para padronizar respostas
+# ✅ Adicionada verificação de compras associadas antes de deletar cartão
+# ✅ Arredondamento de limit_total e committed_amount no update
+# ✅ Todas as rotas usam format_card_doc() agora
+#
+# 📌 Pendente (futuro):
+#    - Paginação no list_credit_cards (pós-MVP)
+#    - Logging estruturado (substituir print)
+#
+# 🔍 Verificação necessária:
+#    - Modelo CreditCard deve ter validador closing_day != due_day
+#      (adicionar se não existir)

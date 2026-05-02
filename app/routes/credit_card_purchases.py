@@ -1,7 +1,14 @@
+"""
+Rotas de Compras Parceladas no Cartão de Crédito
+Arquivo: backend/app/routes/credit_card_purchases.py
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from bson import ObjectId
+from dateutil.relativedelta import relativedelta  # ← NOVO: para datas precisas
+
 from app.database import get_database
 from app.models.credit_card_purchase import CreditCardPurchaseCreate, CreditCardPurchaseResponse
 from app.models.user import UserResponse
@@ -9,19 +16,36 @@ from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 
+
+# ========== FUNÇÕES AUXILIARES ==========
+
+def split_amount(total: float, parts: int) -> List[float]:
+    """
+    Divide total em 'parts' parcelas, com a última recebendo a diferença de centavos.
+    Ex: split_amount(100, 3) -> [33.33, 33.33, 33.34]
+    """
+    base = round(total / parts, 2)
+    remainder = round(total - base * parts, 2)
+    amounts = [base] * parts
+    if remainder != 0:
+        amounts[-1] = round(amounts[-1] + remainder, 2)
+    return amounts
+
+
 def serialize_doc(doc: dict) -> dict:
-    """Converte ObjectId e datas para tipos serializáveis JSON, mantendo _id como string."""
+    """
+    Converte ObjectId para string, mas mantém datetime como datetime.
+    A serialização final será feita pelo Pydantic (response_model).
+    """
     if doc is None:
         return None
-    # Converte _id para string e mantém no dicionário
     doc["_id"] = str(doc["_id"])
-    # Adiciona campo 'id' (opcional, mas útil para o frontend)
     doc["id"] = doc["_id"]
-    # Converte campos de data para string ISO
-    for field in ["first_due_date", "created_at", "updated_at"]:
-        if field in doc and isinstance(doc[field], datetime):
-            doc[field] = doc[field].isoformat()
+    # NÃO converter datetime para string - manter como datetime
     return doc
+
+
+# ========== ENDPOINTS ==========
 
 @router.post("/", response_model=CreditCardPurchaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_purchase(
@@ -29,8 +53,6 @@ async def create_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    print(f"🔍 Recebida compra: {purchase_data}")
-
     # Validar cartão
     try:
         card = await db.credit_cards.find_one({
@@ -57,18 +79,16 @@ async def create_purchase(
     # Inserir compra
     result = await db.credit_card_purchases.insert_one(purchase_dict)
 
-    # Calcular valor da parcela
-    amount_per_installment = round(purchase_data.total_amount / purchase_data.installments, 2)
-
-    # Gerar parcelas
+    # ========== GERAR PARCELAS (com relativedelta e split_amount) ==========
+    amounts = split_amount(purchase_data.total_amount, purchase_data.installments)
     installments = []
     for i in range(purchase_data.installments):
-        due_date = first_due + timedelta(days=30 * i)
+        due_date = first_due + relativedelta(months=i)   # ← preciso para meses
         installment = {
             "purchase_id": str(result.inserted_id),
             "user_id": str(current_user.id),
             "card_id": purchase_data.card_id,
-            "amount": amount_per_installment,
+            "amount": amounts[i],   # valor já distribuído
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -86,6 +106,7 @@ async def create_purchase(
         raise HTTPException(status_code=500, detail="Erro ao recuperar compra criada")
     return serialize_doc(created)
 
+
 @router.get("/faturas", response_model=List[dict])
 async def get_faturas(
     card_id: str,
@@ -94,7 +115,7 @@ async def get_faturas(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    print(f"🔍 get_faturas: card_id={card_id}, month={month}, year={year}")
+    # Validar cartão
     try:
         card = await db.credit_cards.find_one({
             "_id": ObjectId(card_id),
@@ -110,21 +131,17 @@ async def get_faturas(
         "user_id": str(current_user.id)
     }
     if month is not None and year is not None:
-        # Criar datas com timezone UTC para compatibilidade
         start_date = datetime(year, month, 1, tzinfo=timezone.utc)
         if month == 12:
             end_date = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
         else:
             end_date = datetime(year, month + 1, 1, tzinfo=timezone.utc)
         query["due_date"] = {"$gte": start_date, "$lt": end_date}
-        print(f"📅 Filtrando due_date entre {start_date} e {end_date}")
 
     # Buscar parcelas
     installments_cursor = db.credit_card_installments.find(query)
     installments = await installments_cursor.to_list(length=100)
-    print(f"📦 Parcelas encontradas: {len(installments)}")
 
-    # Se não houver parcelas, retorna lista vazia
     if not installments:
         return []
 
@@ -139,8 +156,7 @@ async def get_faturas(
                 purchases_map[pid] = purchase
         inst["_id"] = str(inst["_id"])
         inst["id"] = inst["_id"]
-        if "due_date" in inst and isinstance(inst["due_date"], datetime):
-            inst["due_date"] = inst["due_date"].isoformat()
+        # NÃO converter due_date para string - manter como datetime
 
     result = []
     for pid, purchase in purchases_map.items():
@@ -152,11 +168,11 @@ async def get_faturas(
             "total_amount": purchase["total_amount"],
             "installments_total": purchase["installments"],
             "category": purchase.get("category"),
-            "installments": purchase_installments,
+            "installments": purchase_installments,  # mantém datetime
             "total": total
         })
-    print(f"📊 Resultado final: {len(result)} compras encontradas")
     return result
+
 
 @router.get("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
 async def get_purchase(
@@ -172,6 +188,7 @@ async def get_purchase(
         raise HTTPException(status_code=404, detail="Compra não encontrada")
     return serialize_doc(purchase)
 
+
 @router.put("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
 async def update_purchase(
     purchase_id: str,
@@ -179,7 +196,7 @@ async def update_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    # Verificar existência
+    # Verificar existência da compra
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(purchase_id),
         "user_id": str(current_user.id)
@@ -187,7 +204,19 @@ async def update_purchase(
     if not purchase:
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
-    # Atualizar dados
+    # ========== VERIFICAR SE HÁ PARCELAS PAGAS ==========
+    existing_installments = await db.credit_card_installments.find({
+        "purchase_id": purchase_id,
+        "paid": True
+    }).to_list(length=1)
+
+    if existing_installments:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível editar compra com parcelas já pagas. Crie uma nova compra ou cancele o pagamento."
+        )
+
+    # Atualizar dados da compra
     update_dict = purchase_data.model_dump()
     update_dict["updated_at"] = datetime.now(timezone.utc)
 
@@ -200,19 +229,19 @@ async def update_purchase(
         {"$set": update_dict}
     )
 
-    # Recriar parcelas
+    # Recriar parcelas (somente se não houver parcelas pagas)
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
 
     first_due = update_dict["first_due_date"]
-    amount_per_installment = round(update_dict["total_amount"] / update_dict["installments"], 2)
+    amounts = split_amount(update_dict["total_amount"], update_dict["installments"])
     installments = []
     for i in range(update_dict["installments"]):
-        due_date = first_due + timedelta(days=30 * i)
+        due_date = first_due + relativedelta(months=i)
         installment = {
             "purchase_id": purchase_id,
             "user_id": str(current_user.id),
             "card_id": update_dict["card_id"],
-            "amount": amount_per_installment,
+            "amount": amounts[i],
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -225,6 +254,7 @@ async def update_purchase(
 
     updated = await db.credit_card_purchases.find_one({"_id": ObjectId(purchase_id)})
     return serialize_doc(updated)
+
 
 @router.delete("/purchases/{purchase_id}", response_model=dict)
 async def delete_purchase(
@@ -241,6 +271,7 @@ async def delete_purchase(
     await db.credit_card_purchases.delete_one({"_id": ObjectId(purchase_id)})
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
     return {"message": "Compra e parcelas excluídas com sucesso"}
+
 
 @router.put("/installments/{installment_id}", response_model=dict)
 async def mark_installment_paid(
@@ -264,3 +295,17 @@ async def mark_installment_paid(
     if result.modified_count == 0:
         raise HTTPException(status_code=400, detail="Parcela já estava paga")
     return {"message": "Parcela marcada como paga"}
+
+
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Proteção: update_purchase bloqueia edição se houver parcelas pagas
+# ✅ Datas das parcelas: relativedelta (em vez de timedelta)
+# ✅ Distribuição de centavos: split_amount()
+# ✅ serialize_doc: não converte datetime para string
+# ✅ get_faturas: não converte due_date para string
+#
+# 📌 Pendente (futuro):
+#    - Validação de limite do cartão (atualizar committed_amount)
+#    - Paginação no get_faturas (pós-MVP)
+#    - Logging estruturado (substituir print)
