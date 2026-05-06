@@ -20,12 +20,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transactions", tags=["Transações"])
 
 
-# ========== FUNÇÃO AUXILIAR ==========
+# ========== FUNÇÃO AUXILIAR CORRIGIDA ==========
 
 def format_transaction_doc(transaction: dict) -> dict:
-    """Converte _id para id e padroniza resposta"""
-    if transaction and "_id" in transaction:
-        transaction["id"] = str(transaction["_id"])
+    """
+    Converte _id para id e padroniza resposta.
+    🔧 CORREÇÃO: Cria cópia e remove _id para evitar conflito com Pydantic
+    """
+    if transaction:
+        # Cria uma cópia para não modificar o original
+        result = dict(transaction)
+        if "_id" in result:
+            result["id"] = str(result["_id"])
+            # Remove o _id antigo para evitar conflito com Pydantic
+            del result["_id"]
+        return result
     return transaction
 
 
@@ -140,8 +149,13 @@ async def get_transaction(
     db=Depends(get_database)
 ):
     """Retorna uma transação específica"""
+    try:
+        obj_id = ObjectId(transaction_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID de transação inválido")
+    
     transaction = await db.transactions.find_one({
-        "_id": ObjectId(transaction_id),
+        "_id": obj_id,
         "user_id": str(current_user.id)
     })
     if not transaction:
@@ -157,6 +171,11 @@ async def update_transaction(
     db=Depends(get_database)
 ):
     """Atualiza uma transação existente"""
+    try:
+        obj_id = ObjectId(transaction_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID de transação inválido")
+    
     # Remover campos None
     update_data = {k: v for k, v in transaction_update.model_dump(exclude_unset=True).items() if v is not None}
     if not update_data:
@@ -169,14 +188,14 @@ async def update_transaction(
     update_data["updated_at"] = datetime.now(timezone.utc)
 
     result = await db.transactions.update_one(
-        {"_id": ObjectId(transaction_id), "user_id": str(current_user.id)},
+        {"_id": obj_id, "user_id": str(current_user.id)},
         {"$set": update_data}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
     # Buscar documento atualizado e retornar
-    updated = await db.transactions.find_one({"_id": ObjectId(transaction_id)})
+    updated = await db.transactions.find_one({"_id": obj_id})
     return format_transaction_doc(updated)
 
 
@@ -187,23 +206,29 @@ async def delete_transaction(
     db=Depends(get_database)
 ):
     """Remove uma transação"""
+    try:
+        obj_id = ObjectId(transaction_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="ID de transação inválido")
+    
     result = await db.transactions.delete_one({
-        "_id": ObjectId(transaction_id),
+        "_id": obj_id,
         "user_id": str(current_user.id)
     })
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Transação não encontrada")
-    return {"message": "Transação deletada com sucesso"}
+    return {"message": "Transação deletada com sucesso", "success": True}
 
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
+# ✅ 🔧 CORREÇÃO: format_transaction_doc cria cópia e remove _id
+# ✅ 🔧 CORREÇÃO: Validação de ObjectId nas rotas GET/PUT/DELETE
+# ✅ 🔧 CORREÇÃO: Tratamento de erro para ID inválido
 # ✅ Adicionada conversão de amount no update_transaction (float + round)
 # ✅ Tratamento de erro no create_transaction (mensagem genérica + log)
 # ✅ Mudado response_model do PUT para TransactionResponse
 # ✅ update_transaction retorna documento atualizado (não apenas mensagem)
-# ✅ Adicionada função format_transaction_doc()
-# ✅ Validação de context via regex nos parâmetros
 # ✅ Paginação implementada (skip/limit)
 #
 # 📌 Dívida técnica (pós-MVP):
