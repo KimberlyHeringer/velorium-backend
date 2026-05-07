@@ -11,6 +11,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# ========== FUNÇÃO AUXILIAR PARA CORRIGIR TIMEZONE ==========
+def ensure_timezone(dt):
+    """
+    Garante que uma data tenha timezone UTC.
+    Se não tiver, adiciona UTC.
+    Se for None, retorna None.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def calculate_score(
     user_id: str,
     db,
@@ -19,37 +33,37 @@ async def calculate_score(
     goals: Optional[List[Dict]] = None,
 ) -> Dict[str, Any]:
     """
-    Calcula o score financeiro do usuário seguindo exatamente a mesma lógica do frontend.
-    
-    Parâmetros:
-        user_id: ID do usuário (string)
-        db: instância do MongoDB (para buscar dados se não fornecidos)
-        transactions: lista de transações (últimos 30 dias) – opcional
-        profile: perfil financeiro – opcional
-        goals: lista de metas – opcional
-    
-    Retorna:
-        dict com score, detalhes, etc.
+    Calcula o score financeiro do usuário.
     """
     
-    # ========== 1. BUSCAR DADOS SE NÃO FORNECIDOS ==========
+    # ========== 1. BUSCAR DADOS ==========
     thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
     
     if transactions is None:
-        transactions = await db.transactions.find({
+        transactions_cursor = db.transactions.find({
             "user_id": user_id,
             "date": {"$gte": thirty_days_ago}
-        }).to_list(1000)
+        })
+        transactions = await transactions_cursor.to_list(1000)
+    
+    # 🔧 CORREÇÃO: Garantir que todas as transações tenham date com timezone
+    for t in transactions:
+        if "date" in t:
+            t["date"] = ensure_timezone(t["date"])
     
     if profile is None:
         profile = await db.user_profiles.find_one({"user_id": user_id}) or {}
     
-    # Buscar metas (sem verificar existência da coleção)
     if goals is None:
         try:
             goals = await db.goals.find({"user_id": user_id}).to_list(1000)
         except Exception:
             goals = []
+    
+    # 🔧 CORREÇÃO: Garantir que todas as metas tenham updatedAt com timezone
+    for g in goals:
+        if "updatedAt" in g:
+            g["updatedAt"] = ensure_timezone(g["updatedAt"])
     
     # ========== 2. PONTOS BASE ==========
     score = 50
@@ -64,7 +78,7 @@ async def calculate_score(
         "bonusMetas": 0,
     }
     
-    # ========== 3. FREQUÊNCIA (últimos 30 dias) ==========
+    # ========== 3. FREQUÊNCIA ==========
     qtd_transacoes = len(transactions)
     if qtd_transacoes >= 11:
         freq = 10
@@ -77,20 +91,21 @@ async def calculate_score(
     score += freq
     details["frequencia"] = freq
     
-    # ========== 4. CONTROLE FINANCEIRO (despesas mês atual / renda mensal) ==========
+    # ========== 4. CONTROLE FINANCEIRO ==========
     today = datetime.now(timezone.utc)
     month_start = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
     
-    despesas_mes = sum(
-        float(t.get("amount", 0.0)) for t in transactions
-        if t.get("type") == "expense" and t.get("date", thirty_days_ago) >= month_start
-    )
+    despesas_mes = 0
+    for t in transactions:
+        if t.get("type") == "expense":
+            t_date = t.get("date")
+            if t_date and t_date >= month_start:
+                despesas_mes += float(t.get("amount", 0.0))
     
-    # Buscar renda mensal do usuário (convertendo ObjectId)
     try:
         user_obj_id = ObjectId(user_id)
     except Exception:
-        user_obj_id = user_id  # fallback (caso já seja ObjectId)
+        user_obj_id = user_id
     
     user_doc = await db.users.find_one({"_id": user_obj_id})
     if user_doc and "monthly_income" in user_doc:
@@ -121,7 +136,7 @@ async def calculate_score(
     score += reserva
     details["reserva"] = reserva
     
-    # ========== 7. EVOLUÇÃO DE GASTOS (mês atual vs anterior) ==========
+    # ========== 7. EVOLUÇÃO DE GASTOS ==========
     mes_anterior = today.month - 1 if today.month > 1 else 12
     ano_anterior = today.year if today.month > 1 else today.year - 1
     month_prev_start = datetime(ano_anterior, mes_anterior, 1, tzinfo=timezone.utc)
@@ -131,10 +146,12 @@ async def calculate_score(
     else:
         next_month = datetime(ano_anterior + 1, 1, 1, tzinfo=timezone.utc)
     
-    despesas_mes_anterior = sum(
-        float(t.get("amount", 0.0)) for t in transactions
-        if t.get("type") == "expense" and month_prev_start <= t.get("date", thirty_days_ago) < next_month
-    )
+    despesas_mes_anterior = 0
+    for t in transactions:
+        if t.get("type") == "expense":
+            t_date = t.get("date")
+            if t_date and month_prev_start <= t_date < next_month:
+                despesas_mes_anterior += float(t.get("amount", 0.0))
     
     evolucao = 0
     if despesas_mes_anterior > 0:
@@ -150,30 +167,42 @@ async def calculate_score(
     
     # ========== 8. INATIVIDADE ==========
     if transactions:
-        ultima_data = max(t.get("date", thirty_days_ago) for t in transactions)
-        dias_inativos = (today - ultima_data).days
-        if dias_inativos > 15:
-            inatividade = -10
-        elif dias_inativos > 7:
-            inatividade = -5
+        ultima_data = None
+        for t in transactions:
+            t_date = t.get("date")
+            if t_date:
+                if ultima_data is None or t_date > ultima_data:
+                    ultima_data = t_date
+        
+        if ultima_data:
+            dias_inativos = (today - ultima_data).days
+            if dias_inativos > 15:
+                inatividade = -10
+            elif dias_inativos > 7:
+                inatividade = -5
+            else:
+                inatividade = 0
         else:
-            inatividade = 0
+            inatividade = -10
     else:
         inatividade = -10
     score += inatividade
     details["inatividade"] = inatividade
     
-    # ========== 9. BÔNUS METAS CONCLUÍDAS NOS ÚLTIMOS 7 DIAS ==========
+    # ========== 9. BÔNUS METAS ==========
     sete_dias_atras = today - timedelta(days=7)
-    metas_recentes = [
-        g for g in goals
-        if g.get("completed") and g.get("updatedAt") and g["updatedAt"] >= sete_dias_atras
-    ]
-    bonus_metas = min(2, len(metas_recentes) * 0.5)
+    metas_recentes = 0
+    for g in goals:
+        if g.get("completed"):
+            updated_at = g.get("updatedAt")
+            if updated_at and updated_at >= sete_dias_atras:
+                metas_recentes += 1
+    
+    bonus_metas = min(2, metas_recentes * 0.5)
     score += bonus_metas
     details["bonusMetas"] = bonus_metas
     
-    # ========== 10. APLICAÇÃO DA VARIAÇÃO DIÁRIA ==========
+    # ========== 10. VARIAÇÃO DIÁRIA ==========
     last_score_doc = await db.score_history.find_one(
         {"user_id": user_id},
         sort=[("date", -1)]
@@ -184,7 +213,7 @@ async def calculate_score(
     
     if last_score_doc:
         last_score = last_score_doc.get("score", 50)
-        last_date = last_score_doc.get("date")
+        last_date = ensure_timezone(last_score_doc.get("date"))
         if last_date:
             last_date_str = last_date.isoformat()
         
@@ -196,10 +225,10 @@ async def calculate_score(
             elif diff < -5:
                 score = last_score - 5
     
-    # ========== 11. LIMITAR ENTRE 0 E 100 ==========
+    # ========== 11. LIMITAR SCORE ==========
     score = max(0, min(100, int(round(score))))
     
-    # ========== 12. SALVAR HISTÓRICO (snapshot diário) ==========
+    # ========== 12. SALVAR HISTÓRICO ==========
     now_utc = datetime.now(timezone.utc)
     today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     
@@ -223,7 +252,7 @@ async def calculate_score(
             "updated_at": now_utc,
         })
     
-    # ========== 13. RETORNAR RESULTADO ==========
+    # ========== 13. RETORNAR ==========
     return {
         "score": score,
         "lastScore": last_score,
@@ -233,18 +262,3 @@ async def calculate_score(
         "despesasMes": float(despesas_mes),
         "rendaMensal": float(renda_mensal),
     }
-
-
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Busca do usuário com ObjectId (corrigido)
-# ✅ Conversão de renda_mensal para float + round
-# ✅ Garantia de float() em todas as somas
-# ✅ Removida verificação de existência da coleção goals
-# ✅ Proteção lastDate no retorno contra None
-# ✅ Adicionado logging (pronto para uso futuro)
-#
-# 📌 Dívida técnica (pós-MVP):
-#    - Cache do score diário (evitar recalcular toda requisição)
-#    - Usar agregação do MongoDB em vez de trazer documentos (performance)
-#    - Melhorar detecção de inatividade
