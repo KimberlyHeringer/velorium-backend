@@ -1,5 +1,5 @@
 """
-Rotas de Usuário (Perfil, Senha, etc.)
+Rotas de Usuário (Perfil, Senha, Consentimento, etc.)
 Arquivo: backend/app/routes/user.py
 """
 
@@ -19,18 +19,29 @@ router = APIRouter(prefix="/users", tags=["Usuário"])
 # ========== SCHEMAS ==========
 
 class UpdateProfileRequest(BaseModel):
-    """Schema para atualização de nome e email"""
     name: Optional[str] = None
     email: Optional[EmailStr] = None
 
 
 class ChangePasswordRequest(BaseModel):
-    """Schema para alteração de senha"""
     current_password: str
     new_password: str
 
 
-# ========== ENDPOINTS ==========
+# ========== CONSENTIMENTO ==========
+
+class ConsentUpdate(BaseModel):
+    terms_accepted: bool
+    research_consent: bool
+
+
+class ConsentStatusResponse(BaseModel):
+    terms_accepted: bool
+    research_consent: bool
+    terms_accepted_at: Optional[datetime] = None
+
+
+# ========== ENDPOINTS DE PERFIL ==========
 
 @router.put("/profile", response_model=UserResponse)
 async def update_profile(
@@ -38,15 +49,11 @@ async def update_profile(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Atualiza o nome e/ou email do usuário autenticado.
-    """
     # Prepara os dados para atualização
     update_data = {}
     if profile_data.name is not None:
         update_data["name"] = profile_data.name
     if profile_data.email is not None:
-        # Normaliza o email (lowercase)
         update_data["email"] = profile_data.email.lower()
     
     if not update_data:
@@ -64,7 +71,6 @@ async def update_profile(
                 detail="Email já cadastrado por outro usuário"
             )
     
-    # Atualiza o usuário
     update_data["updated_at"] = datetime.now(timezone.utc)
     
     await db.users.update_one(
@@ -72,10 +78,8 @@ async def update_profile(
         {"$set": update_data}
     )
     
-    # Busca o usuário atualizado
     updated_user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     updated_user["_id"] = str(updated_user["_id"])
-    
     return UserResponse(**updated_user)
 
 
@@ -85,39 +89,69 @@ async def change_password(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Altera a senha do usuário autenticado.
-    Requer a senha atual para validação.
-    """
-    # Busca o usuário no banco (para obter o hash da senha)
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Usuário não encontrado"
-        )
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
     
-    # Verifica se a senha atual está correta
     if not verify_password(password_data.current_password, user["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Senha atual incorreta"
-        )
+        raise HTTPException(status_code=401, detail="Senha atual incorreta")
     
-    # Gera o hash da nova senha
     new_password_hash = get_password_hash(password_data.new_password)
     
-    # Atualiza a senha
     await db.users.update_one(
         {"_id": ObjectId(current_user.id)},
-        {"$set": {
-            "password_hash": new_password_hash,
-            "updated_at": datetime.now(timezone.utc)
-        }}
+        {"$set": {"password_hash": new_password_hash, "updated_at": datetime.now(timezone.utc)}}
     )
     
     return {"message": "Senha alterada com sucesso"}
 
+
+# ========== ENDPOINTS DE CONSENTIMENTO ==========
+
+@router.put("/consent", response_model=dict)
+async def update_consent(
+    consent_data: ConsentUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Atualiza o status de aceitação dos Termos de Uso e o consentimento de dados.
+    """
+    update_fields = {
+        "research_consent": consent_data.research_consent,
+        "updated_at": datetime.now(timezone.utc),
+        "consent_updated_at": datetime.now(timezone.utc)
+    }
+    if consent_data.terms_accepted:
+        update_fields["terms_accepted"] = True
+        update_fields["terms_accepted_at"] = datetime.now(timezone.utc)
+    else:
+        # Não permitir desmarcar termos aceitos (pode ser alterado para true, nunca para false)
+        raise HTTPException(
+            status_code=400,
+            detail="Os Termos de Uso não podem ser desmarcados depois de aceitos."
+        )
+    
+    await db.users.update_one(
+        {"_id": ObjectId(current_user.id)},
+        {"$set": update_fields}
+    )
+    return {"message": "Consentimento atualizado com sucesso"}
+
+
+@router.get("/consent-status", response_model=ConsentStatusResponse)
+async def get_consent_status(
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    user = await db.users.find_one({"_id": ObjectId(current_user.id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return ConsentStatusResponse(
+        terms_accepted=user.get("terms_accepted", False),
+        research_consent=user.get("research_consent", False),
+        terms_accepted_at=user.get("terms_accepted_at")
+    )
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
