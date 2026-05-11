@@ -1,0 +1,30 @@
+# Ambientes virtuais
+venv/
+.venv/
+env/
+.env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Arquivos sensíveis
+.env
+*.env
+!.env.example
+
+# Logs e bancos locais
+*.log
+*.db
+*.sqlite
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# Builds
+dist/
+build/
+*.egg-info/
