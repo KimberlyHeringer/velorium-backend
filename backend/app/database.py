@@ -11,6 +11,10 @@ from __future__ import annotations
 Configuração da conexão com MongoDB
 Arquivo: backend/app/database.py
 """
+"""
+Configuração da conexão com MongoDB
+Arquivo: backend/app/database.py
+"""
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional, Any
@@ -44,21 +48,17 @@ async def connect_to_mongo():
     """
     global client, db
     try:
-        # ⚠️ ATENÇÃO: NÃO adicione tlsAllowInvalidCertificates=True aqui
-        # Isso desabilita a verificação do certificado SSL e é uma falha de segurança
-        # O MongoDB Atlas já tem certificado válido, não precisa dessa flag
-        
         client = AsyncIOMotorClient(
             MONGO_URI,
-            maxPoolSize=50,          # Máximo de conexões simultâneas
-            minPoolSize=10,          # Mínimo mantido aberto
-            serverSelectionTimeoutMS=5000,   # 5 segundos para escolher servidor
-            connectTimeoutMS=10000,          # 10 segundos para conectar
-            socketTimeoutMS=20000,           # 20 segundos para operações
-            retryWrites=True,                # Re-tenta escritas em caso de falha
-            w="majority",                    # Garante consistência
-            tls=True,                        # SSL ativado (obrigatório)
-            tlsCAFile=certifi.where()        # Certificado CA confiável
+            maxPoolSize=50,
+            minPoolSize=10,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=20000,
+            retryWrites=True,
+            w="majority",
+            tls=True,
+            tlsCAFile=certifi.where()
         )
         
         # Verifica se a conexão está funcionando
@@ -145,7 +145,7 @@ async def create_indexes():
     # Índice TTL para remoção automática de tokens expirados
     await db.refresh_token_blacklist.create_index(
         [("expires_at", 1)],
-        expireAfterSeconds=0  # MongoDB remove documentos quando expires_at < now()
+        expireAfterSeconds=0
     )
     # Índice único para garantir que o mesmo token não seja inserido duas vezes
     await db.refresh_token_blacklist.create_index([("token", 1)], unique=True)
