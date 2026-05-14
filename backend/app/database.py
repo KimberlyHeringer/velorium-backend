@@ -15,6 +15,10 @@ Arquivo: backend/app/database.py
 Configuração da conexão com MongoDB
 Arquivo: backend/app/database.py
 """
+"""
+Configuração da conexão com MongoDB
+Arquivo: backend/app/database.py
+"""
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional, Any
