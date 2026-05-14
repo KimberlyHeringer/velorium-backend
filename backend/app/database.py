@@ -91,8 +91,3 @@ async def create_indexes():
     await db.refresh_token_blacklist.create_index([("token", 1)], unique=True)
     
     print("Indices criados/verificados com sucesso")
-    )
-    # Índice único para garantir que o mesmo token não seja inserido duas vezes
-    await db.refresh_token_blacklist.create_index([("token", 1)], unique=True)
-    
-    print("✅ Índices criados/verificados com sucesso")
