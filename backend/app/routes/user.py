@@ -1,5 +1,5 @@
 """
-Rotas de Usuário (Perfil, Senha, Consentimento, etc.)
+Rotas de Usuário (Perfil, Senha, Consentimento, Preferências)
 Arquivo: backend/app/routes/user.py
 """
 
@@ -28,17 +28,9 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
-# ========== CONSENTIMENTO ==========
-
-class ConsentUpdate(BaseModel):
-    terms_accepted: bool
-    research_consent: bool
-
-
-class ConsentStatusResponse(BaseModel):
-    terms_accepted: bool
-    research_consent: bool
-    terms_accepted_at: Optional[datetime] = None
+class PreferencesUpdate(BaseModel):
+    language: Optional[str] = None   # pt, en, es, zh
+    currency: Optional[str] = None   # BRL, USD, EUR, CNY
 
 
 # ========== ENDPOINTS DE PERFIL ==========
@@ -49,7 +41,6 @@ async def update_profile(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    # Prepara os dados para atualização
     update_data = {}
     if profile_data.name is not None:
         update_data["name"] = profile_data.name
@@ -57,19 +48,12 @@ async def update_profile(
         update_data["email"] = profile_data.email.lower()
     
     if not update_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Nenhum dado para atualizar"
-        )
+        raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
     
-    # Se o email está sendo alterado, verifica se já não existe
     if "email" in update_data:
         existing = await db.users.find_one({"email": update_data["email"]})
         if existing and str(existing["_id"]) != str(current_user.id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email já cadastrado por outro usuário"
-            )
+            raise HTTPException(status_code=400, detail="Email já cadastrado")
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
@@ -96,17 +80,75 @@ async def change_password(
     if not verify_password(password_data.current_password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Senha atual incorreta")
     
-    new_password_hash = get_password_hash(password_data.new_password)
+    new_hash = get_password_hash(password_data.new_password)
     
     await db.users.update_one(
         {"_id": ObjectId(current_user.id)},
-        {"$set": {"password_hash": new_password_hash, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": {"password_hash": new_hash, "updated_at": datetime.now(timezone.utc)}}
     )
     
     return {"message": "Senha alterada com sucesso"}
 
 
+# ========== ENDPOINTS DE PREFERÊNCIAS ==========
+
+@router.get("/preferences", response_model=dict)
+async def get_preferences(
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Retorna as preferências do usuário (idioma, moeda)"""
+    user = await db.users.find_one({"_id": ObjectId(current_user.id)})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return {
+        "language": user.get("language", "pt"),
+        "currency": user.get("currency", "BRL")
+    }
+
+
+@router.put("/preferences", response_model=dict)
+async def update_preferences(
+    prefs: PreferencesUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Atualiza as preferências do usuário (idioma, moeda)"""
+    update_data = {}
+    if prefs.language is not None:
+        if prefs.language not in ["pt", "en", "es", "zh"]:
+            raise HTTPException(status_code=400, detail="Idioma inválido")
+        update_data["language"] = prefs.language
+    if prefs.currency is not None:
+        if prefs.currency not in ["BRL", "USD", "EUR", "CNY"]:
+            raise HTTPException(status_code=400, detail="Moeda inválida")
+        update_data["currency"] = prefs.currency
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhuma preferência para atualizar")
+    
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    
+    await db.users.update_one(
+        {"_id": ObjectId(current_user.id)},
+        {"$set": update_data}
+    )
+    
+    return {"message": "Preferências atualizadas com sucesso"}
+
+
 # ========== ENDPOINTS DE CONSENTIMENTO ==========
+
+class ConsentUpdate(BaseModel):
+    terms_accepted: bool
+    research_consent: bool
+
+
+class ConsentStatusResponse(BaseModel):
+    terms_accepted: bool
+    research_consent: bool
+    terms_accepted_at: Optional[datetime] = None
+
 
 @router.put("/consent", response_model=dict)
 async def update_consent(
@@ -114,9 +156,6 @@ async def update_consent(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Atualiza o status de aceitação dos Termos de Uso e o consentimento de dados.
-    """
     update_fields = {
         "research_consent": consent_data.research_consent,
         "updated_at": datetime.now(timezone.utc),
@@ -126,11 +165,7 @@ async def update_consent(
         update_fields["terms_accepted"] = True
         update_fields["terms_accepted_at"] = datetime.now(timezone.utc)
     else:
-        # Não permitir desmarcar termos aceitos (pode ser alterado para true, nunca para false)
-        raise HTTPException(
-            status_code=400,
-            detail="Os Termos de Uso não podem ser desmarcados depois de aceitos."
-        )
+        raise HTTPException(status_code=400, detail="Os Termos de Uso não podem ser desmarcados depois de aceitos.")
     
     await db.users.update_one(
         {"_id": ObjectId(current_user.id)},

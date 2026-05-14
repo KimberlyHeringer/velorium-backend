@@ -2,6 +2,10 @@
 Configuração da conexão com MongoDB
 Arquivo: backend/app/utils/database.py
 """
+"""
+Configuração da conexão com MongoDB
+Arquivo: backend/app/database.py
+"""
 
 from __future__ import annotations
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -132,5 +136,14 @@ async def create_indexes():
     
     # Índice para compras parceladas (busca por cartão)
     await db.credit_card_purchases.create_index([("card_id", 1)])
+    
+    # ========== NOVOS ÍNDICES PARA BLACKLIST DE REFRESH TOKENS ==========
+    # Índice TTL para remoção automática de tokens expirados
+    await db.refresh_token_blacklist.create_index(
+        [("expires_at", 1)],
+        expireAfterSeconds=0  # MongoDB remove documentos quando expires_at < now()
+    )
+    # Índice único para garantir que o mesmo token não seja inserido duas vezes
+    await db.refresh_token_blacklist.create_index([("token", 1)], unique=True)
     
     print("✅ Índices criados/verificados com sucesso")

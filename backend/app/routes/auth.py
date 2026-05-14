@@ -2,6 +2,10 @@
 Rotas de Autenticação
 Arquivo: backend/app/routes/auth.py
 """
+"""
+Rotas de Autenticação
+Arquivo: backend/app/routes/auth.py
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import datetime, timedelta, timezone
@@ -100,7 +104,12 @@ async def login(user_data: UserLogin, db=Depends(get_database)):
 
 @router.post("/refresh", response_model=TokenPair)
 async def refresh_token(req: RefreshTokenRequest, db=Depends(get_database)):
-    from app.utils.auth import refresh_access_token
+    from app.utils.auth import refresh_access_token, is_token_blacklisted
+    
+    # Verifica se o refresh token está na blacklist
+    if await is_token_blacklisted(req.refresh_token, db):
+        raise HTTPException(status_code=401, detail="Token revogado. Faça login novamente.")
+    
     try:
         return await refresh_access_token(req.refresh_token)
     except HTTPException:
@@ -117,8 +126,14 @@ async def get_current_user_profile(
 
 
 @router.post("/logout", response_model=dict)
-async def logout(current_user: Annotated[UserResponse, Depends(get_current_user)]):
-    return {"message": "Logout realizado com sucesso. Descarte os tokens no cliente."}
+async def logout(
+    refresh_token: str,  # recebido no corpo da requisição
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    from app.utils.auth import add_token_to_blacklist
+    await add_token_to_blacklist(refresh_token, current_user.id, db)
+    return {"message": "Logout realizado com sucesso. Token revogado."}
 
 
 # ========== NOVOS ENDPOINTS: RECUPERAÇÃO DE SENHA ==========

@@ -217,3 +217,39 @@ async def refresh_access_token(refresh_token: str) -> TokenPair:
     
     # Gerar novo par
     return generate_token_pair(token_data.user_id)
+
+
+# =============================================================================
+# BLACKLIST DE REFRESH TOKENS (para logout real)
+# =============================================================================
+
+async def add_token_to_blacklist(token: str, user_id: str, db):
+    """
+    Adiciona um refresh token à blacklist.
+    A expiração é extraída do próprio token (campo 'exp').
+    Se não conseguir decodificar, usa expiração padrão de REFRESH_TOKEN_EXPIRE_DAYS.
+    """
+    try:
+        # Decodifica sem verificar expiração para obter o timestamp de expiração
+        payload = jwt.decode(token, REFRESH_SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+        exp_timestamp = payload.get("exp")
+        if exp_timestamp:
+            expires_at = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
+        else:
+            expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    except Exception:
+        # Fallback seguro
+        expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+
+    await db.refresh_token_blacklist.insert_one({
+        "token": token,
+        "user_id": user_id,
+        "created_at": datetime.now(timezone.utc),
+        "expires_at": expires_at
+    })
+
+
+async def is_token_blacklisted(token: str, db) -> bool:
+    """Verifica se o refresh token está na blacklist."""
+    result = await db.refresh_token_blacklist.find_one({"token": token})
+    return result is not None

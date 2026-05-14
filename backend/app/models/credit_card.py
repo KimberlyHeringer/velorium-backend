@@ -10,10 +10,6 @@ from bson import ObjectId
 
 
 class CreditCard(BaseModel):
-    """
-    Modelo principal de Cartão de Crédito.
-    Controle de limite: limit_total - committed_amount = limite disponível.
-    """
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str},
@@ -22,43 +18,33 @@ class CreditCard(BaseModel):
     )
 
     id: Optional[str] = Field(None, alias="_id")
-    user_id: str                                    # injetado pelo backend
-    name: str                                       # nome do cartão (ex: "Nubank")
-    brand: Optional[str] = None                     # bandeira (Visa, Mastercard, etc.)
-    closing_day: int = Field(..., ge=1, le=31)      # dia do fechamento da fatura
-    due_day: int = Field(..., ge=1, le=31)          # dia do vencimento da fatura
+    user_id: str
+    name: str
+    brand: Optional[str] = None
+    closing_day: int = Field(..., ge=1, le=31)
+    due_day: int = Field(..., ge=1, le=31)
 
-    # ========== CAMPOS PARA CONTROLE DE LIMITE (futuro, mas já adiantado) ==========
-    limit_total: float = Field(default=0, ge=0)           # limite total do cartão
-    committed_amount: float = Field(default=0, ge=0)      # valor já comprometido em compras
-    # O limite disponível é calculado: limit_total - committed_amount
+    limit_total: float = Field(default=0, ge=0)
+    committed_amount: float = Field(default=0, ge=0)   # ← será atualizado pelas rotas
 
-    last_statement_closed_at: Optional[datetime] = None   # data do último fechamento
-    next_statement_due_date: Optional[date] = None        # próximo vencimento
+    last_statement_closed_at: Optional[datetime] = None
+    next_statement_due_date: Optional[date] = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    # ========== VALIDADORES ==========
-
     @model_validator(mode='after')
     def check_days(self):
-        """
-        Valida que o dia de fechamento e vencimento são diferentes.
-        (não impede que due_day seja menor que closing_day, pois alguns cartões têm essa característica)
-        """
         if self.closing_day == self.due_day:
             raise ValueError('closing_day and due_day must be different')
         return self
 
     @property
     def limit_available(self) -> float:
-        """Calcula o limite disponível (derivado, não salvo no banco)"""
         return self.limit_total - self.committed_amount
 
 
 class CreditCardCreate(BaseModel):
-    """Schema usado para CRIAR um novo cartão"""
     name: str = Field(..., min_length=1)
     brand: Optional[str] = None
     closing_day: int = Field(..., ge=1, le=31)
@@ -72,22 +58,19 @@ class CreditCardCreate(BaseModel):
 
 
 class CreditCardResponse(CreditCard):
-    """Schema usado para RESPOSTAS da API (força id como string)"""
     id: str
 
 
 class CreditCardUpdate(BaseModel):
-    """Schema usado para ATUALIZAR um cartão existente"""
     name: Optional[str] = None
     brand: Optional[str] = None
     closing_day: Optional[int] = Field(None, ge=1, le=31)
     due_day: Optional[int] = Field(None, ge=1, le=31)
-    limit_total: Optional[float] = Field(None, ge=0)        # permite atualizar limite
-    committed_amount: Optional[float] = Field(None, ge=0)   # permite ajuste manual
+    limit_total: Optional[float] = Field(None, ge=0)
+    committed_amount: Optional[float] = Field(None, ge=0)
 
     @model_validator(mode='after')
     def check_days(self):
-        """Se ambos os dias forem fornecidos, não podem ser iguais"""
         if self.closing_day is not None and self.due_day is not None and self.closing_day == self.due_day:
             raise ValueError('closing_day and due_day must be different')
         return self
@@ -95,13 +78,11 @@ class CreditCardUpdate(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def round_amounts(cls, values):
-        """Arredonda valores monetários para 2 casas decimais"""
-        if 'limit_total' in values and values['limit_total'] is not None:
+        if values.get('limit_total') is not None:
             values['limit_total'] = round(values['limit_total'], 2)
-        if 'committed_amount' in values and values['committed_amount'] is not None:
+        if values.get('committed_amount') is not None:
             values['committed_amount'] = round(values['committed_amount'], 2)
         return values
-
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #

@@ -262,3 +262,22 @@ async def calculate_score(
         "despesasMes": float(despesas_mes),
         "rendaMensal": float(renda_mensal),
     }
+
+
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ 🔧 CORREÇÃO: Adicionada função ensure_timezone() para tratar datas sem timezone
+# ✅ 🔧 CORREÇÃO: Cálculo de despesas_mes com datas corrigidas
+# ✅ 🔧 CORREÇÃO: Cálculo de despesas_mes_anterior com datas corrigidas
+# ✅ 🔧 CORREÇÃO: Cálculo de inatividade com datas corrigidas
+# ✅ 🔧 CORREÇÃO: Cálculo de metas_recentes com datas corrigidas
+# ✅ 🔧 CORREÇÃO: last_date com ensure_timezone
+# ✅ Busca do usuário com ObjectId (corrigido)
+# ✅ Conversão de renda_mensal para float + round
+# ✅ Garantia de float() em todas as somas
+# ✅ Adicionado logging (pronto para uso futuro)
+#
+# 📌 Dívida técnica (pós-MVP):
+#    - Cache do score diário (evitar recalcular toda requisição)
+#    - Usar agregação do MongoDB em vez de trazer documentos (performance)
+#    - Melhorar detecção de inatividade

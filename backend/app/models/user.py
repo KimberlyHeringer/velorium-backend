@@ -28,12 +28,15 @@ class User(BaseModel):
     occupation: str = Field(default="", max_length=100)
     financial_goal: str = Field(default="", max_length=500)
     
-    # Consentimento para uso de dados em IA (research_consent)
+    # Consentimento
     research_consent: bool = Field(default=False)
-    # Aceitação dos Termos de Uso (obrigatório)
     terms_accepted: bool = Field(default=False)
     terms_accepted_at: Optional[datetime] = None
     consent_updated_at: Optional[datetime] = None
+    
+    # ========== PREFERÊNCIAS DO USUÁRIO (sincronizadas) ==========
+    language: str = Field(default="pt")     # pt, en, es, zh
+    currency: str = Field(default="BRL")    # BRL, USD, EUR, CNY
     
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -50,9 +53,11 @@ class UserCreate(BaseModel):
     profession_type: str = Field(default="", max_length=50)
     occupation: str = Field(default="", max_length=100)
     financial_goal: str = Field(default="", max_length=500)
-    # Novos campos no cadastro (opcional, mas recomendado)
     terms_accepted: bool = Field(default=False)
     research_consent: bool = Field(default=False)
+    # Preferências iniciais (opcionais)
+    language: str = Field(default="pt")
+    currency: str = Field(default="BRL")
 
     @field_validator('password')
     @classmethod
@@ -91,8 +96,11 @@ class UserResponse(BaseModel):
     financial_goal: str
     created_at: datetime
     research_consent: bool = False
-    terms_accepted: bool = False      # ← NOVO
-    terms_accepted_at: Optional[datetime] = None   # ← NOVO
+    terms_accepted: bool = False
+    terms_accepted_at: Optional[datetime] = None
+    # Preferências
+    language: str = "pt"
+    currency: str = "BRL"
 
 
 class Token(BaseModel):
@@ -110,7 +118,10 @@ class UserUpdate(BaseModel):
     occupation: Optional[str] = Field(None, max_length=100)
     financial_goal: Optional[str] = Field(None, max_length=500)
     research_consent: Optional[bool] = None
-    terms_accepted: Optional[bool] = None   # ← NOVO
+    terms_accepted: Optional[bool] = None
+    # Preferências
+    language: Optional[str] = None
+    currency: Optional[str] = None
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #

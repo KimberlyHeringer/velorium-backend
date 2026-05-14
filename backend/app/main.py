@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from app.database import connect_to_mongo, close_mongo_connection, create_indexes
 from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user
+from app.routes import achievements  # adicione esta linha
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -85,6 +86,7 @@ app.include_router(profile.router, prefix="/api/v1")
 app.include_router(score.router, prefix="/api/v1")
 app.include_router(goals.router, prefix="/api/v1")
 app.include_router(user.router, prefix="/api/v1")
+app.include_router(achievements.router, prefix="/api/v1")
 
 
 # ========== ENDPOINTS PÚBLICOS ==========
