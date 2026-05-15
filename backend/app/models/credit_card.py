@@ -1,97 +1,136 @@
 """
-Modelo de Cartão de Crédito
-Arquivo: backend/app/models/credit_card.py
+Rotas de Cartões de Crédito
+Arquivo: backend/app/routes/credit_cards.py
 """
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
-from typing import Optional
-from datetime import datetime, timezone, date
+from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Optional
 from bson import ObjectId
+from datetime import datetime, timezone
+
+from app.database import get_database
+from app.models.credit_card import CreditCardCreate, CreditCardResponse, CreditCardUpdate
+from app.models.user import UserResponse
+from app.utils.auth import get_current_user
+
+router = APIRouter()
 
 
-class CreditCard(BaseModel):
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
-        from_attributes=True
+@router.get("/credit-cards", response_model=List[CreditCardResponse]) # type: ignore
+async def get_credit_cards(
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Lista todos os cartões do usuário"""
+    cursor = db.credit_cards.find({"user_id": current_user.id})
+    cards = await cursor.to_list(length=100)
+    
+    for card in cards:
+        card["_id"] = str(card["_id"])
+    
+    return cards
+
+
+@router.post("/credit-cards", response_model=CreditCardResponse, status_code=status.HTTP_201_CREATED)
+async def create_credit_card(
+    card_data: CreditCardCreate,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Cria um novo cartão de crédito"""
+    card_dict = card_data.model_dump()
+    card_dict["user_id"] = current_user.id
+    card_dict["created_at"] = datetime.now(timezone.utc)
+    card_dict["updated_at"] = datetime.now(timezone.utc)
+    card_dict["limit_total"] = 0.0
+    card_dict["committed_amount"] = 0.0
+    card_dict["last_statement_closed_at"] = None
+    card_dict["next_statement_due_date"] = None
+    
+    result = await db.credit_cards.insert_one(card_dict)
+    card_dict["_id"] = str(result.inserted_id)
+    
+    return card_dict
+
+
+@router.put("/credit-cards/{card_id}", response_model=CreditCardResponse)
+async def update_credit_card(
+    card_id: str,
+    card_data: CreditCardUpdate,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Atualiza um cartão existente"""
+    # Verifica se o cartão existe e pertence ao usuário
+    card = await db.credit_cards.find_one({
+        "_id": ObjectId(card_id),
+        "user_id": current_user.id
+    })
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Cartão não encontrado")
+    
+    # Prepara os dados para atualização
+    update_data = card_data.model_dump(exclude_unset=True)
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    
+    # Atualiza o cartão
+    await db.credit_cards.update_one(
+        {"_id": ObjectId(card_id)},
+        {"$set": update_data}
     )
-
-    id: Optional[str] = Field(None, alias="_id")
-    user_id: str
-    name: str
-    brand: Optional[str] = None
-    closing_day: int = Field(..., ge=1, le=31)
-    due_day: int = Field(..., ge=1, le=31)
-
-    limit_total: float = Field(default=0, ge=0)
-    committed_amount: float = Field(default=0, ge=0)   # ← será atualizado pelas rotas
-
-    last_statement_closed_at: Optional[datetime] = None
-    next_statement_due_date: Optional[date] = None
-
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    @model_validator(mode='after')
-    def check_days(self):
-        if self.closing_day == self.due_day:
-            raise ValueError('closing_day and due_day must be different')
-        return self
-
-    @property
-    def limit_available(self) -> float:
-        return self.limit_total - self.committed_amount
+    
+    # Busca o cartão atualizado
+    updated_card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
+    updated_card["_id"] = str(updated_card["_id"])
+    
+    return updated_card
 
 
-class CreditCardCreate(BaseModel):
-    name: str = Field(..., min_length=1)
-    brand: Optional[str] = None
-    closing_day: int = Field(..., ge=1, le=31)
-    due_day: int = Field(..., ge=1, le=31)
+@router.delete("/credit-cards/{card_id}", response_model=dict)
+async def delete_credit_card(
+    card_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Remove um cartão de crédito"""
+    # Verifica se o cartão existe e pertence ao usuário
+    card = await db.credit_cards.find_one({
+        "_id": ObjectId(card_id),
+        "user_id": current_user.id
+    })
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Cartão não encontrado")
+    
+    # Verifica se há compras associadas
+    purchases = await db.credit_card_purchases.find_one({"card_id": card_id})
+    if purchases:
+        raise HTTPException(
+            status_code=400, 
+            detail="Cartão possui compras associadas. Remova as compras primeiro."
+        )
+    
+    # Remove o cartão
+    await db.credit_cards.delete_one({"_id": ObjectId(card_id)})
+    
+    return {"message": "Cartão removido com sucesso"}
 
-    @model_validator(mode='after')
-    def check_days(self):
-        if self.closing_day == self.due_day:
-            raise ValueError('closing_day and due_day must be different')
-        return self
 
-
-class CreditCardResponse(CreditCard):
-    id: str
-
-
-class CreditCardUpdate(BaseModel):
-    name: Optional[str] = None
-    brand: Optional[str] = None
-    closing_day: Optional[int] = Field(None, ge=1, le=31)
-    due_day: Optional[int] = Field(None, ge=1, le=31)
-    limit_total: Optional[float] = Field(None, ge=0)
-    committed_amount: Optional[float] = Field(None, ge=0)
-
-    @model_validator(mode='after')
-    def check_days(self):
-        if self.closing_day is not None and self.due_day is not None and self.closing_day == self.due_day:
-            raise ValueError('closing_day and due_day must be different')
-        return self
-
-    @model_validator(mode='before')
-    @classmethod
-    def round_amounts(cls, values):
-        if values.get('limit_total') is not None:
-            values['limit_total'] = round(values['limit_total'], 2)
-        if values.get('committed_amount') is not None:
-            values['committed_amount'] = round(values['committed_amount'], 2)
-        return values
-
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Validador cruzado closing_day != due_day (em todos os schemas)
-# ✅ Apenas uma definição de CreditCardResponse (com id: str)
-# ✅ Adicionados campos limit_total e committed_amount (com default=0)
-# ✅ Adicionada propriedade limit_available (calculada, não salva)
-# ✅ round() aplicado em valores monetários no update
-#
-# 📅 Funcionalidade futura (controle de limite):
-#    A lógica de atualizar committed_amount (ao criar compra/pagar parcela)
-#    será implementada nas rotas (credit_card_purchases.py, credit_card_installments.py)
+@router.get("/credit-cards/{card_id}", response_model=CreditCardResponse)
+async def get_credit_card(
+    card_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Busca um cartão específico pelo ID"""
+    card = await db.credit_cards.find_one({
+        "_id": ObjectId(card_id),
+        "user_id": current_user.id
+    })
+    
+    if not card:
+        raise HTTPException(status_code=404, detail="Cartão não encontrado")
+    
+    card["_id"] = str(card["_id"])
+    return card

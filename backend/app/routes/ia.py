@@ -3,7 +3,7 @@ Rotas de IA (Inteligência Artificial)
 Arquivo: backend/app/routes/ia.py
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone, timedelta
 import os
@@ -12,6 +12,7 @@ from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 from app.services.ia_service import obter_resposta_ia_async
 from app.database import get_database
+from app.utils.rate_limiter import limiter
 from bson import ObjectId
 
 router = APIRouter(prefix="/ia", tags=["IA"])
@@ -97,8 +98,10 @@ Instruções:
 # ========== ENDPOINT PRINCIPAL ==========
 
 @router.post("/chat", response_model=ChatResponse)
+@limiter.limit("10/minute")
 async def chat(
-    request: ChatRequest,
+    request: Request,
+    chat_request: ChatRequest,
     current_user: UserResponse = Depends(get_current_user),
     db = Depends(get_database)
 ):
@@ -121,10 +124,10 @@ async def chat(
     try:
         if research_consent:
             contexto = await montar_contexto_ia_completo(current_user, db)
-            resposta = await obter_resposta_ia_async(contexto, request.pergunta)
+            resposta = await obter_resposta_ia_async(contexto, chat_request.pergunta)
         else:
             contexto = await montar_contexto_ia_anonimizado()
-            resposta = await obter_resposta_ia_async(contexto, request.pergunta)
+            resposta = await obter_resposta_ia_async(contexto, chat_request.pergunta)
         return ChatResponse(resposta=resposta)
     except Exception as e:
         print(f"Erro na chamada da IA para usuário {current_user.id}: {e}")

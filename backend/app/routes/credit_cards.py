@@ -16,7 +16,7 @@ from app.utils.auth import get_current_user
 router = APIRouter()
 
 
-@router.get("/credit-cards", response_model=List[CreditCardResponse])
+@router.get("/credit-cards", response_model=List[CreditCardResponse]) # type: ignore
 async def get_credit_cards(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)

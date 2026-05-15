@@ -102,39 +102,28 @@ async def create_indexes():
     """
     db = get_database()
     
-    # Índice para transações (mais comum)
-    await db.transactions.create_index([("user_id", 1)])
-    await db.transactions.create_index([("user_id", 1), ("date", -1)])
+    # Lista de índices para criar (ignora erros de índice já existente)
+    indexes = [
+        ("transactions", [("user_id", 1)]),
+        ("transactions", [("user_id", 1), ("date", -1)]),
+        ("transactions", [("user_id", 1), ("context", 1), ("date", -1)]),
+        ("bills", [("user_id", 1)]),
+        ("bills", [("user_id", 1), ("installments.start_date", 1)]),
+        ("goals", [("user_id", 1)]),
+        ("user_profiles", [("user_id", 1)], {"unique": True}),
+        ("score_history", [("user_id", 1), ("date", -1)]),
+        ("credit_cards", [("user_id", 1)]),
+        ("credit_card_purchases", [("card_id", 1)]),
+        ("refresh_token_blacklist", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+        ("refresh_token_blacklist", [("token", 1)], {"unique": True}),
+    ]
     
-    # Índice composto para buscas por contexto + data (usado no dashboard)
-    await db.transactions.create_index([("user_id", 1), ("context", 1), ("date", -1)])
-    
-    # Índices para contas a pagar
-    await db.bills.create_index([("user_id", 1)])
-    await db.bills.create_index([("user_id", 1), ("installments.start_date", 1)])
-    
-    # Índice para metas
-    await db.goals.create_index([("user_id", 1)])
-    
-    # Índice para perfil financeiro (único por usuário)
-    await db.user_profiles.create_index([("user_id", 1)], unique=True)
-    
-    # Índice para histórico de score
-    await db.score_history.create_index([("user_id", 1), ("date", -1)])
-    
-    # Índices para cartões de crédito
-    await db.credit_cards.create_index([("user_id", 1)])
-    
-    # Índice para compras parceladas (busca por cartão)
-    await db.credit_card_purchases.create_index([("card_id", 1)])
-    
-    # ========== NOVOS ÍNDICES PARA BLACKLIST DE REFRESH TOKENS ==========
-    # Índice TTL para remoção automática de tokens expirados
-    await db.refresh_token_blacklist.create_index(
-        [("expires_at", 1)],
-        expireAfterSeconds=0
-    )
-    # Índice único para garantir que o mesmo token não seja inserido duas vezes
-    await db.refresh_token_blacklist.create_index([("token", 1)], unique=True)
+    for collection_name, keys, *extra in indexes:
+        try:
+            collection = db[collection_name]
+            options = extra[0] if extra else {}
+            await collection.create_index(keys, **options)
+        except Exception as e:
+            print(f"⚠️ Índice em {collection_name} já existe ou erro: {e}")
     
     print("✅ Índices criados/verificados com sucesso")
