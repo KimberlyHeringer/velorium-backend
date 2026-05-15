@@ -13,6 +13,7 @@ from app.database import get_database
 from app.models.transaction import TransactionCreate, TransactionUpdate, TransactionResponse, TransactionBalance
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
+from app.utils.pagination import PaginationParams, PaginatedResponse, paginate, paginate_query
 
 # Configuração de logging
 logger = logging.getLogger(__name__)
@@ -73,17 +74,19 @@ async def create_transaction(
         )
 
 
-@router.get("/", response_model=List[TransactionResponse])
+@router.get("/", response_model=PaginatedResponse)
 async def get_transactions(
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página (máx 100)"),
     context: Optional[str] = Query(None, regex="^(individual|familia|profissional)$"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Lista transações do usuário com filtros opcionais"""
+    """Lista transações do usuário com paginação e filtros opcionais"""
+    params = PaginationParams(page=page, limit=limit)
+    
     query = {"user_id": str(current_user.id)}
     
     if context:
@@ -96,10 +99,13 @@ async def get_transactions(
         if end_date:
             query["date"]["$lte"] = end_date
 
-    cursor = db.transactions.find(query).sort("date", -1).skip(skip).limit(limit)
-    transactions = await cursor.to_list(length=limit)
+    items, total = await paginate_query(
+        db.transactions, query, params, sort=[("date", -1)]
+    )
     
-    return [format_transaction_doc(t) for t in transactions]
+    formatted_items = [format_transaction_doc(item) for item in items]
+    
+    return paginate(formatted_items, total, params)
 
 
 @router.get("/balance", response_model=TransactionBalance)
@@ -229,7 +235,8 @@ async def delete_transaction(
 # ✅ Tratamento de erro no create_transaction (mensagem genérica + log)
 # ✅ Mudado response_model do PUT para TransactionResponse
 # ✅ update_transaction retorna documento atualizado (não apenas mensagem)
-# ✅ Paginação implementada (skip/limit)
+# ✅ Paginação padronizada com page/limit (máx 100 itens)
+# ✅ Resposta paginada com items, total, pages, has_next, has_prev
 #
 # 📌 Dívida técnica (pós-MVP):
 #    - Índice composto (user_id, context, date) no database.py
