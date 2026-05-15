@@ -99,31 +99,170 @@ async def create_indexes():
     """
     Cria índices essenciais para consultas rápidas com muitos usuários
     Roda apenas uma vez, na inicialização do app
+    
+    ÍNDICES ORGANIZADOS POR COLEÇÃO:
+    - users: busca por email (login)
+    - transactions: consultas financeiras
+    - bills: contas a pagar
+    - goals: metas
+    - user_profiles: perfil financeiro
+    - score_history: histórico de score
+    - credit_cards: cartões
+    - credit_card_purchases: compras parceladas
+    - credit_card_installments: parcelas
+    - achievements: conquistas
+    - refresh_token_blacklist: segurança
     """
     db = get_database()
     
-    # Lista de índices para criar (ignora erros de índice já existente)
+    # ========== USUÁRIOS ==========
+    # 🔴 CRÍTICO: garantir que emails são únicos
+    try:
+        await db.users.create_index([("email", 1)], unique=True)
+        print("✅ Índice users.email (unique) criado")
+    except Exception as e:
+        print(f"⚠️ Índice users.email: {e}")
+    
+    # ========== TRANSAÇÕES ==========
     indexes = [
-        ("transactions", [("user_id", 1)]),
+        # Essencial para listar transações do usuário
         ("transactions", [("user_id", 1), ("date", -1)]),
+        # Para filtrar por tipo (receita/despesa)
+        ("transactions", [("user_id", 1), ("type", 1), ("date", -1)]),
+        # Para relatórios por categoria
+        ("transactions", [("user_id", 1), ("category", 1), ("date", -1)]),
+        # Para contexto familiar
         ("transactions", [("user_id", 1), ("context", 1), ("date", -1)]),
-        ("bills", [("user_id", 1)]),
-        ("bills", [("user_id", 1), ("installments.start_date", 1)]),
-        ("goals", [("user_id", 1)]),
-        ("user_profiles", [("user_id", 1)], {"unique": True}),
-        ("score_history", [("user_id", 1), ("date", -1)]),
-        ("credit_cards", [("user_id", 1)]),
-        ("credit_card_purchases", [("card_id", 1)]),
-        ("refresh_token_blacklist", [("expires_at", 1)], {"expireAfterSeconds": 0}),
-        ("refresh_token_blacklist", [("token", 1)], {"unique": True}),
+        # Para busca por data específica
+        ("transactions", [("date", -1)]),
     ]
     
-    for collection_name, keys, *extra in indexes:
+    for collection_name, keys in indexes:
         try:
             collection = db[collection_name]
-            options = extra[0] if extra else {}
-            await collection.create_index(keys, **options)
+            await collection.create_index(keys)
+            print(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name} já existe ou erro: {e}")
+            print(f"⚠️ Índice em {collection_name}: {e}")
     
-    print("✅ Índices criados/verificados com sucesso")
+    # ========== CONTAS A PAGAR (BILLS) ==========
+    indexes = [
+        ("bills", [("user_id", 1)]),
+        ("bills", [("user_id", 1), ("paid", 1)]),
+        ("bills", [("user_id", 1), ("installments.start_date", 1)]),
+        ("bills", [("user_id", 1), ("installments.due_day", 1)]),
+    ]
+    
+    for collection_name, keys in indexes:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            print(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            print(f"⚠️ Índice em {collection_name}: {e}")
+    
+    # ========== METAS (GOALS) ==========
+    indexes = [
+        ("goals", [("user_id", 1)]),
+        ("goals", [("user_id", 1), ("completed", 1)]),
+        ("goals", [("user_id", 1), ("category", 1)]),
+    ]
+    
+    for collection_name, keys in indexes:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            print(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            print(f"⚠️ Índice em {collection_name}: {e}")
+    
+    # ========== PERFIL DO USUÁRIO ==========
+    try:
+        await db.user_profiles.create_index([("user_id", 1)], unique=True)
+        print("✅ Índice user_profiles.user_id (unique) criado")
+    except Exception as e:
+        print(f"⚠️ Índice user_profiles: {e}")
+    
+    # ========== HISTÓRICO DE SCORE ==========
+    try:
+        await db.score_history.create_index([("user_id", 1), ("date", -1)])
+        print("✅ Índice score_history.user_id + date criado")
+    except Exception as e:
+        print(f"⚠️ Índice score_history: {e}")
+    
+    # ========== CARTÕES DE CRÉDITO ==========
+    indexes = [
+        ("credit_cards", [("user_id", 1)]),
+        ("credit_cards", [("user_id", 1), ("closing_day", 1)]),
+        ("credit_cards", [("user_id", 1), ("due_day", 1)]),
+    ]
+    
+    for collection_name, keys in indexes:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            print(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            print(f"⚠️ Índice em {collection_name}: {e}")
+    
+    # ========== COMPRAS PARCELADAS ==========
+    indexes = [
+        ("credit_card_purchases", [("card_id", 1)]),
+        ("credit_card_purchases", [("user_id", 1), ("created_at", -1)]),
+        ("credit_card_purchases", [("card_id", 1), ("created_at", -1)]),
+    ]
+    
+    for collection_name, keys in indexes:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            print(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            print(f"⚠️ Índice em {collection_name}: {e}")
+    
+    # ========== PARCELAS (INSTALLMENTS) ==========
+    indexes = [
+        ("credit_card_installments", [("purchase_id", 1)]),  # ESSENCIAL!
+        ("credit_card_installments", [("user_id", 1), ("paid", 1)]),
+        ("credit_card_installments", [("card_id", 1), ("due_date", 1)]),
+        ("credit_card_installments", [("user_id", 1), ("due_date", 1)]),
+    ]
+    
+    for collection_name, keys in indexes:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            print(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            print(f"⚠️ Índice em {collection_name}: {e}")
+    
+    # ========== CONQUISTAS (ACHIEVEMENTS) ==========
+    indexes = [
+        ("achievements", [("user_id", 1)]),
+        ("achievements", [("user_id", 1), ("type", 1), ("date", -1)]),
+        ("achievements", [("user_id", 1), ("month", 1)]),
+    ]
+    
+    for collection_name, keys in indexes:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            print(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            print(f"⚠️ Índice em {collection_name}: {e}")
+    
+    # ========== BLACKLIST DE TOKENS (SEGURANÇA) ==========
+    try:
+        await db.refresh_token_blacklist.create_index(
+            [("expires_at", 1)], 
+            expireAfterSeconds=0
+        )
+        await db.refresh_token_blacklist.create_index(
+            [("token", 1)], 
+            unique=True
+        )
+        print("✅ Índices refresh_token_blacklist criados")
+    except Exception as e:
+        print(f"⚠️ Índices refresh_token_blacklist: {e}")
+    
+    print("✅ Todos os índices foram criados/verificados com sucesso!")

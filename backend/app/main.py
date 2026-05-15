@@ -6,7 +6,6 @@ Ponto de entrada da API FastAPI
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi_helmet import HelmetMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -93,7 +92,19 @@ app = FastAPI(
 )
 
 # ========== #34 - HELMET (headers de segurança) ==========
-app.add_middleware(FastAPIHelmet)
+# ⚠️ Temporariamente desabilitado - instalar: pip install fastapi-helmet
+# from fastapi_helmet import HelmetMiddleware
+# app.add_middleware(HelmetMiddleware)
+# 🔒 Alternativa nativa do FastAPI para headers de segurança:
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Adiciona headers de segurança manualmente"""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 # ========== #36 - COMPRESSÃO GZIP ==========
 app.add_middleware(GZipMiddleware, minimum_size=1000)
