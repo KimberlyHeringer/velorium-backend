@@ -2,7 +2,7 @@
 Configuração da conexão com MongoDB
 Arquivo: backend/app/database.py
 """
-from __future__ import annotations
+
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional, Any
 import os
@@ -21,7 +21,7 @@ DATABASE_NAME = os.getenv("DATABASE_NAME", "velorium_db")
 
 # Validação: se não tiver URI, o app nem sobe (segurança)
 if not MONGO_URI:
-    raise ValueError("MONGO_URI não encontrada no .env!")
+    raise ValueError("MONGO_URI nao encontrada no .env!")
 
 # Variáveis globais para armazenar o cliente e o banco
 client: Optional[AsyncIOMotorClient] = None
