@@ -26,8 +26,6 @@ def format_doc(doc: dict) -> dict:
     return doc
 
 
-# ========== ENDPOINTS ==========
-
 @router.get("/", response_model=Optional[UserProfileResponse])
 async def get_profile(
     current_user: UserResponse = Depends(get_current_user),
@@ -66,6 +64,7 @@ async def save_profile(
         result = await db.user_profiles.insert_one(profile_dict)
         profile_dict["_id"] = result.inserted_id
     
+    # 🔧 CORREÇÃO: usar format_doc para consistência
     return format_doc(profile_dict)
 
 # ========== DECISÕES DOCUMENTADAS ==========

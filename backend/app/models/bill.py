@@ -1,15 +1,14 @@
 """
 Modelo de Contas a Pagar (Bills)
 Arquivo: backend/app/models/bill.py
-
-SEGURANÇA: O campo user_id é definido APENAS pelo backend via token JWT.
-O frontend NUNCA deve enviar user_id nas requisições.
 """
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
+
+from app.utils.validators import round_amount  # ← centralizado
 
 
 class InstallmentInfo(BaseModel):
@@ -29,9 +28,6 @@ class NotificationInfo(BaseModel):
 class Bill(BaseModel):
     """
     Modelo principal de Conta a Pagar
-    
-    IMPORTANTE: O campo user_id NUNCA deve vir do frontend.
-    Ele é injetado pelo backend após validação do token JWT.
     """
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -41,7 +37,7 @@ class Bill(BaseModel):
     )
 
     id: Optional[str] = Field(None, alias="_id")
-    user_id: str  # ⚠️ injetado pelo backend, NUNCA vem do frontend
+    user_id: str
     description: str
     amount: float = Field(..., gt=0)
     installments: InstallmentInfo
@@ -57,41 +53,28 @@ class Bill(BaseModel):
 
     @model_validator(mode='after')
     def check_paid_date(self):
-        """
-        VALIDAÇÃO: Se a conta está marcada como paga (paid=True),
-        o campo paid_date não pode ser None.
-        """
+        """Se paid=True, paid_date é obrigatório"""
         if self.paid and self.paid_date is None:
             raise ValueError('paid_date é obrigatório quando paid=True')
         return self
     
     @model_validator(mode='after')
     def validate_installment_due_day(self):
-        """
-        VALIDAÇÃO: Se tem parcelas (total > 1), o due_day é obrigatório
-        """
+        """Parcelas com total > 1 exigem due_day"""
         if self.installments.total > 1 and self.installments.due_day is None:
-            raise ValueError('Parcelamento com mais de 1 parcela exige due_day (dia de vencimento)')
+            raise ValueError('Parcelamento com mais de 1 parcela exige due_day')
         return self
 
     @model_validator(mode='after')
-    def round_amount(self):
-        """
-        Arredonda o valor para 2 casas decimais.
-        Evita problemas de precisão com float (ex: 0.1 + 0.2 = 0.30000000000000004)
-        """
+    def round_amount_field(self):
+        """Arredonda amount usando função centralizada"""
         if self.amount is not None:
-            self.amount = round(self.amount, 2)
+            self.amount = round_amount(self.amount)
         return self
 
 
 class BillCreate(BaseModel):
-    """
-    Schema usado para CRIAR uma nova conta.
-    
-    ⚠️ NÃO contém user_id! O backend injetará esse campo após validar o token.
-    O frontend NUNCA deve enviar user_id nesta requisição.
-    """
+    """Schema usado para CRIAR uma nova conta"""
     description: str
     amount: float = Field(..., gt=0)
     installments: InstallmentInfo
@@ -101,15 +84,14 @@ class BillCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_installment_due_day(self):
-        """Valida due_day para parcelas"""
         if self.installments.total > 1 and self.installments.due_day is None:
             raise ValueError('Parcelamento com mais de 1 parcela exige due_day')
         return self
 
     @model_validator(mode='after')
-    def round_amount(self):
+    def round_amount_field(self):
         if self.amount is not None:
-            self.amount = round(self.amount, 2)
+            self.amount = round_amount(self.amount)
         return self
 
 
@@ -125,13 +107,16 @@ class BillUpdate(BaseModel):
     paid_date: Optional[datetime] = None
 
     @model_validator(mode='after')
-    def round_amount(self):
+    def round_amount_field(self):
         if self.amount is not None:
-            self.amount = round(self.amount, 2)
+            self.amount = round_amount(self.amount)
         return self
 
 
 class BillResponse(Bill):
+    """Schema usado para RESPOSTAS"""
+    pass
+
     """
     Schema usado para RESPOSTAS (herda tudo de Bill)
     

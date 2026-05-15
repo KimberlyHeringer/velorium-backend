@@ -3,10 +3,12 @@ Modelo de Transações (Receitas e Despesas)
 Arquivo: backend/app/models/transaction.py
 """
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional, Literal
 from datetime import datetime, timezone
 from bson import ObjectId
+
+from app.utils.validators import round_amount, validate_date_not_future  # ← centralizado
 
 
 class Transaction(BaseModel):
@@ -22,19 +24,17 @@ class Transaction(BaseModel):
     )
 
     id: Optional[str] = Field(None, alias="_id")
-    user_id: str                                    # injetado pelo backend
-    type: Literal["income", "expense"]              # receita ou despesa
-    amount: float = Field(..., gt=0)                # valor (positivo)
-    category: str                                   # categoria (ex: Alimentação)
-    description: Optional[str] = None               # descrição opcional
-    date: datetime                                  # data da transação
-    payment_method: Optional[str] = None            # Dinheiro, Pix, Cartão...
+    user_id: str
+    type: Literal["income", "expense"]
+    amount: float = Field(..., gt=0)
+    category: str
+    description: Optional[str] = None
+    date: datetime
+    payment_method: Optional[str] = None
     context: Literal["individual", "familia", "profissional"] = "individual"
-    family_id: Optional[str] = None                 # obrigatório se context = "familia"
+    family_id: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    # ========== VALIDADORES ==========
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -43,11 +43,19 @@ class Transaction(BaseModel):
             raise ValueError("family_id é obrigatório quando context é 'familia'")
         return self
 
-    @field_validator('amount')
-    @classmethod
-    def round_amount(cls, v):
-        """Arredonda amount para 2 casas decimais"""
-        return round(v, 2) if v is not None else v
+    @model_validator(mode='after')
+    def validate_date(self):
+        """Valida que a data não está no futuro (opcional para MVP)"""
+        if self.date:
+            validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def round_amount_field(self):
+        """Arredonda amount usando função centralizada"""
+        if self.amount is not None:
+            self.amount = round_amount(self.amount)
+        return self
 
 
 class TransactionCreate(BaseModel):
@@ -67,10 +75,17 @@ class TransactionCreate(BaseModel):
             raise ValueError("family_id é obrigatório quando context é 'familia'")
         return self
 
-    @field_validator('amount')
-    @classmethod
-    def round_amount(cls, v):
-        return round(v, 2) if v is not None else v
+    @model_validator(mode='after')
+    def validate_date(self):
+        if self.date:
+            validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def round_amount_field(self):
+        if self.amount is not None:
+            self.amount = round_amount(self.amount)
+        return self
 
 
 class TransactionUpdate(BaseModel):
@@ -86,15 +101,21 @@ class TransactionUpdate(BaseModel):
 
     @model_validator(mode='after')
     def check_family_context(self):
-        """Se context for atualizado para 'familia', family_id não pode ser None"""
         if self.context == "familia" and self.family_id is None:
             raise ValueError("family_id é obrigatório quando context é 'familia'")
         return self
 
-    @field_validator('amount')
-    @classmethod
-    def round_amount(cls, v):
-        return round(v, 2) if v is not None else v
+    @model_validator(mode='after')
+    def validate_date(self):
+        if self.date:
+            validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def round_amount_field(self):
+        if self.amount is not None:
+            self.amount = round_amount(self.amount)
+        return self
 
 
 class TransactionResponse(BaseModel):
@@ -109,7 +130,7 @@ class TransactionResponse(BaseModel):
     id: str = Field(..., alias="_id")
     user_id: str
     type: str
-    amount: float          # agora é float (não Decimal)
+    amount: float
     category: str
     description: Optional[str]
     date: datetime
@@ -121,12 +142,11 @@ class TransactionResponse(BaseModel):
 
 
 class TransactionBalance(BaseModel):
-    """Schema para retorno de saldo (receitas - despesas)"""
+    """Schema para retorno de saldo"""
     income: float
     expense: float
     balance: float
     context: Optional[str] = None
-
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #

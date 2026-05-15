@@ -11,13 +11,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-# ========== FUNÇÃO AUXILIAR PARA CORRIGIR TIMEZONE ==========
 def ensure_timezone(dt):
-    """
-    Garante que uma data tenha timezone UTC.
-    Se não tiver, adiciona UTC.
-    Se for None, retorna None.
-    """
+    """Garante que uma data tenha timezone UTC"""
     if dt is None:
         return None
     if dt.tzinfo is None:
@@ -46,7 +41,6 @@ async def calculate_score(
         })
         transactions = await transactions_cursor.to_list(1000)
     
-    # 🔧 CORREÇÃO: Garantir que todas as transações tenham date com timezone
     for t in transactions:
         if "date" in t:
             t["date"] = ensure_timezone(t["date"])
@@ -60,10 +54,12 @@ async def calculate_score(
         except Exception:
             goals = []
     
-    # 🔧 CORREÇÃO: Garantir que todas as metas tenham updatedAt com timezone
+    # 🔧 CORREÇÃO: Garantir que todas as metas tenham updated_at com timezone
     for g in goals:
-        if "updatedAt" in g:
-            g["updatedAt"] = ensure_timezone(g["updatedAt"])
+        if "updated_at" in g:
+            g["updated_at"] = ensure_timezone(g["updated_at"])
+        elif "updatedAt" in g:  # compatibilidade com nome antigo
+            g["updated_at"] = ensure_timezone(g["updatedAt"])
     
     # ========== 2. PONTOS BASE ==========
     score = 50
@@ -108,8 +104,10 @@ async def calculate_score(
         user_obj_id = user_id
     
     user_doc = await db.users.find_one({"_id": user_obj_id})
-    if user_doc and "monthly_income" in user_doc:
-        renda_mensal = float(user_doc["monthly_income"])
+    
+    # 🔧 CORREÇÃO: monthly_income com fallback seguro
+    if user_doc:
+        renda_mensal = float(user_doc.get("monthly_income", 0.0))
         renda_mensal = round(renda_mensal, 2)
     else:
         renda_mensal = 0.0
@@ -194,7 +192,7 @@ async def calculate_score(
     metas_recentes = 0
     for g in goals:
         if g.get("completed"):
-            updated_at = g.get("updatedAt")
+            updated_at = g.get("updated_at")
             if updated_at and updated_at >= sete_dias_atras:
                 metas_recentes += 1
     
