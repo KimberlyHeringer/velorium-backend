@@ -5,7 +5,14 @@ Ponto de entrada da API FastAPI
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi_helmet import FastAPIHelmet
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 import os
+import re
+import json
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -17,12 +24,82 @@ from app.utils.rate_limiter import init_rate_limiter
 # Carrega variáveis de ambiente
 load_dotenv()
 
+
+# ========== #35 - SANITIZAÇÃO DE SAÍDA (prevenir XSS) ==========
+class SanitizeMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware que sanitiza respostas JSON para prevenir XSS.
+    Remove ou escapa caracteres perigosos: < > & ' "
+    """
+    
+    def __init__(self, app):
+        super().__init__(app)
+        self.patterns = [
+            (re.compile(r'&'), '&amp;'),
+            (re.compile(r'<'), '&lt;'),
+            (re.compile(r'>'), '&gt;'),
+            (re.compile(r'"'), '&quot;'),
+            (re.compile(r"'"), '&#x27;'),
+        ]
+    
+    def sanitize_string(self, value):
+        if isinstance(value, str):
+            for pattern, replacement in self.patterns:
+                value = pattern.sub(replacement, value)
+        return value
+    
+    def sanitize_dict(self, obj):
+        if isinstance(obj, dict):
+            return {key: self.sanitize_dict(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self.sanitize_dict(item) for item in obj]
+        elif isinstance(obj, str):
+            return self.sanitize_string(obj)
+        else:
+            return obj
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        if 200 <= response.status_code < 300:
+            content_type = response.headers.get("content-type", "")
+            if "application/json" in content_type:
+                try:
+                    body = b""
+                    async for chunk in response.body_iterator:
+                        body += chunk
+                    
+                    data = json.loads(body.decode('utf-8'))
+                    sanitized_data = self.sanitize_dict(data)
+                    sanitized_body = json.dumps(sanitized_data, ensure_ascii=False).encode('utf-8')
+                    
+                    return Response(
+                        content=sanitized_body,
+                        status_code=response.status_code,
+                        headers=dict(response.headers),
+                        media_type=response.media_type
+                    )
+                except Exception:
+                    pass
+        
+        return response
+
+
 # Cria a aplicação FastAPI
 app = FastAPI(
     title="Velorium API",
     description="API do app de gestão financeira Velorium",
     version="1.0.0"
 )
+
+# ========== #34 - HELMET (headers de segurança) ==========
+app.add_middleware(FastAPIHelmet)
+
+# ========== #36 - COMPRESSÃO GZIP ==========
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# ========== #35 - SANITIZAÇÃO XSS ==========
+app.add_middleware(SanitizeMiddleware)
 
 # ========== INICIALIZA RATE LIMITER ==========
 init_rate_limiter(app)
