@@ -2,12 +2,8 @@
 Rotas de Autenticação
 Arquivo: backend/app/routes/auth.py
 """
-"""
-Rotas de Autenticação
-Arquivo: backend/app/routes/auth.py
-"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 import secrets
@@ -21,6 +17,7 @@ from app.utils.auth import (
     TokenPair,
     get_current_user
 )
+from app.utils.rate_limiter import limiter
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -55,7 +52,12 @@ class ResetPasswordRequest(BaseModel):
 # ========== ENDPOINTS ==========
 
 @router.post("/register", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, db=Depends(get_database)):
+@limiter.limit("3/minute")
+async def register(
+    request: Request,
+    user_data: UserCreate,
+    db=Depends(get_database)
+):
     existing = await db.users.find_one({"email": user_data.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email já cadastrado")
@@ -74,7 +76,12 @@ async def register(user_data: UserCreate, db=Depends(get_database)):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(user_data: UserLogin, db=Depends(get_database)):
+@limiter.limit("5/minute")
+async def login(
+    request: Request,
+    user_data: UserLogin,
+    db=Depends(get_database)
+):
     db_user = await db.users.find_one({"email": user_data.email.lower()})
     if not db_user or not verify_password(user_data.password, db_user["password_hash"]):
         raise HTTPException(status_code=401, detail="Email ou senha inválidos")
@@ -106,7 +113,6 @@ async def login(user_data: UserLogin, db=Depends(get_database)):
 async def refresh_token(req: RefreshTokenRequest, db=Depends(get_database)):
     from app.utils.auth import refresh_access_token, is_token_blacklisted
     
-    # Verifica se o refresh token está na blacklist
     if await is_token_blacklisted(req.refresh_token, db):
         raise HTTPException(status_code=401, detail="Token revogado. Faça login novamente.")
     
@@ -127,7 +133,7 @@ async def get_current_user_profile(
 
 @router.post("/logout", response_model=dict)
 async def logout(
-    refresh_token: str,  # recebido no corpo da requisição
+    refresh_token: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
@@ -136,17 +142,13 @@ async def logout(
     return {"message": "Logout realizado com sucesso. Token revogado."}
 
 
-# ========== NOVOS ENDPOINTS: RECUPERAÇÃO DE SENHA ==========
-
 @router.post("/forgot-password", response_model=dict)
 async def forgot_password(
     request: ForgotPasswordRequest,
     db=Depends(get_database)
 ):
-    """Gera um token de recuperação e envia email (mock)."""
     user = await db.users.find_one({"email": request.email})
     if not user:
-        # Por segurança, não informar se o email existe
         return {"message": "Se o email estiver cadastrado, você receberá um link de redefinição."}
     
     token = secrets.token_urlsafe(32)
@@ -160,11 +162,9 @@ async def forgot_password(
         }}
     )
     
-    # Para desenvolvimento: exibe o link no terminal do servidor
     reset_link = f"https://velorium-frontend.com/reset-password?token={token}"
     print(f"🔐 [MOCK] Link para redefinir senha: {reset_link}")
     
-    # Em produção: enviar email real (SendGrid, SMTP, etc.)
     return {"message": "Se o email estiver cadastrado, você receberá um link de redefinição."}
 
 
@@ -173,7 +173,6 @@ async def reset_password(
     request: ResetPasswordRequest,
     db=Depends(get_database)
 ):
-    """Redefine a senha usando um token válido."""
     user = await db.users.find_one({
         "reset_token": request.token,
         "reset_token_expires": {"$gt": datetime.now(timezone.utc)}
