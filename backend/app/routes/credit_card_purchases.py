@@ -3,7 +3,7 @@ Rotas de Compras Parceladas no Cartão de Crédito
 Arquivo: backend/app/routes/credit_card_purchases.py
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -13,11 +13,21 @@ from app.database import get_database
 from app.models.credit_card_purchase import CreditCardPurchaseCreate, CreditCardPurchaseResponse
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
+from app.utils.pagination import PaginationParams, paginate_query, paginate
 
 router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 
 
 # ========== FUNÇÕES AUXILIARES ==========
+
+def format_doc(doc: dict) -> dict:
+    """Converte _id para id e padroniza resposta"""
+    if doc and "_id" in doc:
+        result = dict(doc)
+        result["id"] = str(result.pop("_id"))
+        return result
+    return doc
+
 
 def split_amount(total: float, parts: int) -> List[float]:
     base = round(total / parts, 2)
@@ -28,16 +38,8 @@ def split_amount(total: float, parts: int) -> List[float]:
     return amounts
 
 
-def serialize_doc(doc: dict) -> dict:
-    if doc is None:
-        return None
-    doc["_id"] = str(doc["_id"])
-    doc["id"] = doc["_id"]
-    return doc
-
-
 async def update_card_committed_amount(card_id: str, delta: float, db):
-    """Atualiza o committed_amount do cartão (delta pode ser positivo ou negativo)."""
+    """Atualiza o committed_amount do cartão"""
     await db.credit_cards.update_one(
         {"_id": ObjectId(card_id)},
         {"$inc": {"committed_amount": delta}, "$set": {"updated_at": datetime.now(timezone.utc)}}
@@ -45,7 +47,7 @@ async def update_card_committed_amount(card_id: str, delta: float, db):
 
 
 async def check_available_limit(card_id: str, required: float, db) -> float:
-    """Retorna limite disponível ou levanta HTTPException se insuficiente."""
+    """Retorna limite disponível ou levanta HTTPException se insuficiente"""
     card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
@@ -66,7 +68,7 @@ async def create_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    # Validar cartão e limite
+    """Cria uma nova compra parcelada"""
     try:
         card = await db.credit_cards.find_one({
             "_id": ObjectId(purchase_data.card_id),
@@ -77,25 +79,20 @@ async def create_purchase(
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
 
-    # Verificar limite disponível
     await check_available_limit(purchase_data.card_id, purchase_data.total_amount, db)
 
-    # Converter data
     first_due = purchase_data.first_due_date
     if isinstance(first_due, str):
         first_due = datetime.fromisoformat(first_due.replace('Z', '+00:00'))
 
-    # Preparar documento da compra
     purchase_dict = purchase_data.model_dump()
     purchase_dict["user_id"] = str(current_user.id)
     purchase_dict["first_due_date"] = first_due
     purchase_dict["created_at"] = datetime.now(timezone.utc)
     purchase_dict["updated_at"] = datetime.now(timezone.utc)
 
-    # Inserir compra
     result = await db.credit_card_purchases.insert_one(purchase_dict)
 
-    # Gerar parcelas
     amounts = split_amount(purchase_data.total_amount, purchase_data.installments)
     installments = []
     for i in range(purchase_data.installments):
@@ -115,11 +112,34 @@ async def create_purchase(
     if installments:
         await db.credit_card_installments.insert_many(installments)
 
-    # Atualizar committed_amount (valor total da compra)
     await update_card_committed_amount(purchase_data.card_id, purchase_data.total_amount, db)
 
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
-    return serialize_doc(created)
+    return format_doc(created)
+
+
+@router.get("/purchases", response_model=dict)
+async def get_purchases(
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
+    card_id: Optional[str] = Query(None, description="Filtrar por cartão"),
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Lista compras parceladas do usuário com paginação"""
+    params = PaginationParams(page=page, limit=limit)
+    query = {"user_id": str(current_user.id)}
+    
+    if card_id:
+        query["card_id"] = card_id
+
+    items, total = await paginate_query(
+        db.credit_card_purchases, query, params, sort=[("created_at", -1)]
+    )
+    
+    formatted_items = [format_doc(item) for item in items]
+    
+    return paginate(formatted_items, total, params)
 
 
 @router.get("/faturas", response_model=List[dict])
@@ -130,7 +150,7 @@ async def get_faturas(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    # ... (mantido igual, sem alterações de limite)
+    """Retorna faturas do cartão (sem paginação - resumo)"""
     try:
         card = await db.credit_cards.find_one({
             "_id": ObjectId(card_id),
@@ -154,7 +174,7 @@ async def get_faturas(
         query["due_date"] = {"$gte": start_date, "$lt": end_date}
 
     installments_cursor = db.credit_card_installments.find(query)
-    installments = await installments_cursor.to_list(length=100)
+    installments = await installments_cursor.to_list(length=1000)
 
     if not installments:
         return []
@@ -165,10 +185,7 @@ async def get_faturas(
         if pid not in purchases_map:
             purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
             if purchase:
-                purchase["id"] = str(purchase["_id"])
-                purchases_map[pid] = purchase
-        inst["_id"] = str(inst["_id"])
-        inst["id"] = inst["_id"]
+                purchases_map[pid] = format_doc(purchase)
 
     result = []
     for pid, purchase in purchases_map.items():
@@ -192,13 +209,14 @@ async def get_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Busca uma compra específica"""
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(purchase_id),
         "user_id": str(current_user.id)
     })
     if not purchase:
         raise HTTPException(status_code=404, detail="Compra não encontrada")
-    return serialize_doc(purchase)
+    return format_doc(purchase)
 
 
 @router.put("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
@@ -208,7 +226,7 @@ async def update_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    # Verificar compra existente
+    """Atualiza uma compra existente"""
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(purchase_id),
         "user_id": str(current_user.id)
@@ -216,7 +234,6 @@ async def update_purchase(
     if not purchase:
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
-    # Verificar parcelas pagas
     existing_installments = await db.credit_card_installments.find({
         "purchase_id": purchase_id,
         "paid": True
@@ -227,19 +244,15 @@ async def update_purchase(
             detail="Não é possível editar compra com parcelas já pagas."
         )
 
-    # Calcular diferença de valor total
     old_total = purchase["total_amount"]
     new_total = purchase_data.total_amount
     delta = new_total - old_total
 
     if delta != 0:
-        # Verificar limite disponível se o valor aumentou
         if delta > 0:
             await check_available_limit(purchase_data.card_id, delta, db)
-        # Atualizar committed_amount
         await update_card_committed_amount(purchase_data.card_id, delta, db)
 
-    # Atualizar dados da compra
     update_dict = purchase_data.model_dump()
     update_dict["updated_at"] = datetime.now(timezone.utc)
     if "first_due_date" in update_dict and isinstance(update_dict["first_due_date"], str):
@@ -250,7 +263,6 @@ async def update_purchase(
         {"$set": update_dict}
     )
 
-    # Recriar parcelas
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
     first_due = update_dict["first_due_date"]
     amounts = split_amount(new_total, update_dict["installments"])
@@ -273,7 +285,7 @@ async def update_purchase(
         await db.credit_card_installments.insert_many(installments)
 
     updated = await db.credit_card_purchases.find_one({"_id": ObjectId(purchase_id)})
-    return serialize_doc(updated)
+    return format_doc(updated)
 
 
 @router.delete("/purchases/{purchase_id}", response_model=dict)
@@ -282,6 +294,7 @@ async def delete_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Remove uma compra e suas parcelas"""
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(purchase_id),
         "user_id": str(current_user.id)
@@ -289,7 +302,6 @@ async def delete_purchase(
     if not purchase:
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
-    # Subtrair o valor total do committed_amount
     total_amount = purchase["total_amount"]
     await update_card_committed_amount(purchase["card_id"], -total_amount, db)
 
@@ -304,6 +316,7 @@ async def mark_installment_paid(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Marca uma parcela como paga"""
     installment = await db.credit_card_installments.find_one({"_id": ObjectId(installment_id)})
     if not installment:
         raise HTTPException(status_code=404, detail="Parcela não encontrada")
@@ -311,7 +324,6 @@ async def mark_installment_paid(
     if installment.get("paid", False):
         raise HTTPException(status_code=400, detail="Parcela já está paga")
 
-    # Verificar propriedade da compra
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(installment["purchase_id"]),
         "user_id": str(current_user.id)
@@ -319,17 +331,14 @@ async def mark_installment_paid(
     if not purchase:
         raise HTTPException(status_code=403, detail="Acesso negado")
 
-    # Marcar parcela como paga
     await db.credit_card_installments.update_one(
         {"_id": ObjectId(installment_id)},
         {"$set": {"paid": True, "paid_date": datetime.now(timezone.utc)}}
     )
 
-    # 🔥 EXTRA: Reduzir committed_amount pelo valor da parcela paga
     await update_card_committed_amount(installment["card_id"], -installment["amount"], db)
 
     return {"message": "Parcela marcada como paga e compromisso reduzido"}
-
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
