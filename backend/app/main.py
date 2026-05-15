@@ -6,7 +6,7 @@ Ponto de entrada da API FastAPI
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi_helmet import FastAPIHelmet
+from fastapi_helmet import HelmetMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
