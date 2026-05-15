@@ -3,39 +3,54 @@ Rotas de Metas Financeiras (Goals)
 Arquivo: backend/app/routes/goals.py
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Optional, List
 from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
-from app.models.goal import Goal, GoalCreate, GoalUpdate, GoalResponse
+from app.models.goal import GoalCreate, GoalUpdate, GoalResponse
 from app.database import get_database
+from app.utils.pagination import PaginationParams, paginate_query, paginate
 
 router = APIRouter(prefix="/goals", tags=["Metas"])
 
 
-# ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO ==========
-
-def format_goal_doc(goal: dict) -> dict:
+# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
+def format_doc(doc: dict) -> dict:
     """Converte _id para id e padroniza resposta"""
-    if goal and "_id" in goal:
-        goal["id"] = str(goal["_id"])
-        goal["_id"] = goal["id"]  # mantém _id também (compatibilidade)
-    return goal
+    if doc and "_id" in doc:
+        result = dict(doc)
+        result["id"] = str(result.pop("_id"))
+        return result
+    return doc
 
 
 # ========== ENDPOINTS ==========
 
-@router.get("/", response_model=List[GoalResponse])
+@router.get("/", response_model=dict)
 async def list_goals(
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
+    completed: Optional[bool] = Query(None, description="Filtrar por concluídas"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Lista todas as metas do usuário"""
-    goals = await db.goals.find({"user_id": current_user.id}).sort("created_at", -1).to_list(100)
-    return [format_goal_doc(g) for g in goals]
+    """Lista as metas do usuário com paginação"""
+    params = PaginationParams(page=page, limit=limit)
+    query = {"user_id": str(current_user.id)}
+    
+    if completed is not None:
+        query["completed"] = completed
+
+    items, total = await paginate_query(
+        db.goals, query, params, sort=[("created_at", -1)]
+    )
+    
+    formatted_items = [format_doc(item) for item in items]
+    
+    return paginate(formatted_items, total, params)
 
 
 @router.post("/", response_model=GoalResponse, status_code=status.HTTP_201_CREATED)
@@ -45,12 +60,11 @@ async def create_goal(
     db=Depends(get_database)
 ):
     """Cria uma nova meta"""
-    # Arredondar valores
     target = round(goal.target, 2)
     current = round(goal.current, 2)
     
     goal_dict = {
-        "user_id": current_user.id,
+        "user_id": str(current_user.id),
         "name": goal.name,
         "target": target,
         "current": current,
@@ -62,8 +76,8 @@ async def create_goal(
     }
     
     result = await db.goals.insert_one(goal_dict)
-    goal_dict["_id"] = str(result.inserted_id)
-    return format_goal_doc(goal_dict)
+    goal_dict["_id"] = result.inserted_id
+    return format_doc(goal_dict)
 
 
 @router.get("/{goal_id}", response_model=GoalResponse)
@@ -78,12 +92,12 @@ async def get_goal(
     
     goal = await db.goals.find_one({
         "_id": ObjectId(goal_id),
-        "user_id": current_user.id
+        "user_id": str(current_user.id)
     })
     if not goal:
         raise HTTPException(status_code=404, detail="Meta não encontrada")
     
-    return format_goal_doc(goal)
+    return format_doc(goal)
 
 
 @router.put("/{goal_id}", response_model=GoalResponse)
@@ -97,29 +111,24 @@ async def update_goal(
     if not ObjectId.is_valid(goal_id):
         raise HTTPException(status_code=400, detail="ID inválido")
     
-    # Verificar se a meta pertence ao usuário
     existing = await db.goals.find_one({
         "_id": ObjectId(goal_id),
-        "user_id": current_user.id
+        "user_id": str(current_user.id)
     })
     if not existing:
         raise HTTPException(status_code=404, detail="Meta não encontrada")
     
-    # Preparar dados para atualização
     update_data = {k: v for k, v in updates.model_dump(exclude_unset=True).items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
     
-    # Arredondar valores monetários
     if "target" in update_data:
         update_data["target"] = round(update_data["target"], 2)
     if "current" in update_data:
         update_data["current"] = round(update_data["current"], 2)
     
-    # Atualizar timestamp
     update_data["updated_at"] = datetime.now(timezone.utc)
     
-    # Recalcular completed baseado nos valores (atuais + novos)
     new_target = update_data.get("target", existing["target"])
     new_current = update_data.get("current", existing["current"])
     update_data["completed"] = new_current >= new_target
@@ -130,7 +139,7 @@ async def update_goal(
     )
     
     updated = await db.goals.find_one({"_id": ObjectId(goal_id)})
-    return format_goal_doc(updated)
+    return format_doc(updated)
 
 
 @router.delete("/{goal_id}", response_model=dict)
@@ -145,7 +154,7 @@ async def delete_goal(
     
     result = await db.goals.delete_one({
         "_id": ObjectId(goal_id),
-        "user_id": current_user.id
+        "user_id": str(current_user.id)
     })
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Meta não encontrada")

@@ -3,7 +3,7 @@ Rotas de Conquistas do Usuário (sincronização)
 Arquivo: backend/app/routes/achievements.py
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -12,25 +12,41 @@ from app.database import get_database
 from app.models.achievement import AchievementCreate, AchievementResponse
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
+from app.utils.pagination import PaginationParams, paginate_query, paginate
 
 router = APIRouter(prefix="/achievements", tags=["Conquistas"])
 
 
-def format_achievement_doc(ach: dict) -> dict:
-    if ach and "_id" in ach:
-        ach["id"] = str(ach.pop("_id"))
-    return ach
+# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
+def format_doc(doc: dict) -> dict:
+    """Converte _id para id e padroniza resposta"""
+    if doc and "_id" in doc:
+        result = dict(doc)
+        result["id"] = str(result.pop("_id"))
+        return result
+    return doc
 
 
-@router.get("/", response_model=List[AchievementResponse])
+# ========== ENDPOINTS ==========
+
+@router.get("/", response_model=dict)
 async def get_achievements(
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Retorna todas as conquistas do usuário"""
-    cursor = db.achievements.find({"user_id": str(current_user.id)}).sort("date", -1)
-    achievements = await cursor.to_list(length=100)
-    return [format_achievement_doc(a) for a in achievements]
+    """Retorna todas as conquistas do usuário com paginação"""
+    params = PaginationParams(page=page, limit=limit)
+    query = {"user_id": str(current_user.id)}
+
+    items, total = await paginate_query(
+        db.achievements, query, params, sort=[("date", -1)]
+    )
+    
+    formatted_items = [format_doc(item) for item in items]
+    
+    return paginate(formatted_items, total, params)
 
 
 @router.post("/", response_model=AchievementResponse, status_code=status.HTTP_201_CREATED)
@@ -39,13 +55,13 @@ async def create_achievement(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Cria uma nova conquista (usado para sincronizar do frontend)"""
+    """Cria uma nova conquista"""
     ach_dict = ach_data.model_dump()
     ach_dict["user_id"] = str(current_user.id)
     ach_dict["date"] = datetime.now(timezone.utc)
     result = await db.achievements.insert_one(ach_dict)
     created = await db.achievements.find_one({"_id": result.inserted_id})
-    return format_achievement_doc(created)
+    return format_doc(created)
 
 
 @router.post("/sync", response_model=dict)
@@ -54,14 +70,10 @@ async def sync_achievements(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Sincroniza múltiplas conquistas do frontend (evita duplicatas).
-    Útil ao fazer login para subir conquistas locais que não estão no backend.
-    """
+    """Sincroniza múltiplas conquistas do frontend"""
     user_id = str(current_user.id)
     inserted = 0
     for ach in achievements:
-        # Verifica se já existe conquista idêntica (type + month + name)
         query = {"user_id": user_id, "type": ach.type}
         if ach.month:
             query["month"] = ach.month
@@ -83,7 +95,7 @@ async def delete_achievement(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Remove uma conquista (caso o usuário queira limpar)"""
+    """Remove uma conquista"""
     result = await db.achievements.delete_one({
         "_id": ObjectId(achievement_id),
         "user_id": str(current_user.id)

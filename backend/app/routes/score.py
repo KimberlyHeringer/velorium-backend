@@ -7,15 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from typing import Optional, Dict
-import asyncio
 import logging
 
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 from app.database import get_database
 from app.services.score_service import calculate_score
+from app.utils.pagination import PaginationParams, paginate_query, paginate
 
-# Configuração de logging (opcional, mas recomendado)
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/score", tags=["Score Financeiro"])
@@ -24,15 +23,9 @@ router = APIRouter(prefix="/score", tags=["Score Financeiro"])
 # ========== SCHEMAS ==========
 
 class ScoreResponse(BaseModel):
-    """Resposta do endpoint /score/current"""
     score: int
     details: Optional[Dict] = None
     date: datetime
-
-
-class ScoreHistoryResponse(BaseModel):
-    """Resposta do endpoint /score/history"""
-    history: list
 
 
 # ========== ENDPOINTS ==========
@@ -42,13 +35,10 @@ async def get_current_score(
     current_user: UserResponse = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    """Retorna o score atual do usuário (calculado sob demanda)"""
+    """Retorna o score atual do usuário"""
     try:
-        # Se calculate_score for síncrono, use asyncio.to_thread
-        # Se já for async, apenas aguarde
         result = await calculate_score(current_user.id, db)
         
-        # Garante que o resultado tenha os campos esperados
         return ScoreResponse(
             score=result.get("score", 0),
             details=result.get("details"),
@@ -62,24 +52,34 @@ async def get_current_score(
         )
 
 
-@router.get("/history", response_model=Dict)
+@router.get("/history", response_model=dict)
 async def get_score_history(
-    limit: int = Query(30, ge=1, le=100, description="Número máximo de registros (1-100)"),
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(30, ge=1, le=100, description="Itens por página (máx 100)"),
     current_user: UserResponse = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    """Retorna o histórico de scores do usuário (últimos 'limit' registros)"""
+    """Retorna o histórico de scores do usuário com paginação"""
     try:
-        history = await db.score_history.find(
-            {"user_id": current_user.id}
-        ).sort("date", -1).limit(limit).to_list(limit)
+        params = PaginationParams(page=page, limit=limit)
+        query = {"user_id": str(current_user.id)}
+
+        items, total = await paginate_query(
+            db.score_history, query, params, sort=[("date", -1)]
+        )
         
-        # Converte ObjectId para string, mas mantém datetime como datetime
-        for h in history:
-            h["_id"] = str(h["_id"])
-            # NÃO converter date para string - manter como datetime
+        # Formatar resposta
+        formatted_items = []
+        for item in items:
+            formatted_items.append({
+                "id": str(item["_id"]),
+                "score": item.get("score", 0),
+                "date": item.get("date"),
+                "details": item.get("details")
+            })
         
-        return {"history": history}
+        return paginate(formatted_items, total, params)
+        
     except Exception as e:
         logger.error(f"Erro ao buscar histórico de score para usuário {current_user.id}: {e}")
         raise HTTPException(

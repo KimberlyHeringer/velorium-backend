@@ -12,29 +12,27 @@ from app.database import get_database
 from app.models.bill import BillCreate, BillResponse, BillUpdate
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
+from app.utils.pagination import PaginationParams, paginate_query, paginate
 
 router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
 
 
-# ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO ==========
-
+# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
 def format_doc(doc: dict) -> dict:
     """
-    Converte _id para id e string em documentos do MongoDB.
-    Útil para padronizar respostas da API.
+    Converte _id para id e padroniza resposta.
+    Padrão adotado: remove _id, adiciona id.
     """
     if doc and "_id" in doc:
-        doc["_id"] = str(doc["_id"])
-        doc["id"] = doc["_id"]
+        result = dict(doc)
+        result["id"] = str(result.pop("_id"))
+        return result
     return doc
 
-
-# ========== FUNÇÃO AUXILIAR PARA CONVERSÃO DE DATAS ==========
 
 def parse_installments_dates(installments: dict) -> dict:
     """
     Converte start_date de string para datetime se necessário.
-    Usado na criação e atualização de contas.
     """
     if installments and isinstance(installments, dict):
         start_date = installments.get("start_date")
@@ -51,6 +49,7 @@ async def create_bill(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Cria uma nova conta a pagar"""
     try:
         bill_dict = bill_data.model_dump()
         bill_dict["user_id"] = str(current_user.id)
@@ -59,11 +58,9 @@ async def create_bill(
         bill_dict["created_at"] = datetime.now(timezone.utc)
         bill_dict["updated_at"] = datetime.now(timezone.utc)
 
-        # Arredonda amount
         if "amount" in bill_dict:
             bill_dict["amount"] = round(bill_dict["amount"], 2)
 
-        # Converte data de string para datetime se necessário
         if "installments" in bill_dict and isinstance(bill_dict["installments"], dict):
             bill_dict["installments"] = parse_installments_dates(bill_dict["installments"])
 
@@ -75,22 +72,31 @@ async def create_bill(
         print(f"❌ Erro ao criar conta: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Erro interno ao criar conta")
 
 
-@router.get("/", response_model=List[BillResponse])
+@router.get("/", response_model=dict)
 async def list_bills(
-    paid: Optional[bool] = Query(None),
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página (máx 100)"),
+    paid: Optional[bool] = Query(None, description="Filtrar por status de pagamento"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Lista contas do usuário com paginação"""
+    params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
+    
     if paid is not None:
         query["paid"] = paid
 
-    cursor = db.bills.find(query).sort("created_at", -1)
-    bills = await cursor.to_list(length=100)
-    return [format_doc(b) for b in bills]
+    items, total = await paginate_query(
+        db.bills, query, params, sort=[("created_at", -1)]
+    )
+    
+    formatted_items = [format_doc(item) for item in items]
+    
+    return paginate(formatted_items, total, params)
 
 
 @router.get("/{bill_id}", response_model=BillResponse)
@@ -99,6 +105,7 @@ async def get_bill(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Busca uma conta específica"""
     bill = await db.bills.find_one({
         "_id": ObjectId(bill_id),
         "user_id": str(current_user.id)
@@ -115,23 +122,19 @@ async def update_bill(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    # Remove campos None do update
+    """Atualiza uma conta existente"""
     update_data = {k: v for k, v in bill_update.model_dump(exclude_unset=True).items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
     
-    # ========== ATUALIZA updated_at (obrigatório) ==========
     update_data["updated_at"] = datetime.now(timezone.utc)
     
-    # ========== Se amount foi enviado, arredonda ==========
     if "amount" in update_data:
         update_data["amount"] = round(update_data["amount"], 2)
     
-    # ========== Se paid for alterado para True e paid_date não foi enviado ==========
     if update_data.get("paid") is True and update_data.get("paid_date") is None:
         update_data["paid_date"] = datetime.now(timezone.utc)
     
-    # ========== Se installments foi enviado com start_date como string ==========
     if "installments" in update_data and isinstance(update_data["installments"], dict):
         update_data["installments"] = parse_installments_dates(update_data["installments"])
 
@@ -152,6 +155,7 @@ async def delete_bill(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Remove uma conta"""
     result = await db.bills.delete_one({
         "_id": ObjectId(bill_id),
         "user_id": str(current_user.id)
