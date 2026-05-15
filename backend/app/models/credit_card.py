@@ -1,136 +1,69 @@
 """
-Rotas de Cartões de Crédito
-Arquivo: backend/app/routes/credit_cards.py
+Modelos de Cartões de Crédito
+Arquivo: backend/app/models/credit_card.py
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List, Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime
 from bson import ObjectId
-from datetime import datetime, timezone
 
-from app.database import get_database
-from app.models.credit_card import CreditCardCreate, CreditCardResponse, CreditCardUpdate
-from app.models.user import UserResponse
-from app.utils.auth import get_current_user
+# ============ SCHEMAS PYDANTIC ============
 
-router = APIRouter()
-
-
-@router.get("/credit-cards", response_model=List[CreditCardResponse]) # type: ignore
-async def get_credit_cards(
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Lista todos os cartões do usuário"""
-    cursor = db.credit_cards.find({"user_id": current_user.id})
-    cards = await cursor.to_list(length=100)
-    
-    for card in cards:
-        card["_id"] = str(card["_id"])
-    
-    return cards
+class CreditCardBase(BaseModel):
+    """Base para cartão de crédito"""
+    name: str = Field(..., description="Nome do cartão (ex: Nubank, Itaú)")
+    brand: str = Field(..., description="Bandeira (Visa, Mastercard, etc)")
+    limit: float = Field(..., description="Limite total do cartão")
+    closing_day: int = Field(..., ge=1, le=31, description="Dia de fechamento da fatura")
+    due_day: int = Field(..., ge=1, le=31, description="Dia de vencimento da fatura")
 
 
-@router.post("/credit-cards", response_model=CreditCardResponse, status_code=status.HTTP_201_CREATED)
-async def create_credit_card(
-    card_data: CreditCardCreate,
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Cria um novo cartão de crédito"""
-    card_dict = card_data.model_dump()
-    card_dict["user_id"] = current_user.id
-    card_dict["created_at"] = datetime.now(timezone.utc)
-    card_dict["updated_at"] = datetime.now(timezone.utc)
-    card_dict["limit_total"] = 0.0
-    card_dict["committed_amount"] = 0.0
-    card_dict["last_statement_closed_at"] = None
-    card_dict["next_statement_due_date"] = None
-    
-    result = await db.credit_cards.insert_one(card_dict)
-    card_dict["_id"] = str(result.inserted_id)
-    
-    return card_dict
+class CreditCardCreate(CreditCardBase):
+    """Schema para criação de cartão"""
+    pass
 
 
-@router.put("/credit-cards/{card_id}", response_model=CreditCardResponse)
-async def update_credit_card(
-    card_id: str,
-    card_data: CreditCardUpdate,
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Atualiza um cartão existente"""
-    # Verifica se o cartão existe e pertence ao usuário
-    card = await db.credit_cards.find_one({
-        "_id": ObjectId(card_id),
-        "user_id": current_user.id
-    })
-    
-    if not card:
-        raise HTTPException(status_code=404, detail="Cartão não encontrado")
-    
-    # Prepara os dados para atualização
-    update_data = card_data.model_dump(exclude_unset=True)
-    update_data["updated_at"] = datetime.now(timezone.utc)
-    
-    # Atualiza o cartão
-    await db.credit_cards.update_one(
-        {"_id": ObjectId(card_id)},
-        {"$set": update_data}
-    )
-    
-    # Busca o cartão atualizado
-    updated_card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
-    updated_card["_id"] = str(updated_card["_id"])
-    
-    return updated_card
+class CreditCardUpdate(BaseModel):
+    """Schema para atualização de cartão (todos opcionais)"""
+    name: Optional[str] = None
+    brand: Optional[str] = None
+    limit: Optional[float] = None
+    closing_day: Optional[int] = Field(None, ge=1, le=31)
+    due_day: Optional[int] = Field(None, ge=1, le=31)
 
 
-@router.delete("/credit-cards/{card_id}", response_model=dict)
-async def delete_credit_card(
-    card_id: str,
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Remove um cartão de crédito"""
-    # Verifica se o cartão existe e pertence ao usuário
-    card = await db.credit_cards.find_one({
-        "_id": ObjectId(card_id),
-        "user_id": current_user.id
-    })
-    
-    if not card:
-        raise HTTPException(status_code=404, detail="Cartão não encontrado")
-    
-    # Verifica se há compras associadas
-    purchases = await db.credit_card_purchases.find_one({"card_id": card_id})
-    if purchases:
-        raise HTTPException(
-            status_code=400, 
-            detail="Cartão possui compras associadas. Remova as compras primeiro."
-        )
-    
-    # Remove o cartão
-    await db.credit_cards.delete_one({"_id": ObjectId(card_id)})
-    
-    return {"message": "Cartão removido com sucesso"}
+class CreditCardResponse(CreditCardBase):
+    """Schema para resposta da API"""
+    id: str = Field(..., description="ID do cartão")
+    user_id: str = Field(..., description="ID do usuário dono do cartão")
+    limit_total: float = Field(default=0.0, description="Limite total utilizado")
+    committed_amount: float = Field(default=0.0, description="Valor comprometido em compras")
+    last_statement_closed_at: Optional[datetime] = None
+    next_statement_due_date: Optional[datetime] = None
+    created_at: datetime = Field(..., description="Data de criação")
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 
-@router.get("/credit-cards/{card_id}", response_model=CreditCardResponse)
-async def get_credit_card(
-    card_id: str,
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Busca um cartão específico pelo ID"""
-    card = await db.credit_cards.find_one({
-        "_id": ObjectId(card_id),
-        "user_id": current_user.id
-    })
-    
-    if not card:
-        raise HTTPException(status_code=404, detail="Cartão não encontrado")
-    
-    card["_id"] = str(card["_id"])
-    return card
+# ============ FUNÇÕES AUXILIARES ============
+
+def credit_card_helper(card) -> dict:
+    """Converte documento do MongoDB para dicionário"""
+    return {
+        "id": str(card["_id"]),
+        "user_id": card["user_id"],
+        "name": card["name"],
+        "brand": card["brand"],
+        "limit": card["limit"],
+        "closing_day": card["closing_day"],
+        "due_day": card["due_day"],
+        "limit_total": card.get("limit_total", 0.0),
+        "committed_amount": card.get("committed_amount", 0.0),
+        "last_statement_closed_at": card.get("last_statement_closed_at"),
+        "next_statement_due_date": card.get("next_statement_due_date"),
+        "created_at": card["created_at"],
+        "updated_at": card.get("updated_at"),
+    }
