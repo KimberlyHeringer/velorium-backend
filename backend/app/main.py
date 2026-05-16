@@ -92,10 +92,6 @@ app = FastAPI(
 )
 
 # ========== #34 - HELMET (headers de segurança) ==========
-# ⚠️ Temporariamente desabilitado - instalar: pip install fastapi-helmet
-# from fastapi_helmet import HelmetMiddleware
-# app.add_middleware(HelmetMiddleware)
-# 🔒 Alternativa nativa do FastAPI para headers de segurança:
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     """Adiciona headers de segurança manualmente"""
@@ -115,24 +111,16 @@ app.add_middleware(SanitizeMiddleware)
 # ========== INICIALIZA RATE LIMITER ==========
 init_rate_limiter(app)
 
-# ========== CONFIGURAÇÃO DO CORS ==========
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8081")
+# ========== CONFIGURAÇÃO DO CORS (CORRIGIDO PARA TESTE) ==========
+# 🔧 TEMPORARIAMENTE: permite todas as origens para resolver o problema de conexão
+# ⚠️ DEPOIS DOS TESTES, REVERTA PARA A CONFIGURAÇÃO ORIGINAL
+allowed_origins = ["*"]
 
-if os.getenv("PRODUCTION", "false").lower() == "true":
-    allowed_origins = [FRONTEND_URL]
-    print(f"🔒 CORS em modo produção: {allowed_origins}")
-else:
-    allowed_origins = [
-        "http://localhost:8081",
-        "http://localhost:3000",
-        "http://localhost:19006",
-        FRONTEND_URL
-    ]
-    print(f"🛠️ CORS em modo desenvolvimento: {allowed_origins}")
+print(f"🔧 CORS configurado para permitir todas as origens (TEMPORÁRIO PARA TESTE)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],  # Permite todas as origens
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
