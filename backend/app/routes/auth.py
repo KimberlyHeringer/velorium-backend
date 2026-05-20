@@ -82,56 +82,31 @@ async def login(
     user_data: UserLogin,
     db=Depends(get_database)
 ):
-    print(f"🔐 [LOGIN] Tentativa para email: {user_data.email}")
-    
     db_user = await db.users.find_one({"email": user_data.email.lower()})
-    if not db_user:
-        print(f"❌ [LOGIN] Usuário não encontrado: {user_data.email}")
+    if not db_user or not verify_password(user_data.password, db_user["password_hash"]):
         raise HTTPException(status_code=401, detail="Email ou senha inválidos")
-    
-    print(f"🔐 [LOGIN] Usuário encontrado: {db_user['email']}")
-    
-    if not verify_password(user_data.password, db_user["password_hash"]):
-        print(f"❌ [LOGIN] Senha inválida para: {user_data.email}")
-        raise HTTPException(status_code=401, detail="Email ou senha inválidos")
-    
-    print(f"✅ [LOGIN] Senha válida para: {user_data.email}")
-    
+
     token_pair = generate_token_pair(str(db_user["_id"]))
-    print(f"✅ [LOGIN] Token gerado: {token_pair.access_token[:20]}...")
-    
-    # 🔧 GARANTIR QUE TODOS OS CAMPOS EXISTEM
+
     user_response = UserResponse(
         id=str(db_user["_id"]),
-        name=db_user.get("name", ""),
-        email=db_user.get("email", ""),
-        monthly_income=float(db_user.get("monthly_income", 0.0)),
+        name=db_user["name"],
+        email=db_user["email"],
+        monthly_income=db_user.get("monthly_income", 0.0),
         location=db_user.get("location", ""),
         profession_type=db_user.get("profession_type", ""),
         occupation=db_user.get("occupation", ""),
         financial_goal=db_user.get("financial_goal", ""),
-        created_at=db_user.get("created_at", datetime.now(timezone.utc)),
-        research_consent=db_user.get("research_consent", False),
-        terms_accepted=db_user.get("terms_accepted", False),
-        terms_accepted_at=db_user.get("terms_accepted_at"),
-        language=db_user.get("language", "pt"),
-        currency=db_user.get("currency", "BRL"),
+        created_at=db_user["created_at"]
     )
-    
-    print(f"✅ [LOGIN] UserResponse criado: {user_response.email}")
-    print(f"✅ [LOGIN] UserResponse ID: {user_response.id}")
-    print(f"✅ [LOGIN] UserResponse name: {user_response.name}")
-    
-    response = LoginResponse(
+
+    return LoginResponse(
         access_token=token_pair.access_token,
         refresh_token=token_pair.refresh_token,
         token_type="bearer",
         expires_in=token_pair.expires_in,
         user=user_response
     )
-    
-    print(f"✅ [LOGIN] Resposta final criada para: {user_response.email}")
-    return response
 
 
 @router.post("/refresh", response_model=TokenPair)
