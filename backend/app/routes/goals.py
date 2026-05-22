@@ -50,7 +50,8 @@ async def list_goals(
     
     formatted_items = [format_doc(item) for item in items]
     
-    return paginate(formatted_items, total, params)
+    # 🔧 CORREÇÃO: adicionado .model_dump() para retornar dicionário
+    return paginate(formatted_items, total, params).model_dump()
 
 
 @router.post("/", response_model=GoalResponse, status_code=status.HTTP_201_CREATED)
