@@ -96,7 +96,8 @@ async def list_bills(
     
     formatted_items = [format_doc(item) for item in items]
     
-    return paginate(formatted_items, total, params)
+    # 🔧 CORREÇÃO: adicionado .model_dump() para retornar dicionário
+    return paginate(formatted_items, total, params).model_dump()
 
 
 @router.get("/{bill_id}", response_model=BillResponse)
@@ -173,6 +174,7 @@ async def delete_bill(
 # ✅ update_bill arredonda amount (round) quando enviado
 # ✅ update_bill define paid_date automaticamente quando paid=True
 # ✅ update_bill converte installments.start_date se for string
+# ✅ 🔧 CORREÇÃO: paginate retorna dicionário com .model_dump()
 #
 # ⏳ Paginação (skip/limit) no list_bills: postergado para pós-MVP
 # 📌 Logging estruturado: planejado (substituir print)
