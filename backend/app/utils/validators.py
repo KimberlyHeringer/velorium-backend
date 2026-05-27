@@ -9,6 +9,8 @@ para evitar duplicação de código entre os models.
 from typing import Any, Dict, List, Optional, Union
 import re
 from datetime import datetime, timezone
+from bson import ObjectId
+from fastapi import HTTPException
 
 
 # ========== FORMATAÇÃO DE VALORES MONETÁRIOS ==========
@@ -160,6 +162,27 @@ def validate_language(language: str) -> str:
     if language not in idiomas_validos:
         raise ValueError(f'Idioma inválido. Use um dos: {idiomas_validos}')
     return language
+
+
+# ========== VALIDAÇÃO DE OBJECTID ==========
+
+def validate_object_id(id_str: str, field_name: str = "id") -> str:
+    """
+    Valida se o ID é um ObjectId válido do MongoDB.
+    
+    Args:
+        id_str: String do ID a ser validada
+        field_name: Nome do campo para mensagem de erro
+    
+    Returns:
+        O mesmo ID se válido
+    
+    Raises:
+        HTTPException: Se o ID for inválido
+    """
+    if not ObjectId.is_valid(id_str):
+        raise HTTPException(status_code=400, detail=f"{field_name} inválido")
+    return id_str
 
 
 # ========== FORMATAÇÃO DE DOCUMENTOS MONGODB ==========
