@@ -9,7 +9,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from app.database import connect_to_mongo, close_mongo_connection, create_indexes
-from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user
+from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user, investments
 from app.routes import achievements  
 from app.utils.rate_limiter import init_rate_limiter
 
@@ -72,6 +72,7 @@ app.include_router(score.router, prefix="/api/v1")
 app.include_router(goals.router, prefix="/api/v1")
 app.include_router(user.router, prefix="/api/v1")
 app.include_router(achievements.router, prefix="/api/v1")
+app.include_router(investments.router, prefix="/api/v1")  # ← ADICIONADO
 
 
 # ========== ENDPOINTS PÚBLICOS ==========
