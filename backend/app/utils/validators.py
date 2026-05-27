@@ -195,3 +195,10 @@ def format_mongo_list(docs: List[Dict]) -> List[Dict]:
         Lista de documentos formatados
     """
     return [format_mongo_doc(doc) for doc in docs]
+
+
+def format_mongo_docs(docs: List[Dict]) -> List[Dict]:
+    """
+    Alias para format_mongo_list (mantém compatibilidade com código que usa este nome)
+    """
+    return format_mongo_list(docs)
