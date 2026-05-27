@@ -1,6 +1,8 @@
 """
 Rotas de Contas a Pagar (Bills)
 Arquivo: backend/app/routes/bills.py
+
+🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,21 +15,9 @@ from app.models.bill import BillCreate, BillResponse, BillUpdate
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
+from app.utils.validators import format_mongo_doc, format_mongo_docs
 
 router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
-
-
-# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
-def format_doc(doc: dict) -> dict:
-    """
-    Converte _id para id e padroniza resposta.
-    Padrão adotado: remove _id, adiciona id.
-    """
-    if doc and "_id" in doc:
-        result = dict(doc)
-        result["id"] = str(result.pop("_id"))
-        return result
-    return doc
 
 
 def parse_installments_dates(installments: dict) -> dict:
@@ -66,7 +56,9 @@ async def create_bill(
 
         result = await db.bills.insert_one(bill_dict)
         created = await db.bills.find_one({"_id": result.inserted_id})
-        return format_doc(created)
+        
+        # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+        return format_mongo_doc(created)
         
     except Exception as e:
         print(f"❌ Erro ao criar conta: {e}")
@@ -94,9 +86,9 @@ async def list_bills(
         db.bills, query, params, sort=[("created_at", -1)]
     )
     
-    formatted_items = [format_doc(item) for item in items]
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
+    formatted_items = format_mongo_docs(items)
     
-    # 🔧 CORREÇÃO: adicionado .model_dump() para retornar dicionário
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -113,7 +105,9 @@ async def get_bill(
     })
     if not bill:
         raise HTTPException(status_code=404, detail="Conta não encontrada")
-    return format_doc(bill)
+    
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(bill)
 
 
 @router.put("/{bill_id}", response_model=BillResponse)
@@ -147,7 +141,9 @@ async def update_bill(
         raise HTTPException(status_code=404, detail="Conta não encontrada")
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
-    return format_doc(updated)
+    
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(updated)
 
 
 @router.delete("/{bill_id}", response_model=dict)
@@ -163,7 +159,7 @@ async def delete_bill(
     })
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Conta não encontrada")
-    return {"message": "Conta deletada com sucesso"}
+    return {"message": "Conta deletada com sucesso", "success": True}
 
 
 # ========== DECISÕES DOCUMENTADAS ==========

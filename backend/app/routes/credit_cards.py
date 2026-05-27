@@ -1,6 +1,8 @@
 """
 Rotas de Cartões de Crédito
 Arquivo: backend/app/routes/credit_cards.py
+
+🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -13,18 +15,9 @@ from app.models.credit_card import CreditCardCreate, CreditCardResponse, CreditC
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
+from app.utils.validators import format_mongo_doc, format_mongo_docs
 
 router = APIRouter(prefix="/credit-cards", tags=["Cartões de Crédito"])
-
-
-# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
-def format_doc(doc: dict) -> dict:
-    """Converte _id para id e padroniza resposta"""
-    if doc and "_id" in doc:
-        result = dict(doc)
-        result["id"] = str(result.pop("_id"))
-        return result
-    return doc
 
 
 # ========== ENDPOINTS ==========
@@ -44,9 +37,9 @@ async def get_credit_cards(
         db.credit_cards, query, params, sort=[("created_at", -1)]
     )
     
-    formatted_items = [format_doc(item) for item in items]
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
+    formatted_items = format_mongo_docs(items)
     
-    # 🔧 CORREÇÃO: adicionado .model_dump() para retornar dicionário
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -67,9 +60,10 @@ async def create_credit_card(
     card_dict["next_statement_due_date"] = None
     
     result = await db.credit_cards.insert_one(card_dict)
-    card_dict["_id"] = result.inserted_id
+    created = await db.credit_cards.find_one({"_id": result.inserted_id})
     
-    return format_doc(card_dict)
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(created)
 
 
 @router.put("/{card_id}", response_model=CreditCardResponse)
@@ -101,7 +95,9 @@ async def update_credit_card(
     
     # Busca o cartão atualizado
     updated_card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
-    return format_doc(updated_card)
+    
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(updated_card)
 
 
 @router.delete("/{card_id}", response_model=dict)
@@ -131,7 +127,7 @@ async def delete_credit_card(
     # Remove o cartão
     await db.credit_cards.delete_one({"_id": ObjectId(card_id)})
     
-    return {"message": "Cartão removido com sucesso"}
+    return {"message": "Cartão removido com sucesso", "success": True}
 
 
 @router.get("/{card_id}", response_model=CreditCardResponse)
@@ -149,4 +145,5 @@ async def get_credit_card(
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
-    return format_doc(card)
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(card)

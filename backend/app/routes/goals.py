@@ -1,6 +1,8 @@
 """
 Rotas de Metas Financeiras (Goals)
 Arquivo: backend/app/routes/goals.py
+
+🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -13,18 +15,9 @@ from app.models.user import UserResponse
 from app.models.goal import GoalCreate, GoalUpdate, GoalResponse
 from app.database import get_database
 from app.utils.pagination import PaginationParams, paginate_query, paginate
+from app.utils.validators import format_mongo_doc, format_mongo_docs
 
 router = APIRouter(prefix="/goals", tags=["Metas"])
-
-
-# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
-def format_doc(doc: dict) -> dict:
-    """Converte _id para id e padroniza resposta"""
-    if doc and "_id" in doc:
-        result = dict(doc)
-        result["id"] = str(result.pop("_id"))
-        return result
-    return doc
 
 
 # ========== ENDPOINTS ==========
@@ -48,9 +41,9 @@ async def list_goals(
         db.goals, query, params, sort=[("created_at", -1)]
     )
     
-    formatted_items = [format_doc(item) for item in items]
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
+    formatted_items = format_mongo_docs(items)
     
-    # 🔧 CORREÇÃO: adicionado .model_dump() para retornar dicionário
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -77,8 +70,10 @@ async def create_goal(
     }
     
     result = await db.goals.insert_one(goal_dict)
-    goal_dict["_id"] = result.inserted_id
-    return format_doc(goal_dict)
+    created = await db.goals.find_one({"_id": result.inserted_id})
+    
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(created)
 
 
 @router.get("/{goal_id}", response_model=GoalResponse)
@@ -98,7 +93,8 @@ async def get_goal(
     if not goal:
         raise HTTPException(status_code=404, detail="Meta não encontrada")
     
-    return format_doc(goal)
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(goal)
 
 
 @router.put("/{goal_id}", response_model=GoalResponse)
@@ -140,7 +136,9 @@ async def update_goal(
     )
     
     updated = await db.goals.find_one({"_id": ObjectId(goal_id)})
-    return format_doc(updated)
+    
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(updated)
 
 
 @router.delete("/{goal_id}", response_model=dict)
@@ -159,4 +157,4 @@ async def delete_goal(
     })
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Meta não encontrada")
-    return {"message": "Meta deletada com sucesso"}
+    return {"message": "Meta deletada com sucesso", "success": True}

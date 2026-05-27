@@ -1,6 +1,8 @@
 """
 Rotas de Transações Financeiras (Receitas e Despesas)
 Arquivo: backend/app/routes/transactions.py
+
+🔧 CORREÇÃO: Substituído format_transaction_doc por format_mongo_doc (Seção 2.2)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -14,29 +16,12 @@ from app.models.transaction import TransactionCreate, TransactionUpdate, Transac
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, PaginatedResponse, paginate, paginate_query
+from app.utils.validators import format_mongo_doc, format_mongo_docs
 
 # Configuração de logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/transactions", tags=["Transações"])
-
-
-# ========== FUNÇÃO AUXILIAR CORRIGIDA ==========
-
-def format_transaction_doc(transaction: dict) -> dict:
-    """
-    Converte _id para id e padroniza resposta.
-    🔧 CORREÇÃO: Cria cópia e remove _id para evitar conflito com Pydantic
-    """
-    if transaction:
-        # Cria uma cópia para não modificar o original
-        result = dict(transaction)
-        if "_id" in result:
-            result["id"] = str(result["_id"])
-            # Remove o _id antigo para evitar conflito com Pydantic
-            del result["_id"]
-        return result
-    return transaction
 
 
 # ========== ENDPOINTS ==========
@@ -64,7 +49,9 @@ async def create_transaction(
         
         # Buscar o documento inserido para retornar os dados completos
         created = await db.transactions.find_one({"_id": result.inserted_id})
-        return format_transaction_doc(created)
+        
+        # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+        return format_mongo_doc(created)
         
     except Exception as e:
         logger.error(f"Erro ao criar transação para usuário {current_user.id}: {e}")
@@ -103,7 +90,8 @@ async def get_transactions(
         db.transactions, query, params, sort=[("date", -1)]
     )
     
-    formatted_items = [format_transaction_doc(item) for item in items]
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
+    formatted_items = format_mongo_docs(items)
     
     return paginate(formatted_items, total, params)
 
@@ -166,7 +154,9 @@ async def get_transaction(
     })
     if not transaction:
         raise HTTPException(status_code=404, detail="Transação não encontrada")
-    return format_transaction_doc(transaction)
+    
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(transaction)
 
 
 @router.put("/{transaction_id}", response_model=TransactionResponse)
@@ -202,7 +192,9 @@ async def update_transaction(
     
     # Buscar documento atualizado e retornar
     updated = await db.transactions.find_one({"_id": obj_id})
-    return format_transaction_doc(updated)
+    
+    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    return format_mongo_doc(updated)
 
 
 @router.delete("/{transaction_id}", response_model=dict)
