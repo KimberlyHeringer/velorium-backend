@@ -1,10 +1,12 @@
 """
 Modelos de Cartões de Crédito
 Arquivo: backend/app/models/credit_card.py
+
+🔧 CORREÇÃO 2.2: Removido credit_card_helper, padronizado _id
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional
 from datetime import datetime
 from bson import ObjectId
 
@@ -12,9 +14,9 @@ from bson import ObjectId
 
 class CreditCardBase(BaseModel):
     """Base para cartão de crédito"""
-    name: str = Field(..., description="Nome do cartão (ex: Nubank, Itaú)")
-    brand: str = Field(..., description="Bandeira (Visa, Mastercard, etc)")
-    limit: float = Field(..., description="Limite total do cartão")
+    name: str = Field(..., min_length=1, max_length=50, description="Nome do cartão (ex: Nubank, Itaú)")
+    brand: str = Field(..., min_length=1, max_length=20, description="Bandeira (Visa, Mastercard, etc)")
+    limit: float = Field(..., gt=0, description="Limite total do cartão")
     closing_day: int = Field(..., ge=1, le=31, description="Dia de fechamento da fatura")
     due_day: int = Field(..., ge=1, le=31, description="Dia de vencimento da fatura")
 
@@ -26,16 +28,23 @@ class CreditCardCreate(CreditCardBase):
 
 class CreditCardUpdate(BaseModel):
     """Schema para atualização de cartão (todos opcionais)"""
-    name: Optional[str] = None
-    brand: Optional[str] = None
-    limit: Optional[float] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=50)
+    brand: Optional[str] = Field(None, min_length=1, max_length=20)
+    limit: Optional[float] = Field(None, gt=0)
     closing_day: Optional[int] = Field(None, ge=1, le=31)
     due_day: Optional[int] = Field(None, ge=1, le=31)
 
 
 class CreditCardResponse(CreditCardBase):
     """Schema para resposta da API"""
-    id: str = Field(..., description="ID do cartão")
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str},
+        populate_by_name=True,
+        from_attributes=True
+    )
+    
+    _id: str = Field(..., alias="_id", description="ID do cartão")
     user_id: str = Field(..., description="ID do usuário dono do cartão")
     limit_total: float = Field(default=0.0, description="Limite total utilizado")
     committed_amount: float = Field(default=0.0, description="Valor comprometido em compras")
@@ -44,26 +53,6 @@ class CreditCardResponse(CreditCardBase):
     created_at: datetime = Field(..., description="Data de criação")
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
 
-
-# ============ FUNÇÕES AUXILIARES ============
-
-def credit_card_helper(card) -> dict:
-    """Converte documento do MongoDB para dicionário"""
-    return {
-        "id": str(card["_id"]),
-        "user_id": card["user_id"],
-        "name": card["name"],
-        "brand": card["brand"],
-        "limit": card["limit"],
-        "closing_day": card["closing_day"],
-        "due_day": card["due_day"],
-        "limit_total": card.get("limit_total", 0.0),
-        "committed_amount": card.get("committed_amount", 0.0),
-        "last_statement_closed_at": card.get("last_statement_closed_at"),
-        "next_statement_due_date": card.get("next_statement_due_date"),
-        "created_at": card["created_at"],
-        "updated_at": card.get("updated_at"),
-    }
+# ============ FUNÇÃO CREDIT_CARD_HELPER REMOVIDA ============
+# Use format_mongo_doc do app.utils.validators em vez desta função
