@@ -1,8 +1,6 @@
 """
 Modelos de Cartões de Crédito
 Arquivo: backend/app/models/credit_card.py
-
-🔧 CORREÇÃO 2.2: Removido credit_card_helper, padronizado _id
 """
 
 from pydantic import BaseModel, Field, ConfigDict
@@ -44,7 +42,7 @@ class CreditCardResponse(CreditCardBase):
         from_attributes=True
     )
     
-    _id: str = Field(..., alias="_id", description="ID do cartão")
+    id: str = Field(..., alias="_id", description="ID do cartão")
     user_id: str = Field(..., description="ID do usuário dono do cartão")
     limit_total: float = Field(default=0.0, description="Limite total utilizado")
     committed_amount: float = Field(default=0.0, description="Valor comprometido em compras")
@@ -52,7 +50,3 @@ class CreditCardResponse(CreditCardBase):
     next_statement_due_date: Optional[datetime] = None
     created_at: datetime = Field(..., description="Data de criação")
     updated_at: Optional[datetime] = None
-
-
-# ============ FUNÇÃO CREDIT_CARD_HELPER REMOVIDA ============
-# Use format_mongo_doc do app.utils.validators em vez desta função
