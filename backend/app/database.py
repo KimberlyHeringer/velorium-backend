@@ -1,6 +1,10 @@
 """
 Configuração da conexão com MongoDB
 Arquivo: backend/app/database.py
+
+🔧 MODIFICADO: Regra 2.8 - Logs
+- Substituído print por logger.info/error/warning
+- Adicionado logger configurado
 """
 
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -10,6 +14,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import HTTPException
 import certifi
+
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 # Carrega variáveis de ambiente do arquivo .env
 env_path = Path(__file__).parent.parent / '.env'
@@ -51,10 +60,10 @@ async def connect_to_mongo():
         # Verifica se a conexão está funcionando
         await client.admin.command('ping')
         db = client[DATABASE_NAME]
-        print(f"✅ Conectado ao MongoDB: {DATABASE_NAME}")
+        logger.info(f"✅ Conectado ao MongoDB: {DATABASE_NAME}")
         
     except Exception as e:
-        print(f"❌ Erro ao conectar ao MongoDB: {e}")
+        logger.error(f"❌ Erro ao conectar ao MongoDB: {e}")
         raise HTTPException(status_code=503, detail="Banco de dados indisponível")
 
 
@@ -67,7 +76,7 @@ async def close_mongo_connection():
     if client:
         client.close()
         db = None
-        print("✅ Conexão com MongoDB fechada")
+        logger.info("✅ Conexão com MongoDB fechada")
 
 
 def get_database():
@@ -119,9 +128,9 @@ async def create_indexes():
     # 🔴 CRÍTICO: garantir que emails são únicos
     try:
         await db.users.create_index([("email", 1)], unique=True)
-        print("✅ Índice users.email (unique) criado")
+        logger.info("✅ Índice users.email (unique) criado")
     except Exception as e:
-        print(f"⚠️ Índice users.email: {e}")
+        logger.warning(f"⚠️ Índice users.email: {e}")
     
     # ========== TRANSAÇÕES ==========
     indexes = [
@@ -141,9 +150,9 @@ async def create_indexes():
         try:
             collection = db[collection_name]
             await collection.create_index(keys)
-            print(f"✅ Índice {collection_name}.{keys} criado")
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name}: {e}")
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}")
     
     # ========== CONTAS A PAGAR (BILLS) ==========
     indexes = [
@@ -157,9 +166,9 @@ async def create_indexes():
         try:
             collection = db[collection_name]
             await collection.create_index(keys)
-            print(f"✅ Índice {collection_name}.{keys} criado")
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name}: {e}")
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}")
     
     # ========== METAS (GOALS) ==========
     indexes = [
@@ -172,23 +181,23 @@ async def create_indexes():
         try:
             collection = db[collection_name]
             await collection.create_index(keys)
-            print(f"✅ Índice {collection_name}.{keys} criado")
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name}: {e}")
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}")
     
     # ========== PERFIL DO USUÁRIO ==========
     try:
         await db.user_profiles.create_index([("user_id", 1)], unique=True)
-        print("✅ Índice user_profiles.user_id (unique) criado")
+        logger.info("✅ Índice user_profiles.user_id (unique) criado")
     except Exception as e:
-        print(f"⚠️ Índice user_profiles: {e}")
+        logger.warning(f"⚠️ Índice user_profiles: {e}")
     
     # ========== HISTÓRICO DE SCORE ==========
     try:
         await db.score_history.create_index([("user_id", 1), ("date", -1)])
-        print("✅ Índice score_history.user_id + date criado")
+        logger.info("✅ Índice score_history.user_id + date criado")
     except Exception as e:
-        print(f"⚠️ Índice score_history: {e}")
+        logger.warning(f"⚠️ Índice score_history: {e}")
     
     # ========== CARTÕES DE CRÉDITO ==========
     indexes = [
@@ -201,9 +210,9 @@ async def create_indexes():
         try:
             collection = db[collection_name]
             await collection.create_index(keys)
-            print(f"✅ Índice {collection_name}.{keys} criado")
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name}: {e}")
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}")
     
     # ========== COMPRAS PARCELADAS ==========
     indexes = [
@@ -216,9 +225,9 @@ async def create_indexes():
         try:
             collection = db[collection_name]
             await collection.create_index(keys)
-            print(f"✅ Índice {collection_name}.{keys} criado")
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name}: {e}")
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}")
     
     # ========== PARCELAS (INSTALLMENTS) ==========
     indexes = [
@@ -232,9 +241,9 @@ async def create_indexes():
         try:
             collection = db[collection_name]
             await collection.create_index(keys)
-            print(f"✅ Índice {collection_name}.{keys} criado")
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name}: {e}")
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}")
     
     # ========== CONQUISTAS (ACHIEVEMENTS) ==========
     indexes = [
@@ -247,9 +256,9 @@ async def create_indexes():
         try:
             collection = db[collection_name]
             await collection.create_index(keys)
-            print(f"✅ Índice {collection_name}.{keys} criado")
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
         except Exception as e:
-            print(f"⚠️ Índice em {collection_name}: {e}")
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}")
     
     # ========== BLACKLIST DE TOKENS (SEGURANÇA) ==========
     try:
@@ -261,8 +270,8 @@ async def create_indexes():
             [("token", 1)], 
             unique=True
         )
-        print("✅ Índices refresh_token_blacklist criados")
+        logger.info("✅ Índices refresh_token_blacklist criados")
     except Exception as e:
-        print(f"⚠️ Índices refresh_token_blacklist: {e}")
+        logger.warning(f"⚠️ Índices refresh_token_blacklist: {e}")
     
-    print("✅ Todos os índices foram criados/verificados com sucesso!")
+    logger.info("✅ Todos os índices foram criados/verificados com sucesso!")

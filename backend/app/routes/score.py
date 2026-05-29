@@ -1,21 +1,26 @@
 """
 Rotas de Score Financeiro
 Arquivo: backend/app/routes/score.py
+
+🔧 MODIFICADO: Regra 2.8 - Usa setup_logger em vez de logging diretamente
+🔧 MODIFICADO: Regra 2.2 - Usa format_mongo_doc para padronizar respostas
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime, timezone
 from typing import Optional, Dict
-import logging
 
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 from app.database import get_database
 from app.services.score_service import calculate_score
 from app.utils.pagination import PaginationParams, paginate_query, paginate
+from app.utils.validators import format_mongo_doc
+from app.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/score", tags=["Score Financeiro"])
 
@@ -39,6 +44,7 @@ async def get_current_score(
     try:
         result = await calculate_score(current_user.id, db)
         
+        logger.info(f"Score atual calculado para usuário {current_user.id}: {result.get('score', 0)}")
         return ScoreResponse(
             score=result.get("score", 0),
             details=result.get("details"),
@@ -46,6 +52,8 @@ async def get_current_score(
         )
     except Exception as e:
         logger.error(f"Erro ao calcular score para usuário {current_user.id}: {e}")
+        import traceback
+        logger.debug(f"Detalhes do erro no score: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail="Erro ao calcular score financeiro. Tente novamente mais tarde."
@@ -68,20 +76,16 @@ async def get_score_history(
             db.score_history, query, params, sort=[("date", -1)]
         )
         
-        # Formatar resposta
-        formatted_items = []
-        for item in items:
-            formatted_items.append({
-                "id": str(item["_id"]),
-                "score": item.get("score", 0),
-                "date": item.get("date"),
-                "details": item.get("details")
-            })
+        # 🔧 CORREÇÃO 2.2: usando format_mongo_doc em vez de formatação manual
+        formatted_items = [format_mongo_doc(item) for item in items]
         
-        return paginate(formatted_items, total, params)
+        logger.debug(f"Histórico de score listado para usuário {current_user.id}: {len(formatted_items)} registros")
+        return paginate(formatted_items, total, params).model_dump()
         
     except Exception as e:
         logger.error(f"Erro ao buscar histórico de score para usuário {current_user.id}: {e}")
+        import traceback
+        logger.debug(f"Detalhes do erro no histórico: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail="Erro ao buscar histórico de score."

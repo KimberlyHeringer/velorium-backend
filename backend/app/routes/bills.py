@@ -3,6 +3,7 @@ Rotas de Contas a Pagar (Bills)
 Arquivo: backend/app/routes/bills.py
 
 🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
+🔧 CORREÇÃO: Regra 2.8 - Logs (substituído print por logger)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,6 +17,10 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
 
@@ -57,13 +62,14 @@ async def create_bill(
         result = await db.bills.insert_one(bill_dict)
         created = await db.bills.find_one({"_id": result.inserted_id})
         
-        # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+        logger.info(f"Conta criada: {bill_data.description} para usuário {current_user.id}")
         return format_mongo_doc(created)
         
     except Exception as e:
-        print(f"❌ Erro ao criar conta: {e}")
+        # 🔧 CORREÇÃO 2.8: substituindo print por logger
+        logger.error(f"❌ Erro ao criar conta: {e}")
         import traceback
-        traceback.print_exc()
+        logger.debug(f"Detalhes do erro: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Erro interno ao criar conta")
 
 
@@ -86,9 +92,9 @@ async def list_bills(
         db.bills, query, params, sort=[("created_at", -1)]
     )
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
     formatted_items = format_mongo_docs(items)
     
+    logger.debug(f"Listadas {len(formatted_items)} contas para usuário {current_user.id}")
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -104,9 +110,9 @@ async def get_bill(
         "user_id": str(current_user.id)
     })
     if not bill:
+        logger.warning(f"Conta não encontrada: {bill_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Conta não encontrada")
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
     return format_mongo_doc(bill)
 
 
@@ -138,11 +144,12 @@ async def update_bill(
         {"$set": update_data}
     )
     if result.matched_count == 0:
+        logger.warning(f"Tentativa de atualizar conta inexistente: {bill_id}")
         raise HTTPException(status_code=404, detail="Conta não encontrada")
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.info(f"Conta atualizada: {bill_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)
 
 
@@ -158,7 +165,10 @@ async def delete_bill(
         "user_id": str(current_user.id)
     })
     if result.deleted_count == 0:
+        logger.warning(f"Tentativa de deletar conta inexistente: {bill_id}")
         raise HTTPException(status_code=404, detail="Conta não encontrada")
+    
+    logger.info(f"Conta deletada: {bill_id} para usuário {current_user.id}")
     return {"message": "Conta deletada com sucesso", "success": True}
 
 

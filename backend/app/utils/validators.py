@@ -2,8 +2,8 @@
 Utilitários de Validação Centralizados
 Arquivo: backend/app/utils/validators.py
 
-Este módulo centraliza funções de validação e formatação
-para evitar duplicação de código entre os models.
+🔧 MODIFICADO: Regra 2.8 - Adicionado logger
+🔧 CORRIGIDO: Regra 2.2 - format_mongo_doc mantém _id (não converte para id)
 """
 
 from typing import Any, Dict, List, Optional, Union
@@ -11,6 +11,11 @@ import re
 from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import HTTPException
+
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 
 # ========== FORMATAÇÃO DE VALORES MONETÁRIOS ==========
@@ -28,7 +33,9 @@ def round_amount(value: Optional[float], decimals: int = 2) -> Optional[float]:
         Valor arredondado ou None se valor for None
     """
     if value is not None:
-        return round(value, decimals)
+        rounded = round(value, decimals)
+        logger.debug(f"Valor arredondado: {value} → {rounded}")
+        return rounded
     return value
 
 
@@ -68,6 +75,7 @@ def validate_date_not_future(date: datetime, field_name: str = "date") -> dateti
         ValueError: Se a data for futura
     """
     if date and date > datetime.now(timezone.utc):
+        logger.warning(f"Data futura detectada em {field_name}: {date}")
         raise ValueError(f"{field_name} não pode ser uma data futura")
     return date
 
@@ -89,10 +97,12 @@ def validate_month_format(month: Optional[str]) -> Optional[str]:
         return month
     
     if not re.match(r'^\d{2}/\d{4}$', month):
+        logger.warning(f"Formato de mês inválido: {month}")
         raise ValueError('Mês deve estar no formato MM/YYYY (ex: 12/2025)')
     
     mes = int(month.split('/')[0])
     if mes < 1 or mes > 12:
+        logger.warning(f"Mês inválido (deve ser 01-12): {month}")
         raise ValueError('Mês deve ser entre 01 e 12')
     
     return month
@@ -122,6 +132,7 @@ def validate_achievement_type(type_value: str) -> str:
         'debt_paid'
     ]
     if type_value not in tipos_validos:
+        logger.warning(f"Tipo de conquista inválido: {type_value}")
         raise ValueError(f'Tipo de conquista inválido. Use um dos: {tipos_validos}')
     return type_value
 
@@ -141,6 +152,7 @@ def validate_currency(currency: str) -> str:
     """
     moedas_validas = ["BRL", "USD", "EUR", "CNY"]
     if currency not in moedas_validas:
+        logger.warning(f"Moeda inválida: {currency}")
         raise ValueError(f'Moeda inválida. Use uma das: {moedas_validas}')
     return currency
 
@@ -160,6 +172,7 @@ def validate_language(language: str) -> str:
     """
     idiomas_validos = ["pt", "en", "es", "zh"]
     if language not in idiomas_validos:
+        logger.warning(f"Idioma inválido: {language}")
         raise ValueError(f'Idioma inválido. Use um dos: {idiomas_validos}')
     return language
 
@@ -181,29 +194,41 @@ def validate_object_id(id_str: str, field_name: str = "id") -> str:
         HTTPException: Se o ID for inválido
     """
     if not ObjectId.is_valid(id_str):
+        logger.warning(f"ID inválido para campo {field_name}: {id_str}")
         raise HTTPException(status_code=400, detail=f"{field_name} inválido")
+    
+    logger.debug(f"ID validado com sucesso para campo {field_name}: {id_str}")
     return id_str
 
 
-# ========== FORMATAÇÃO DE DOCUMENTOS MONGODB ==========
+# ========== FORMATAÇÃO DE DOCUMENTOS MONGODB (REGRAS 2.2 e 2.3) ==========
 
 def format_mongo_doc(doc: Optional[Dict]) -> Optional[Dict]:
     """
-    Converte _id para id em documentos do MongoDB.
-    Remove o _id original para evitar duplicação.
+    Converte _id de ObjectId para string, mantém o nome _id.
+    
+    🔧 CORREÇÃO: Agora mantém "_id" (não converte para "id")
+    🔧 Regra 2.2: Proibido criar campo "id" separado
+    🔧 Regra 2.3: Frontend espera "_id", não "id"
     
     Args:
         doc: Documento do MongoDB
     
     Returns:
-        Documento formatado com campo 'id' (sem '_id')
+        Documento formatado com "_id" como string
+    
+    Exemplo:
+        {"_id": ObjectId("..."), "name": "João"} 
+        → {"_id": "507f1f77...", "name": "João"}
     """
     if not doc:
         return doc
     
     result = dict(doc)
     if "_id" in result:
-        result["id"] = str(result.pop("_id"))
+        result["_id"] = str(result["_id"])  # ✅ Mantém "_id", só converte para string
+    
+    logger.debug(f"Documento formatado com _id: {result.get('_id', 'sem_id')}")
     return result
 
 
@@ -217,7 +242,12 @@ def format_mongo_list(docs: List[Dict]) -> List[Dict]:
     Returns:
         Lista de documentos formatados
     """
-    return [format_mongo_doc(doc) for doc in docs]
+    if not docs:
+        return []
+    
+    formatted = [format_mongo_doc(doc) for doc in docs]
+    logger.debug(f"{len(formatted)} documentos formatados")
+    return formatted
 
 
 def format_mongo_docs(docs: List[Dict]) -> List[Dict]:

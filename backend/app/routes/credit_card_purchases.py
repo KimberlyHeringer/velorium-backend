@@ -1,6 +1,9 @@
 """
 Rotas de Compras Parceladas no Cartão de Crédito
 Arquivo: backend/app/routes/credit_card_purchases.py
+
+🔧 MODIFICADO: Regra 2.2 - Removido format_doc local, usando format_mongo_doc
+🔧 MODIFICADO: Regra 2.8 - Adicionado logs
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -14,20 +17,16 @@ from app.models.credit_card_purchase import CreditCardPurchaseCreate, CreditCard
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
+from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 
 
 # ========== FUNÇÕES AUXILIARES ==========
-
-def format_doc(doc: dict) -> dict:
-    """Converte _id para id e padroniza resposta"""
-    if doc and "_id" in doc:
-        result = dict(doc)
-        result["id"] = str(result.pop("_id"))
-        return result
-    return doc
-
 
 def split_amount(total: float, parts: int) -> List[float]:
     base = round(total / parts, 2)
@@ -115,7 +114,10 @@ async def create_purchase(
     await update_card_committed_amount(purchase_data.card_id, purchase_data.total_amount, db)
 
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
-    return format_doc(created)
+    
+    # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
+    logger.info(f"Compra criada: {purchase_data.description} - R$ {purchase_data.total_amount} para usuário {current_user.id}")
+    return format_mongo_doc(created)
 
 
 @router.get("/purchases", response_model=dict)
@@ -137,9 +139,11 @@ async def get_purchases(
         db.credit_card_purchases, query, params, sort=[("created_at", -1)]
     )
     
-    formatted_items = [format_doc(item) for item in items]
+    # 🔧 CORREÇÃO 2.2: usando format_mongo_docs
+    formatted_items = format_mongo_docs(items)
     
-    return paginate(formatted_items, total, params)
+    logger.debug(f"Listadas {len(formatted_items)} compras para usuário {current_user.id}")
+    return paginate(formatted_items, total, params).model_dump()
 
 
 @router.get("/faturas", response_model=List[dict])
@@ -185,7 +189,8 @@ async def get_faturas(
         if pid not in purchases_map:
             purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
             if purchase:
-                purchases_map[pid] = format_doc(purchase)
+                # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
+                purchases_map[pid] = format_mongo_doc(purchase)
 
     result = []
     for pid, purchase in purchases_map.items():
@@ -215,8 +220,11 @@ async def get_purchase(
         "user_id": str(current_user.id)
     })
     if not purchase:
+        logger.warning(f"Compra não encontrada: {purchase_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Compra não encontrada")
-    return format_doc(purchase)
+    
+    # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
+    return format_mongo_doc(purchase)
 
 
 @router.put("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
@@ -232,6 +240,7 @@ async def update_purchase(
         "user_id": str(current_user.id)
     })
     if not purchase:
+        logger.warning(f"Compra não encontrada para atualização: {purchase_id}")
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
     existing_installments = await db.credit_card_installments.find({
@@ -285,7 +294,9 @@ async def update_purchase(
         await db.credit_card_installments.insert_many(installments)
 
     updated = await db.credit_card_purchases.find_one({"_id": ObjectId(purchase_id)})
-    return format_doc(updated)
+    
+    logger.info(f"Compra atualizada: {purchase_id} para usuário {current_user.id}")
+    return format_mongo_doc(updated)
 
 
 @router.delete("/purchases/{purchase_id}", response_model=dict)
@@ -300,6 +311,7 @@ async def delete_purchase(
         "user_id": str(current_user.id)
     })
     if not purchase:
+        logger.warning(f"Compra não encontrada para deleção: {purchase_id}")
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
     total_amount = purchase["total_amount"]
@@ -307,6 +319,8 @@ async def delete_purchase(
 
     await db.credit_card_purchases.delete_one({"_id": ObjectId(purchase_id)})
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
+    
+    logger.info(f"Compra deletada: {purchase_id} para usuário {current_user.id}")
     return {"message": "Compra e parcelas excluídas com sucesso"}
 
 
@@ -319,6 +333,7 @@ async def mark_installment_paid(
     """Marca uma parcela como paga"""
     installment = await db.credit_card_installments.find_one({"_id": ObjectId(installment_id)})
     if not installment:
+        logger.warning(f"Parcela não encontrada: {installment_id}")
         raise HTTPException(status_code=404, detail="Parcela não encontrada")
 
     if installment.get("paid", False):
@@ -338,6 +353,7 @@ async def mark_installment_paid(
 
     await update_card_committed_amount(installment["card_id"], -installment["amount"], db)
 
+    logger.info(f"Parcela paga: {installment_id} - R$ {installment['amount']} para usuário {current_user.id}")
     return {"message": "Parcela marcada como paga e compromisso reduzido"}
 
 # ========== DECISÕES DOCUMENTADAS ==========

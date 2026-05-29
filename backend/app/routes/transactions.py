@@ -3,13 +3,13 @@ Rotas de Transações Financeiras (Receitas e Despesas)
 Arquivo: backend/app/routes/transactions.py
 
 🔧 CORREÇÃO: Substituído format_transaction_doc por format_mongo_doc (Seção 2.2)
+🔧 MODIFICADO: Regra 2.8 - Usa setup_logger em vez de logging diretamente
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Optional, List
 from datetime import datetime, timezone
 from bson import ObjectId
-import logging
 
 from app.database import get_database
 from app.models.transaction import TransactionCreate, TransactionUpdate, TransactionResponse, TransactionBalance
@@ -17,9 +17,10 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, PaginatedResponse, paginate, paginate_query
 from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.logger import setup_logger
 
-# Configuração de logging
-logger = logging.getLogger(__name__)
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/transactions", tags=["Transações"])
 
@@ -50,11 +51,13 @@ async def create_transaction(
         # Buscar o documento inserido para retornar os dados completos
         created = await db.transactions.find_one({"_id": result.inserted_id})
         
-        # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+        logger.info(f"Transação criada: {transaction_dict['type']} - R$ {transaction_dict['amount']} para usuário {current_user.id}")
         return format_mongo_doc(created)
         
     except Exception as e:
         logger.error(f"Erro ao criar transação para usuário {current_user.id}: {e}")
+        import traceback
+        logger.debug(f"Detalhes do erro: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erro interno ao criar transação. Tente novamente mais tarde."
@@ -90,9 +93,9 @@ async def get_transactions(
         db.transactions, query, params, sort=[("date", -1)]
     )
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
     formatted_items = format_mongo_docs(items)
     
+    logger.debug(f"Listadas {len(formatted_items)} transações para usuário {current_user.id}")
     return paginate(formatted_items, total, params)
 
 
@@ -121,6 +124,7 @@ async def get_balance(
     if result:
         income = float(result[0]["total_income"])
         expense = float(result[0]["total_expense"])
+        logger.debug(f"Saldo calculado para usuário {current_user.id}: R$ {income - expense:.2f}")
         return TransactionBalance(
             income=income,
             expense=expense,
@@ -146,6 +150,7 @@ async def get_transaction(
     try:
         obj_id = ObjectId(transaction_id)
     except Exception:
+        logger.warning(f"ID de transação inválido: {transaction_id} para usuário {current_user.id}")
         raise HTTPException(status_code=400, detail="ID de transação inválido")
     
     transaction = await db.transactions.find_one({
@@ -153,9 +158,10 @@ async def get_transaction(
         "user_id": str(current_user.id)
     })
     if not transaction:
+        logger.warning(f"Transação não encontrada: {transaction_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.debug(f"Transação recuperada: {transaction_id} para usuário {current_user.id}")
     return format_mongo_doc(transaction)
 
 
@@ -170,6 +176,7 @@ async def update_transaction(
     try:
         obj_id = ObjectId(transaction_id)
     except Exception:
+        logger.warning(f"ID de transação inválido para atualização: {transaction_id}")
         raise HTTPException(status_code=400, detail="ID de transação inválido")
     
     # Remover campos None
@@ -188,12 +195,13 @@ async def update_transaction(
         {"$set": update_data}
     )
     if result.matched_count == 0:
+        logger.warning(f"Transação não encontrada para atualização: {transaction_id}")
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
     # Buscar documento atualizado e retornar
     updated = await db.transactions.find_one({"_id": obj_id})
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.info(f"Transação atualizada: {transaction_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)
 
 
@@ -207,6 +215,7 @@ async def delete_transaction(
     try:
         obj_id = ObjectId(transaction_id)
     except Exception:
+        logger.warning(f"ID de transação inválido para deleção: {transaction_id}")
         raise HTTPException(status_code=400, detail="ID de transação inválido")
     
     result = await db.transactions.delete_one({
@@ -214,7 +223,10 @@ async def delete_transaction(
         "user_id": str(current_user.id)
     })
     if result.deleted_count == 0:
+        logger.warning(f"Transação não encontrada para deleção: {transaction_id}")
         raise HTTPException(status_code=404, detail="Transação não encontrada")
+    
+    logger.info(f"Transação deletada: {transaction_id} para usuário {current_user.id}")
     return {"message": "Transação deletada com sucesso", "success": True}
 
 

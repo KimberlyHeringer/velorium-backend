@@ -5,6 +5,7 @@ Arquivo: backend/app/routes/investments.py
 ✅ CRUD completo (criar, listar, buscar, atualizar, deletar)
 ✅ Validação inline (sem schemas separados)
 ✅ 🔧 CORREÇÃO: padronização _id
+✅ 🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -18,6 +19,10 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.validators import format_mongo_doc, validate_object_id
 from app.utils.pagination import PaginationParams, paginate_query, paginate
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/investments", tags=["Investimentos"])
 
@@ -32,13 +37,16 @@ async def create_investment(
     """Cria um novo investimento"""
     # Validação inline
     if not investment_data.get("name"):
+        logger.warning(f"Tentativa de criar investimento sem nome para usuário {current_user.id}")
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     
     if not investment_data.get("amount") or investment_data["amount"] <= 0:
+        logger.warning(f"Tentativa de criar investimento com valor inválido para usuário {current_user.id}")
         raise HTTPException(status_code=400, detail="Valor deve ser maior que zero")
     
     valid_categories = ["renda_fixa", "acoes", "fiis", "cripto", "outros"]
     if investment_data.get("category") not in valid_categories:
+        logger.warning(f"Tentativa de criar investimento com categoria inválida: {investment_data.get('category')}")
         raise HTTPException(status_code=400, detail=f"Categoria inválida. Use: {valid_categories}")
     
     investment_dict = {
@@ -57,6 +65,7 @@ async def create_investment(
     result = await db.investments.insert_one(investment_dict)
     created = await db.investments.find_one({"_id": result.inserted_id})
     
+    logger.info(f"Investimento criado: '{investment_data['name']}' (R$ {investment_data['amount']}) para usuário {current_user.id}")
     return format_mongo_doc(created)
 
 
@@ -78,6 +87,7 @@ async def list_investments(
     
     formatted_items = [format_mongo_doc(item) for item in items]
     
+    logger.debug(f"Listados {len(formatted_items)} investimentos para usuário {current_user.id}")
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -97,8 +107,10 @@ async def get_investment(
     })
     
     if not investment:
+        logger.warning(f"Investimento não encontrado: {investment_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Investimento não encontrado")
     
+    logger.debug(f"Investimento recuperado: {investment_id} para usuário {current_user.id}")
     return format_mongo_doc(investment)
 
 
@@ -120,6 +132,7 @@ async def update_investment(
     })
     
     if not existing:
+        logger.warning(f"Investimento não encontrado para atualização: {investment_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Investimento não encontrado")
     
     # Prepara dados para atualização
@@ -129,11 +142,13 @@ async def update_investment(
         update_data["name"] = investment_data["name"]
     if "amount" in investment_data:
         if investment_data["amount"] <= 0:
+            logger.warning(f"Tentativa de atualizar investimento com valor inválido: {investment_id}")
             raise HTTPException(status_code=400, detail="Valor deve ser maior que zero")
         update_data["amount"] = round(float(investment_data["amount"]), 2)
     if "category" in investment_data:
         valid_categories = ["renda_fixa", "acoes", "fiis", "cripto", "outros"]
         if investment_data["category"] not in valid_categories:
+            logger.warning(f"Tentativa de atualizar com categoria inválida: {investment_data.get('category')}")
             raise HTTPException(status_code=400, detail="Categoria inválida")
         update_data["category"] = investment_data["category"]
     if "purchase_date" in investment_data:
@@ -146,6 +161,7 @@ async def update_investment(
         update_data["notes"] = investment_data["notes"]
     
     if not update_data:
+        logger.warning(f"Tentativa de atualizar investimento sem dados: {investment_id}")
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
     
     update_data["updated_at"] = datetime.now(timezone.utc)
@@ -156,6 +172,8 @@ async def update_investment(
     )
     
     updated = await db.investments.find_one({"_id": ObjectId(investment_id)})
+    
+    logger.info(f"Investimento atualizado: {investment_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)
 
 
@@ -175,6 +193,8 @@ async def delete_investment(
     })
     
     if result.deleted_count == 0:
+        logger.warning(f"Investimento não encontrado para deleção: {investment_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Investimento não encontrado")
     
+    logger.info(f"Investimento deletado: {investment_id} para usuário {current_user.id}")
     return {"message": "Investimento removido com sucesso", "success": True}

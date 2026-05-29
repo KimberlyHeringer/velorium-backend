@@ -1,6 +1,9 @@
 """
 Rotas de Perfil Financeiro do Usuário
 Arquivo: backend/app/routes/profile.py
+
+🔧 MODIFICADO: Regra 2.2 - Removido format_doc local, usando format_mongo_doc
+🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,18 +15,13 @@ from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 from app.models.profile import UserProfileCreate, UserProfileResponse
 from app.database import get_database
+from app.utils.validators import format_mongo_doc
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/profile", tags=["Perfil Financeiro"])
-
-
-# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
-def format_doc(doc: dict) -> dict:
-    """Converte _id para id e padroniza resposta"""
-    if doc and "_id" in doc:
-        result = dict(doc)
-        result["id"] = str(result.pop("_id"))
-        return result
-    return doc
 
 
 @router.get("/", response_model=Optional[UserProfileResponse])
@@ -34,8 +32,12 @@ async def get_profile(
     """Retorna o perfil financeiro do usuário"""
     profile = await db.user_profiles.find_one({"user_id": str(current_user.id)})
     if not profile:
+        logger.debug(f"Nenhum perfil encontrado para usuário {current_user.id}")
         return None
-    return format_doc(profile)
+    
+    logger.debug(f"Perfil recuperado para usuário {current_user.id}")
+    # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
+    return format_mongo_doc(profile)
 
 
 @router.post("/", response_model=UserProfileResponse)
@@ -59,13 +61,16 @@ async def save_profile(
         )
         profile_dict["_id"] = existing["_id"]
         profile_dict["created_at"] = existing.get("created_at", now)
+        logger.info(f"Perfil atualizado para usuário {current_user.id}")
     else:
         profile_dict["created_at"] = now
         result = await db.user_profiles.insert_one(profile_dict)
         profile_dict["_id"] = result.inserted_id
+        logger.info(f"Perfil criado para usuário {current_user.id}")
     
-    # 🔧 CORREÇÃO: usar format_doc para consistência
-    return format_doc(profile_dict)
+    # 🔧 CORREÇÃO 2.2: usando format_mongo_doc (não mais format_doc)
+    return format_mongo_doc(profile_dict)
+
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #

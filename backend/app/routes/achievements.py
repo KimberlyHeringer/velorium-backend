@@ -1,6 +1,8 @@
 """
 Rotas de Conquistas do Usuário (sincronização)
 Arquivo: backend/app/routes/achievements.py
+
+🔧 MODIFICADO: Regra 2.2 - Removido format_doc local, usando format_mongo_doc
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -13,18 +15,9 @@ from app.models.achievement import AchievementCreate, AchievementResponse
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
+from app.utils.validators import format_mongo_doc
 
 router = APIRouter(prefix="/achievements", tags=["Conquistas"])
-
-
-# ========== FUNÇÃO AUXILIAR PADRONIZADA ==========
-def format_doc(doc: dict) -> dict:
-    """Converte _id para id e padroniza resposta"""
-    if doc and "_id" in doc:
-        result = dict(doc)
-        result["id"] = str(result.pop("_id"))
-        return result
-    return doc
 
 
 # ========== ENDPOINTS ==========
@@ -44,9 +37,9 @@ async def get_achievements(
         db.achievements, query, params, sort=[("date", -1)]
     )
     
-    formatted_items = [format_doc(item) for item in items]
+    # 🔧 CORREÇÃO: usando format_mongo_doc (Regra 2.2)
+    formatted_items = [format_mongo_doc(item) for item in items]
     
-    # 🔧 CORREÇÃO: adicionado .model_dump() para retornar dicionário
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -62,7 +55,8 @@ async def create_achievement(
     ach_dict["date"] = datetime.now(timezone.utc)
     result = await db.achievements.insert_one(ach_dict)
     created = await db.achievements.find_one({"_id": result.inserted_id})
-    return format_doc(created)
+    # 🔧 CORREÇÃO: usando format_mongo_doc (Regra 2.2)
+    return format_mongo_doc(created)
 
 
 @router.post("/sync", response_model=dict)

@@ -1,6 +1,10 @@
 """
 Rotas de Autenticação
 Arquivo: backend/app/routes/auth.py
+
+🔧 MODIFICADO: Regra 2.8 - Logs
+- Substituído print por logger.info
+- Adicionado logger configurado
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -18,6 +22,10 @@ from app.utils.auth import (
     get_current_user
 )
 from app.utils.rate_limiter import limiter
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -72,6 +80,7 @@ async def register(
     user_dict["monthly_income"] = round(user_dict["monthly_income"], 2)
 
     result = await db.users.insert_one(user_dict)
+    logger.info(f"Novo usuário registrado: {user_data.email.lower()}")
     return {"message": "Usuário criado com sucesso", "id": str(result.inserted_id)}
 
 
@@ -84,6 +93,7 @@ async def login(
 ):
     db_user = await db.users.find_one({"email": user_data.email.lower()})
     if not db_user or not verify_password(user_data.password, db_user["password_hash"]):
+        logger.warning(f"Tentativa de login falhou para email: {user_data.email.lower()}")
         raise HTTPException(status_code=401, detail="Email ou senha inválidos")
 
     token_pair = generate_token_pair(str(db_user["_id"]))
@@ -100,6 +110,7 @@ async def login(
         created_at=db_user["created_at"]
     )
 
+    logger.info(f"Usuário logado: {user_data.email.lower()}")
     return LoginResponse(
         access_token=token_pair.access_token,
         refresh_token=token_pair.refresh_token,
@@ -139,6 +150,7 @@ async def logout(
 ):
     from app.utils.auth import add_token_to_blacklist
     await add_token_to_blacklist(refresh_token, current_user.id, db)
+    logger.info(f"Usuário fez logout: {current_user.email}")
     return {"message": "Logout realizado com sucesso. Token revogado."}
 
 
@@ -163,7 +175,8 @@ async def forgot_password(
     )
     
     reset_link = f"https://velorium-frontend.com/reset-password?token={token}"
-    print(f"🔐 [MOCK] Link para redefinir senha: {reset_link}")
+    # 🔧 CORREÇÃO: print substituído por logger.info (Regra 2.8)
+    logger.info(f"🔐 [MOCK] Link para redefinir senha: {reset_link}")
     
     return {"message": "Se o email estiver cadastrado, você receberá um link de redefinição."}
 
@@ -192,4 +205,5 @@ async def reset_password(
         }}
     )
     
+    logger.info(f"Senha redefinida para usuário: {user['email']}")
     return {"message": "Senha alterada com sucesso."}

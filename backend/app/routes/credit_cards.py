@@ -2,7 +2,8 @@
 Rotas de Cartões de Crédito
 Arquivo: backend/app/routes/credit_cards.py
 
-🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
+🔧 MODIFICADO: Regra 2.2 - Usa format_mongo_doc
+🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -16,6 +17,10 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/credit-cards", tags=["Cartões de Crédito"])
 
@@ -37,9 +42,9 @@ async def get_credit_cards(
         db.credit_cards, query, params, sort=[("created_at", -1)]
     )
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
     formatted_items = format_mongo_docs(items)
     
+    logger.debug(f"Listados {len(formatted_items)} cartões para usuário {current_user.id}")
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -62,7 +67,7 @@ async def create_credit_card(
     result = await db.credit_cards.insert_one(card_dict)
     created = await db.credit_cards.find_one({"_id": result.inserted_id})
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.info(f"Cartão criado: {card_data.name} (ID: {result.inserted_id}) para usuário {current_user.id}")
     return format_mongo_doc(created)
 
 
@@ -81,6 +86,7 @@ async def update_credit_card(
     })
     
     if not card:
+        logger.warning(f"Tentativa de atualizar cartão inexistente: {card_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
     # Prepara os dados para atualização
@@ -96,7 +102,7 @@ async def update_credit_card(
     # Busca o cartão atualizado
     updated_card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.info(f"Cartão atualizado: {card_id} para usuário {current_user.id}")
     return format_mongo_doc(updated_card)
 
 
@@ -114,11 +120,13 @@ async def delete_credit_card(
     })
     
     if not card:
+        logger.warning(f"Tentativa de deletar cartão inexistente: {card_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
     # Verifica se há compras associadas
     purchases = await db.credit_card_purchases.find_one({"card_id": card_id})
     if purchases:
+        logger.warning(f"Tentativa de deletar cartão com compras associadas: {card_id}")
         raise HTTPException(
             status_code=400, 
             detail="Cartão possui compras associadas. Remova as compras primeiro."
@@ -127,6 +135,7 @@ async def delete_credit_card(
     # Remove o cartão
     await db.credit_cards.delete_one({"_id": ObjectId(card_id)})
     
+    logger.info(f"Cartão deletado: {card_id} (nome: {card.get('name', 'N/A')}) para usuário {current_user.id}")
     return {"message": "Cartão removido com sucesso", "success": True}
 
 
@@ -143,7 +152,8 @@ async def get_credit_card(
     })
     
     if not card:
+        logger.warning(f"Cartão não encontrado: {card_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.debug(f"Cartão recuperado: {card_id} para usuário {current_user.id}")
     return format_mongo_doc(card)

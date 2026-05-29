@@ -1,7 +1,13 @@
 """
 Arquivo principal do backend Velorium
 Ponto de entrada da API FastAPI
+Arquivo: backend/main.py
+
+🔧 MODIFICADO: Regra 2.8 - Logs
+- Substituído print por logger.info/error
+- Adicionado logger configurado
 """
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -12,6 +18,10 @@ from app.database import connect_to_mongo, close_mongo_connection, create_indexe
 from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user, investments
 from app.routes import achievements  
 from app.utils.rate_limiter import init_rate_limiter
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 # Carrega variáveis de ambiente
 load_dotenv()
@@ -31,7 +41,7 @@ init_rate_limiter(app)
 # ⚠️ DEPOIS DOS TESTES, REVERTA PARA A CONFIGURAÇÃO ORIGINAL
 allowed_origins = ["*"]
 
-print(f"🔧 CORS configurado para permitir todas as origens (TEMPORÁRIO PARA TESTE)")
+logger.info("🔧 CORS configurado para permitir todas as origens (TEMPORÁRIO PARA TESTE)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,18 +56,18 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     """Executado quando o servidor inicia"""
-    print("🚀 Iniciando Velorium API...")
+    logger.info("🚀 Iniciando Velorium API...")
     await connect_to_mongo()
     await create_indexes()
-    print("✅ Velorium API pronta para uso!")
+    logger.info("✅ Velorium API pronta para uso!")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """Executado quando o servidor desliga"""
-    print("🛑 Desligando Velorium API...")
+    logger.info("🛑 Desligando Velorium API...")
     await close_mongo_connection()
-    print("✅ Desligamento concluído")
+    logger.info("✅ Desligamento concluído")
 
 
 # ========== ROTAS DA API ==========

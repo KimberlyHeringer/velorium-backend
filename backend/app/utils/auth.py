@@ -1,4 +1,11 @@
 # backend/app/utils/auth.py
+"""
+Utilitários de Autenticação (JWT, Hash, Blacklist)
+Arquivo: backend/app/utils/auth.py
+
+🔧 MODIFICADO: Regra 2.8 - Adicionado logger para rastreamento de eventos de autenticação
+"""
+
 from jose import jwt, JWTError
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
@@ -12,6 +19,10 @@ from bson import ObjectId
 
 from app.database import get_database
 from app.models.user import UserResponse
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 load_dotenv()
 
@@ -22,6 +33,7 @@ load_dotenv()
 # Secret Key é OBRIGATÓRIA - não permite fallback inseguro
 SECRET_KEY = os.getenv("JWT_SECRET")
 if not SECRET_KEY:
+    logger.error("JWT_SECRET não encontrada no .env!")
     raise ValueError(
         "JWT_SECRET não encontrada no .env! "
         "Esta variável é obrigatória para segurança da API."
@@ -81,7 +93,11 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     🔧 CORRIGIDO: Trunca a senha para 72 bytes para compatibilidade com bcrypt.
     """
     truncated_password = _truncate_password(plain_password)
-    return pwd_context.verify(truncated_password, hashed_password)
+    result = pwd_context.verify(truncated_password, hashed_password)
+    
+    if not result:
+        logger.debug("Falha na verificação de senha")
+    return result
 
 
 def get_password_hash(password: str) -> str:
@@ -90,7 +106,9 @@ def get_password_hash(password: str) -> str:
     🔧 CORRIGIDO: Trunca a senha para 72 bytes antes de fazer o hash.
     """
     truncated_password = _truncate_password(password)
-    return pwd_context.hash(truncated_password)
+    hash_result = pwd_context.hash(truncated_password)
+    logger.debug("Hash de senha gerado com sucesso")
+    return hash_result
 
 
 # =============================================================================
@@ -115,6 +133,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     })
     
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    logger.debug(f"Access token criado para usuário: {data.get('sub', 'unknown')}")
     return encoded_jwt
 
 
@@ -132,6 +151,7 @@ def create_refresh_token(data: dict) -> str:
     })
     
     encoded_jwt = jwt.encode(to_encode, REFRESH_SECRET_KEY, algorithm=ALGORITHM)
+    logger.debug(f"Refresh token criado para usuário: {data.get('sub', 'unknown')}")
     return encoded_jwt
 
 
@@ -154,17 +174,22 @@ def decode_token(token: str, is_refresh: bool = False) -> TokenData:
         token_type: str = payload.get("type", "access")
         
         if user_id is None:
+            logger.warning("Token sem campo 'sub' (user_id)")
             raise credentials_exception
         
         # Valida que o tipo de token está correto
         if is_refresh and token_type != "refresh":
+            logger.warning(f"Tentativa de usar token {token_type} como refresh")
             raise credentials_exception
         if not is_refresh and token_type != "access":
+            logger.warning(f"Tentativa de usar token {token_type} como access")
             raise credentials_exception
             
     except JWTError as e:
+        logger.warning(f"Erro ao decodificar token: {e}")
         raise credentials_exception
     
+    logger.debug(f"Token decodificado com sucesso para usuário: {user_id}")
     return TokenData(user_id=user_id)
 
 
@@ -191,10 +216,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
     user = await db.users.find_one({"_id": ObjectId(token_data.user_id)})
     
     if user is None:
+        logger.warning(f"Usuário não encontrado para token: {token_data.user_id}")
         raise credentials_exception
     
     # Converter para UserResponse (exclui password_hash automaticamente)
     user["_id"] = str(user["_id"])
+    logger.debug(f"Usuário autenticado: {user['email']} (ID: {user['_id']})")
     return UserResponse(**user)
 
 
@@ -221,6 +248,7 @@ def generate_token_pair(user_id: str) -> TokenPair:
     access_token = create_access_token(data={"sub": user_id})
     refresh_token = create_refresh_token(data={"sub": user_id})
     
+    logger.info(f"Par de tokens gerado para usuário: {user_id}")
     return TokenPair(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -235,6 +263,7 @@ async def refresh_access_token(refresh_token: str) -> TokenPair:
     # Validar refresh token
     token_data = decode_token(refresh_token, is_refresh=True)
     
+    logger.info(f"Refresh token válido, gerando novo par para usuário: {token_data.user_id}")
     # Gerar novo par
     return generate_token_pair(token_data.user_id)
 
@@ -257,7 +286,8 @@ async def add_token_to_blacklist(token: str, user_id: str, db):
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
         else:
             expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Erro ao decodificar token para blacklist: {e}")
         # Fallback seguro
         expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
@@ -267,9 +297,16 @@ async def add_token_to_blacklist(token: str, user_id: str, db):
         "created_at": datetime.now(timezone.utc),
         "expires_at": expires_at
     })
+    
+    logger.info(f"Refresh token adicionado à blacklist para usuário: {user_id}")
 
 
 async def is_token_blacklisted(token: str, db) -> bool:
     """Verifica se o refresh token está na blacklist."""
     result = await db.refresh_token_blacklist.find_one({"token": token})
-    return result is not None
+    
+    if result:
+        logger.debug(f"Token encontrado na blacklist")
+        return True
+    
+    return False

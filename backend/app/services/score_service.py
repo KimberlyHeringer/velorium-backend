@@ -1,14 +1,18 @@
 """
 Serviço de Cálculo do Score Financeiro
 Arquivo: backend/app/services/score_service.py
+
+🔧 MODIFICADO: Regra 2.8 - Usa setup_logger em vez de logging diretamente
 """
 
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from bson import ObjectId
-import logging
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 
 def ensure_timezone(dt):
@@ -30,6 +34,7 @@ async def calculate_score(
     """
     Calcula o score financeiro do usuário.
     """
+    logger.debug(f"Iniciando cálculo de score para usuário {user_id}")
     
     # ========== 1. BUSCAR DADOS ==========
     thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
@@ -51,7 +56,8 @@ async def calculate_score(
     if goals is None:
         try:
             goals = await db.goals.find({"user_id": user_id}).to_list(1000)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Erro ao buscar metas para score do usuário {user_id}: {e}")
             goals = []
     
     # 🔧 CORREÇÃO: Garantir que todas as metas tenham updated_at com timezone
@@ -110,6 +116,7 @@ async def calculate_score(
         renda_mensal = float(user_doc.get("monthly_income", 0.0))
         renda_mensal = round(renda_mensal, 2)
     else:
+        logger.warning(f"Usuário {user_id} não encontrado para cálculo de score")
         renda_mensal = 0.0
     
     controle = 0
@@ -240,6 +247,7 @@ async def calculate_score(
             {"_id": existing["_id"]},
             {"$set": {"score": score, "details": details, "updated_at": now_utc}}
         )
+        logger.debug(f"Score atualizado para usuário {user_id}: {score}")
     else:
         await db.score_history.insert_one({
             "user_id": user_id,
@@ -249,8 +257,10 @@ async def calculate_score(
             "created_at": now_utc,
             "updated_at": now_utc,
         })
+        logger.info(f"Novo registro de score para usuário {user_id}: {score}")
     
     # ========== 13. RETORNAR ==========
+    logger.debug(f"Cálculo de score concluído para usuário {user_id}: {score}")
     return {
         "score": score,
         "lastScore": last_score,
@@ -260,7 +270,6 @@ async def calculate_score(
         "despesasMes": float(despesas_mes),
         "rendaMensal": float(renda_mensal),
     }
-
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #

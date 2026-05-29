@@ -3,6 +3,7 @@ Rotas de Metas Financeiras (Goals)
 Arquivo: backend/app/routes/goals.py
 
 🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
+🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -16,6 +17,10 @@ from app.models.goal import GoalCreate, GoalUpdate, GoalResponse
 from app.database import get_database
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/goals", tags=["Metas"])
 
@@ -41,9 +46,9 @@ async def list_goals(
         db.goals, query, params, sort=[("created_at", -1)]
     )
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_docs
     formatted_items = format_mongo_docs(items)
     
+    logger.debug(f"Listadas {len(formatted_items)} metas para usuário {current_user.id}")
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -72,7 +77,7 @@ async def create_goal(
     result = await db.goals.insert_one(goal_dict)
     created = await db.goals.find_one({"_id": result.inserted_id})
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.info(f"Meta criada: '{goal.name}' (R$ {target}) para usuário {current_user.id}")
     return format_mongo_doc(created)
 
 
@@ -84,6 +89,7 @@ async def get_goal(
 ):
     """Busca uma meta específica"""
     if not ObjectId.is_valid(goal_id):
+        logger.warning(f"ID de meta inválido: {goal_id} para usuário {current_user.id}")
         raise HTTPException(status_code=400, detail="ID inválido")
     
     goal = await db.goals.find_one({
@@ -91,9 +97,10 @@ async def get_goal(
         "user_id": str(current_user.id)
     })
     if not goal:
+        logger.warning(f"Meta não encontrada: {goal_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Meta não encontrada")
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.debug(f"Meta recuperada: {goal_id} para usuário {current_user.id}")
     return format_mongo_doc(goal)
 
 
@@ -106,6 +113,7 @@ async def update_goal(
 ):
     """Atualiza uma meta existente"""
     if not ObjectId.is_valid(goal_id):
+        logger.warning(f"ID de meta inválido para atualização: {goal_id}")
         raise HTTPException(status_code=400, detail="ID inválido")
     
     existing = await db.goals.find_one({
@@ -113,6 +121,7 @@ async def update_goal(
         "user_id": str(current_user.id)
     })
     if not existing:
+        logger.warning(f"Meta não encontrada para atualização: {goal_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Meta não encontrada")
     
     update_data = {k: v for k, v in updates.model_dump(exclude_unset=True).items() if v is not None}
@@ -137,7 +146,7 @@ async def update_goal(
     
     updated = await db.goals.find_one({"_id": ObjectId(goal_id)})
     
-    # 🔧 CORREÇÃO 2.2: usar format_mongo_doc
+    logger.info(f"Meta atualizada: {goal_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)
 
 
@@ -149,6 +158,7 @@ async def delete_goal(
 ):
     """Remove uma meta"""
     if not ObjectId.is_valid(goal_id):
+        logger.warning(f"ID de meta inválido para deleção: {goal_id}")
         raise HTTPException(status_code=400, detail="ID inválido")
     
     result = await db.goals.delete_one({
@@ -156,5 +166,8 @@ async def delete_goal(
         "user_id": str(current_user.id)
     })
     if result.deleted_count == 0:
+        logger.warning(f"Meta não encontrada para deleção: {goal_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Meta não encontrada")
+    
+    logger.info(f"Meta deletada: {goal_id} para usuário {current_user.id}")
     return {"message": "Meta deletada com sucesso", "success": True}

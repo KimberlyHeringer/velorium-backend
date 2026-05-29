@@ -1,6 +1,10 @@
 """
 Rotas de IA (Inteligência Artificial)
 Arquivo: backend/app/routes/ia.py
+
+🔧 MODIFICADO: Regra 2.8 - Logs
+- Substituído print por logger.error
+- Adicionado logs para eventos importantes
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -13,7 +17,11 @@ from app.models.user import UserResponse
 from app.services.ia_service import obter_resposta_ia_async
 from app.database import get_database
 from app.utils.rate_limiter import limiter
+from app.utils.logger import setup_logger
 from bson import ObjectId
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/ia", tags=["IA"])
 
@@ -108,6 +116,7 @@ async def chat(
     # 1. Buscar o documento completo do usuário (para acessar os campos de consentimento)
     user_doc = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user_doc:
+        logger.warning(f"Usuário não encontrado no chat: {current_user.id}")
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     
     terms_accepted = user_doc.get("terms_accepted", False)
@@ -115,6 +124,7 @@ async def chat(
     
     # 2. Verificar se os termos foram aceitos
     if not terms_accepted:
+        logger.warning(f"Tentativa de usar IA sem aceitar termos: {current_user.id}")
         raise HTTPException(
             status_code=403,
             detail="Para usar o assistente, você precisa aceitar os Termos de Uso. Acesse Configurações > Consentimento."
@@ -123,14 +133,21 @@ async def chat(
     # 3. Escolher o modo de resposta
     try:
         if research_consent:
+            logger.debug(f"Usando contexto completo para usuário {current_user.id} (research_consent=true)")
             contexto = await montar_contexto_ia_completo(current_user, db)
             resposta = await obter_resposta_ia_async(contexto, chat_request.pergunta)
         else:
+            logger.debug(f"Usando contexto anonimizado para usuário {current_user.id} (research_consent=false)")
             contexto = await montar_contexto_ia_anonimizado()
             resposta = await obter_resposta_ia_async(contexto, chat_request.pergunta)
+        
+        logger.info(f"Chat IA bem-sucedido para usuário {current_user.id}")
         return ChatResponse(resposta=resposta)
     except Exception as e:
-        print(f"Erro na chamada da IA para usuário {current_user.id}: {e}")
+        # 🔧 CORREÇÃO 2.8: substituindo print por logger.error
+        logger.error(f"Erro na chamada da IA para usuário {current_user.id}: {e}")
+        import traceback
+        logger.debug(f"Detalhes do erro na IA: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Não foi possível processar sua solicitação. Tente novamente mais tarde."
@@ -149,5 +166,6 @@ if os.getenv("DEBUG", "false").lower() == "true":
         request: PerguntaRequestTeste,
         current_user: UserResponse = Depends(get_current_user)
     ):
+        logger.debug(f"Endpoint de teste IA usado por usuário {current_user.id}")
         resposta = await obter_resposta_ia_async(request.prompt_context, request.pergunta_usuario)
         return ChatResponse(resposta=resposta)

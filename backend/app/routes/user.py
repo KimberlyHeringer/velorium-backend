@@ -1,9 +1,11 @@
 """
 Rotas de Usuário (Perfil, Senha, Consentimento, Preferências, Export, Delete)
 Arquivo: backend/app/routes/user.py
+
+🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
@@ -14,7 +16,10 @@ from app.database import get_database
 from app.models.user import UserResponse, UserUpdate
 from app.utils.auth import get_current_user, get_password_hash, verify_password
 from app.utils.rate_limiter import limiter
-from fastapi import Request
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/users", tags=["Usuário"])
 
@@ -77,6 +82,7 @@ async def update_profile(
     if "email" in update_data:
         existing = await db.users.find_one({"email": update_data["email"]})
         if existing and str(existing["_id"]) != str(current_user.id):
+            logger.warning(f"Tentativa de usar email já cadastrado: {update_data['email']}")
             raise HTTPException(status_code=400, detail="Email já cadastrado")
     
     update_data["updated_at"] = datetime.now(timezone.utc)
@@ -88,6 +94,8 @@ async def update_profile(
     
     updated_user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     updated_user["_id"] = str(updated_user["_id"])
+    
+    logger.info(f"Perfil atualizado para usuário {current_user.id}")
     return UserResponse(**updated_user)
 
 
@@ -99,9 +107,11 @@ async def change_password(
 ):
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
+        logger.warning(f"Usuário não encontrado ao tentar alterar senha: {current_user.id}")
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
     
     if not verify_password(password_data.current_password, user["password_hash"]):
+        logger.warning(f"Tentativa de alterar senha com senha atual incorreta para usuário {current_user.id}")
         raise HTTPException(status_code=401, detail="Senha atual incorreta")
     
     new_hash = get_password_hash(password_data.new_password)
@@ -111,6 +121,7 @@ async def change_password(
         {"$set": {"password_hash": new_hash, "updated_at": datetime.now(timezone.utc)}}
     )
     
+    logger.info(f"Senha alterada com sucesso para usuário {current_user.id}")
     return {"message": "Senha alterada com sucesso"}
 
 
@@ -124,7 +135,10 @@ async def get_preferences(
     """Retorna as preferências do usuário (idioma, moeda)"""
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
+        logger.warning(f"Usuário não encontrado ao buscar preferências: {current_user.id}")
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    
+    logger.debug(f"Preferências recuperadas para usuário {current_user.id}")
     return {
         "language": user.get("language", "pt"),
         "currency": user.get("currency", "BRL")
@@ -141,10 +155,12 @@ async def update_preferences(
     update_data = {}
     if prefs.language is not None:
         if prefs.language not in ["pt", "en", "es", "zh"]:
+            logger.warning(f"Idioma inválido solicitado: {prefs.language}")
             raise HTTPException(status_code=400, detail="Idioma inválido")
         update_data["language"] = prefs.language
     if prefs.currency is not None:
         if prefs.currency not in ["BRL", "USD", "EUR", "CNY"]:
+            logger.warning(f"Moeda inválida solicitada: {prefs.currency}")
             raise HTTPException(status_code=400, detail="Moeda inválida")
         update_data["currency"] = prefs.currency
     
@@ -158,6 +174,7 @@ async def update_preferences(
         {"$set": update_data}
     )
     
+    logger.info(f"Preferências atualizadas para usuário {current_user.id}: {update_data}")
     return {"message": "Preferências atualizadas com sucesso"}
 
 
@@ -178,12 +195,15 @@ async def update_consent(
         update_fields["terms_accepted"] = True
         update_fields["terms_accepted_at"] = datetime.now(timezone.utc)
     else:
+        logger.warning(f"Tentativa de desmarcar termos aceitos para usuário {current_user.id}")
         raise HTTPException(status_code=400, detail="Os Termos de Uso não podem ser desmarcados depois de aceitos.")
     
     await db.users.update_one(
         {"_id": ObjectId(current_user.id)},
         {"$set": update_fields}
     )
+    
+    logger.info(f"Consentimento atualizado para usuário {current_user.id}: research_consent={consent_data.research_consent}")
     return {"message": "Consentimento atualizado com sucesso"}
 
 
@@ -194,7 +214,10 @@ async def get_consent_status(
 ):
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
+        logger.warning(f"Usuário não encontrado ao buscar consentimento: {current_user.id}")
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    
+    logger.debug(f"Status de consentimento recuperado para usuário {current_user.id}")
     return ConsentStatusResponse(
         terms_accepted=user.get("terms_accepted", False),
         research_consent=user.get("research_consent", False),
@@ -209,6 +232,7 @@ async def get_privacy_policy():
     """
     Retorna o texto da Política de Privacidade (LGPD)
     """
+    logger.debug("Política de privacidade solicitada")
     return {
         "title": "Política de Privacidade - Velorium",
         "last_updated": "2026-05-14",
@@ -268,6 +292,8 @@ async def export_user_data(
     Exporta todos os dados do usuário em formato JSON (LGPD - Direito de Portabilidade)
     """
     user_id = str(current_user.id)
+    
+    logger.info(f"Iniciando exportação de dados para usuário {user_id}")
     
     # Busca dados de todas as coleções
     user = await db.users.find_one({"_id": ObjectId(user_id)})
@@ -333,6 +359,7 @@ async def export_user_data(
         "financial_profile": profile
     }
     
+    logger.info(f"Exportação concluída para usuário {user_id}: {len(transactions)} transações, {len(goals)} metas")
     return ExportDataResponse(
         message="Dados exportados com sucesso. Este arquivo contém todas as suas informações do Velorium.",
         data=export_data
@@ -354,6 +381,8 @@ async def delete_account(
     user_id = str(current_user.id)
     user_obj_id = ObjectId(user_id)
     
+    logger.warning(f"Iniciando exclusão permanente da conta do usuário {user_id}")
+    
     # Lista de coleções a limpar
     collections = [
         "users",
@@ -372,19 +401,22 @@ async def delete_account(
     for collection_name in collections:
         if collection_name == "users":
             # Deleta o documento do usuário
-            await db[collection_name].delete_one({"_id": user_obj_id})
+            result = await db[collection_name].delete_one({"_id": user_obj_id})
+            logger.debug(f"Coleção {collection_name}: {result.deleted_count} documento(s) removido(s)")
         else:
             # Deleta todos os documentos associados ao usuário
-            await db[collection_name].delete_many({"user_id": user_id})
+            result = await db[collection_name].delete_many({"user_id": user_id})
+            logger.debug(f"Coleção {collection_name}: {result.deleted_count} documento(s) removido(s)")
     
     # Remove tokens da blacklist específicos do usuário
-    await db.refresh_token_blacklist.delete_many({"user_id": user_id})
+    result = await db.refresh_token_blacklist.delete_many({"user_id": user_id})
+    logger.debug(f"Coleção refresh_token_blacklist: {result.deleted_count} token(s) removido(s)")
     
+    logger.info(f"Conta permanentemente removida: {user_id}")
     return DeleteAccountResponse(
         message="Sua conta e todos os dados associados foram permanentemente removidos do Velorium. Agradecemos por ter usado nosso serviço.",
         user_id=user_id
     )
-
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #

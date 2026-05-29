@@ -1,11 +1,18 @@
 """
 Utilitário de Paginação para endpoints da API
 Arquivo: backend/app/utils/pagination.py
+
+🔧 MODIFICADO: Regra 2.8 - Adicionado logger para rastreamento
 """
 
 from typing import Optional, List, Any, Tuple
 from math import ceil
 from pydantic import BaseModel
+
+from app.utils.logger import setup_logger
+
+# ========== CONFIGURAÇÃO DE LOG ==========
+logger = setup_logger(__name__)
 
 
 class PaginationParams(BaseModel):
@@ -37,6 +44,8 @@ def paginate(items: List[Any], total: int, params: PaginationParams) -> Paginate
     """Cria uma resposta paginada a partir dos dados"""
     pages = ceil(total / params.limit) if total > 0 else 1
     
+    logger.debug(f"Paginação criada: page={params.page}, limit={params.limit}, total={total}, pages={pages}")
+    
     return PaginatedResponse(
         items=items,
         total=total,
@@ -53,6 +62,8 @@ async def paginate_query(collection, query: dict, params: PaginationParams, sort
     Executa uma query paginada no MongoDB
     Retorna (items, total)
     """
+    logger.debug(f"Executando query paginada: skip={params.skip}, limit={params.limit}, query={query}")
+    
     cursor = collection.find(query)
     
     if sort:
@@ -61,5 +72,7 @@ async def paginate_query(collection, query: dict, params: PaginationParams, sort
     total = await collection.count_documents(query)
     cursor = cursor.skip(params.skip).limit(params.limit)
     items = await cursor.to_list(length=params.limit)
+    
+    logger.debug(f"Query paginada concluída: {len(items)} itens retornados de {total} totais")
     
     return items, total
