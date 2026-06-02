@@ -8,7 +8,7 @@ from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
 
-from app.utils.validators import round_amount  # ← centralizado
+from app.utils.validators import round_amount
 
 
 class InstallmentInfo(BaseModel):
@@ -16,7 +16,7 @@ class InstallmentInfo(BaseModel):
     total: int = Field(..., ge=1)
     current: int = Field(1, ge=1)
     start_date: datetime
-    due_day: Optional[int] = Field(None, ge=1, le=31)
+    due_day: Optional[int] = Field(None, ge=1, le=31)  # 🔧 Agora opcional
 
 
 class NotificationInfo(BaseModel):
@@ -46,10 +46,10 @@ class Bill(BaseModel):
     notification: NotificationInfo = Field(default_factory=NotificationInfo)
     paid: bool = False
     paid_date: Optional[datetime] = None
+    recurring: bool = False
+    recurring_end_date: Optional[datetime] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    # ========== VALIDADORES ==========
 
     @model_validator(mode='after')
     def check_paid_date(self):
@@ -60,9 +60,8 @@ class Bill(BaseModel):
     
     @model_validator(mode='after')
     def validate_installment_due_day(self):
-        """Parcelas com total > 1 exigem due_day"""
-        if self.installments.total > 1 and self.installments.due_day is None:
-            raise ValueError('Parcelamento com mais de 1 parcela exige due_day')
+        """🔧 due_day é opcional - pode ser None"""
+        # Removida a validação que exigia due_day
         return self
 
     @model_validator(mode='after')
@@ -81,11 +80,12 @@ class BillCreate(BaseModel):
     category: Optional[str] = None
     notes: Optional[str] = None
     notification: NotificationInfo = Field(default_factory=NotificationInfo)
+    recurring: bool = False
+    recurring_end_date: Optional[datetime] = None
 
     @model_validator(mode='after')
     def validate_installment_due_day(self):
-        if self.installments.total > 1 and self.installments.due_day is None:
-            raise ValueError('Parcelamento com mais de 1 parcela exige due_day')
+        """🔧 due_day é opcional"""
         return self
 
     @model_validator(mode='after')
@@ -105,6 +105,8 @@ class BillUpdate(BaseModel):
     notification: Optional[NotificationInfo] = None
     paid: Optional[bool] = None
     paid_date: Optional[datetime] = None
+    recurring: Optional[bool] = None
+    recurring_end_date: Optional[datetime] = None
 
     @model_validator(mode='after')
     def round_amount_field(self):
@@ -116,16 +118,6 @@ class BillUpdate(BaseModel):
 class BillResponse(Bill):
     """Schema usado para RESPOSTAS"""
     pass
-
-    """
-    Schema usado para RESPOSTAS (herda tudo de Bill)
-    
-    🔒 SEGURANÇA: O campo user_id é retornado, mas o frontend NUNCA o utiliza.
-    O frontend foi verificado e não faz uso deste campo em nenhuma operação.
-    A segurança é mantida porque o backend NUNCA confia em user_id vindo do frontend.
-    """
-    pass
-
 
 """
 ================================================================================
