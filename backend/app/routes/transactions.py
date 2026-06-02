@@ -5,6 +5,7 @@ Arquivo: backend/app/routes/transactions.py
 🔧 CORREÇÃO: Substituído format_transaction_doc por format_mongo_doc (Seção 2.2)
 🔧 MODIFICADO: Regra 2.8 - Usa setup_logger em vez de logging diretamente
 🔧 MODIFICADO: Regra 2.10 - Usa validate_object_id em vez de validação manual
+🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,6 +19,7 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, PaginatedResponse, paginate, paginate_query
 from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
+from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -42,8 +44,10 @@ async def create_transaction(
         if transaction_dict.get("date") is None:
             transaction_dict["date"] = datetime.now(timezone.utc)
         
-        # Arredondar amount
-        transaction_dict["amount"] = round(float(transaction_dict["amount"]), 2)
+        # 🔧 REGRA 2.11: converter amount para centavos (int)
+        amount_float = float(transaction_dict["amount"])
+        transaction_dict["amount"] = to_cents(amount_float)
+        
         transaction_dict["created_at"] = datetime.now(timezone.utc)
         transaction_dict["updated_at"] = datetime.now(timezone.utc)
 
@@ -52,7 +56,11 @@ async def create_transaction(
         # Buscar o documento inserido para retornar os dados completos
         created = await db.transactions.find_one({"_id": result.inserted_id})
         
-        logger.info(f"Transação criada: {transaction_dict['type']} - R$ {transaction_dict['amount']} para usuário {current_user.id}")
+        # 🔧 REGRA 2.11: converter amount de volta para float (reais)
+        if created and "amount" in created:
+            created["amount"] = from_cents(created["amount"])
+        
+        logger.info(f"Transação criada: {transaction_dict['type']} - {transaction_dict['amount']} centavos para usuário {current_user.id}")
         return format_mongo_doc(created)
         
     except Exception as e:
@@ -94,6 +102,11 @@ async def get_transactions(
         db.transactions, query, params, sort=[("date", -1)]
     )
     
+    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
+    for item in items:
+        if "amount" in item:
+            item["amount"] = from_cents(item["amount"])
+    
     formatted_items = format_mongo_docs(items)
     
     logger.debug(f"Listadas {len(formatted_items)} transações para usuário {current_user.id}")
@@ -123,8 +136,9 @@ async def get_balance(
     result = await db.transactions.aggregate(pipeline).to_list(1)
     
     if result:
-        income = float(result[0]["total_income"])
-        expense = float(result[0]["total_expense"])
+        # 🔧 REGRA 2.11: os valores já vêm do banco em centavos, converter para reais
+        income = from_cents(float(result[0]["total_income"]))
+        expense = from_cents(float(result[0]["total_expense"]))
         logger.debug(f"Saldo calculado para usuário {current_user.id}: R$ {income - expense:.2f}")
         return TransactionBalance(
             income=income,
@@ -160,6 +174,10 @@ async def get_transaction(
         logger.warning(f"Transação não encontrada: {transaction_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
+    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
+    if "amount" in transaction:
+        transaction["amount"] = from_cents(transaction["amount"])
+    
     logger.debug(f"Transação recuperada: {transaction_id} para usuário {current_user.id}")
     return format_mongo_doc(transaction)
 
@@ -181,9 +199,9 @@ async def update_transaction(
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
     
-    # Conversão de amount se presente (garante que seja float)
+    # 🔧 REGRA 2.11: converter amount para centavos se presente
     if "amount" in update_data:
-        update_data["amount"] = round(float(update_data["amount"]), 2)
+        update_data["amount"] = to_cents(float(update_data["amount"]))
     
     update_data["updated_at"] = datetime.now(timezone.utc)
 
@@ -197,6 +215,10 @@ async def update_transaction(
     
     # Buscar documento atualizado e retornar
     updated = await db.transactions.find_one({"_id": obj_id})
+    
+    # 🔧 REGRA 2.11: converter amount de volta para reais (float)
+    if updated and "amount" in updated:
+        updated["amount"] = from_cents(updated["amount"])
     
     logger.info(f"Transação atualizada: {transaction_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)
