@@ -2,15 +2,9 @@
 Rotas de Contas a Pagar (Bills)
 Arquivo: backend/app/routes/bills.py
 
-🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
-🔧 CORREÇÃO: Regra 2.8 - Logs (substituído print por logger)
-🔧 CORREÇÃO: Regra 2.10 - Adicionado validate_object_id
-🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 🔧 MODIFICADO: Regra 3.3 - Refatoração de Bills
-- Ao criar conta com parcelas, gera documentos em bill_installments
-- Ao atualizar conta, pergunta se quer ajustar parcelas futuras
-- Ao deletar conta, deleta parcelas também
-- Função split_amount() para dividir valor entre parcelas
+- due_day agora é opcional (pode ser null)
+- Se due_day for null, usa o dia da start_date
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,16 +22,13 @@ from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_o
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 
-# ========== CONFIGURAÇÃO DE LOG ==========
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
 
 
 def parse_installments_dates(installments: dict) -> dict:
-    """
-    Converte start_date de string para datetime se necessário.
-    """
+    """Converte start_date de string para datetime se necessário."""
     if installments and isinstance(installments, dict):
         start_date = installments.get("start_date")
         if start_date and isinstance(start_date, str):
@@ -46,9 +37,7 @@ def parse_installments_dates(installments: dict) -> dict:
 
 
 def split_amount(total: float, parts: int) -> List[float]:
-    """
-    Divide um valor total em partes iguais (para parcelas)
-    """
+    """Divide um valor total em partes iguais (para parcelas)"""
     base = round(total / parts, 2)
     remainder = round(total - base * parts, 2)
     amounts = [base] * parts
@@ -63,20 +52,37 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
     """
     total_parcelas = installments_data.get("total", 1)
     start_date = installments_data.get("start_date")
+    due_day = installments_data.get("due_day")  # 🔧 pode ser None
     
     if not start_date:
         start_date = datetime.now(timezone.utc)
     
-    # Converte start_date para datetime se for string
     if isinstance(start_date, str):
         start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
     
-    # Divide o valor total entre as parcelas
+    # 🔧 Se due_day for None, usa o dia da start_date
+    day_of_month = due_day if due_day is not None else start_date.day
+    
     amounts = split_amount(amount, total_parcelas)
     
     installments = []
     for i in range(total_parcelas):
-        due_date = start_date + relativedelta(months=i)
+        # Calcula a data de vencimento
+        if due_day is not None:
+            # Usa o dia fixo do mês
+            due_date = start_date + relativedelta(months=i)
+            # Ajusta para o dia fixo
+            try:
+                due_date = due_date.replace(day=due_day)
+            except ValueError:
+                # Se o dia não existe no mês (ex: 31 em fevereiro), usa o último dia do mês
+                next_month = due_date + relativedelta(months=1)
+                last_day = next_month - timedelta(days=1)
+                due_date = last_day
+        else:
+            # Usa o mesmo dia da start_date
+            due_date = start_date + relativedelta(months=i)
+        
         installment = {
             "bill_id": bill_id,
             "user_id": user_id,
@@ -96,10 +102,7 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
 
 
 async def update_future_installments(bill_id: str, user_id: str, new_amount: float, new_total_parcelas: int, new_start_date: datetime, db):
-    """
-    Atualiza parcelas futuras (não pagas) de uma conta
-    """
-    # Busca parcelas não pagas
+    """Atualiza parcelas futuras (não pagas) de uma conta"""
     unpaid_installments = await db.bill_installments.find({
         "bill_id": bill_id,
         "user_id": user_id,
@@ -109,24 +112,20 @@ async def update_future_installments(bill_id: str, user_id: str, new_amount: flo
     if not unpaid_installments:
         return
     
-    # Remove parcelas futuras antigas
     await db.bill_installments.delete_many({
         "bill_id": bill_id,
         "user_id": user_id,
         "paid": False
     })
     
-    # Cria novas parcelas com os dados atualizados
     amounts = split_amount(new_amount, new_total_parcelas)
     
-    # Encontra o número da próxima parcela
     paid_count = await db.bill_installments.count_documents({
         "bill_id": bill_id,
         "user_id": user_id,
         "paid": True
     })
     
-    # Calcula a data de início para as parcelas restantes
     remaining_start_date = new_start_date + relativedelta(months=paid_count)
     
     new_installments = []
@@ -173,23 +172,19 @@ async def create_bill(
         installments_info = bill_dict.get("installments", {})
         total_parcelas = installments_info.get("total", 1)
 
-        # 🔧 REGRA 2.11: converter amount para centavos (int)
         if "amount" in bill_dict:
             bill_dict["amount"] = to_cents(bill_dict["amount"])
 
         if "installments" in bill_dict and isinstance(bill_dict["installments"], dict):
             bill_dict["installments"] = parse_installments_dates(bill_dict["installments"])
 
-        # Insere a conta mestra
         result = await db.bills.insert_one(bill_dict)
         bill_id = str(result.inserted_id)
         
-        # 🔧 REGRA 3.3: Cria as parcelas individuais
         await create_bill_installments(bill_id, str(current_user.id), amount_reais, installments_info, db)
         
         created = await db.bills.find_one({"_id": result.inserted_id})
         
-        # 🔧 REGRA 2.11: converter amount de volta para reais (float) na resposta
         if created and "amount" in created:
             created["amount"] = from_cents(created["amount"])
         
@@ -222,7 +217,6 @@ async def list_bills(
         db.bills, query, params, sort=[("created_at", -1)]
     )
     
-    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
     for item in items:
         if "amount" in item:
             item["amount"] = from_cents(item["amount"])
@@ -240,7 +234,6 @@ async def get_bill(
     db=Depends(get_database)
 ):
     """Busca uma conta específica"""
-    # 🔧 REGRA 2.10: validar ID antes de usar
     validate_object_id(bill_id, "bill_id")
     
     bill = await db.bills.find_one({
@@ -251,7 +244,6 @@ async def get_bill(
         logger.warning(f"Conta não encontrada: {bill_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Conta não encontrada")
     
-    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
     if "amount" in bill:
         bill["amount"] = from_cents(bill["amount"])
     
@@ -266,20 +258,9 @@ async def update_bill(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Atualiza uma conta existente.
-    
-    Se adjust_future_installments=True:
-    - Atualiza parcelas futuras (não pagas) com os novos valores
-    - Mantém parcelas já pagas inalteradas
-    
-    Se adjust_future_installments=False:
-    - Apenas atualiza a conta mestra, sem alterar parcelas
-    """
-    # 🔧 REGRA 2.10: validar ID antes de usar
+    """Atualiza uma conta existente"""
     validate_object_id(bill_id, "bill_id")
     
-    # Busca a conta atual
     current_bill = await db.bills.find_one({
         "_id": ObjectId(bill_id),
         "user_id": str(current_user.id)
@@ -294,7 +275,6 @@ async def update_bill(
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
-    # 🔧 REGRA 2.11: converter amount para centavos se presente
     amount_reais = None
     if "amount" in update_data:
         amount_reais = update_data["amount"]
@@ -306,7 +286,6 @@ async def update_bill(
     if "installments" in update_data and isinstance(update_data["installments"], dict):
         update_data["installments"] = parse_installments_dates(update_data["installments"])
 
-    # Atualiza a conta mestra
     result = await db.bills.update_one(
         {"_id": ObjectId(bill_id), "user_id": str(current_user.id)},
         {"$set": update_data}
@@ -314,7 +293,6 @@ async def update_bill(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Conta não encontrada")
 
-    # 🔧 REGRA 3.3: Se solicitado, ajusta parcelas futuras
     if adjust_future_installments and amount_reais is not None:
         new_installments_info = update_data.get("installments", current_bill.get("installments", {}))
         new_total = new_installments_info.get("total", 1)
@@ -324,7 +302,6 @@ async def update_bill(
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
     
-    # 🔧 REGRA 2.11: converter amount de volta para reais (float)
     if updated and "amount" in updated:
         updated["amount"] = from_cents(updated["amount"])
     
@@ -339,16 +316,13 @@ async def delete_bill(
     db=Depends(get_database)
 ):
     """Remove uma conta e todas as suas parcelas"""
-    # 🔧 REGRA 2.10: validar ID antes de usar
     validate_object_id(bill_id, "bill_id")
     
-    # Remove as parcelas primeiro
     result_installments = await db.bill_installments.delete_many({
         "bill_id": bill_id,
         "user_id": str(current_user.id)
     })
     
-    # Remove a conta mestra
     result = await db.bills.delete_one({
         "_id": ObjectId(bill_id),
         "user_id": str(current_user.id)
@@ -360,7 +334,6 @@ async def delete_bill(
     
     logger.info(f"Conta deletada: {bill_id} e {result_installments.deleted_count} parcelas para usuário {current_user.id}")
     return {"message": "Conta e parcelas deletadas com sucesso", "success": True}
-
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
