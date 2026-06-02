@@ -11,8 +11,8 @@ Arquivo: backend/app/main.py
 - Adicionado scheduler APScheduler para worker diário (03:00)
 - Adicionada função start_score_scheduler()
 
-🔧 CORRIGIDO: Import do worker para deploy no Render
-- Alterado 'from workers.score_worker' para 'from app.workers.score_worker'
+🔧 MODIFICADO: Regra 3.3 - Refatoração de Bills
+- Adicionado router bill_installments
 """
 
 from fastapi import FastAPI
@@ -25,7 +25,7 @@ import atexit
 
 from app.database import connect_to_mongo, close_mongo_connection, create_indexes
 from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user, investments
-from app.routes import achievements  
+from app.routes import achievements, bill_installments  # 🔧 NOVO: bill_installments
 from app.utils.rate_limiter import init_rate_limiter
 from app.utils.logger import setup_logger
 from app.workers.score_worker import run_score_worker_sync
@@ -116,6 +116,7 @@ async def shutdown():
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(bills.router, prefix="/api/v1")
+app.include_router(bill_installments.router, prefix="/api/v1")  # 🔧 NOVO: rotas de parcelas
 app.include_router(credit_cards.router, prefix="/api/v1")
 app.include_router(credit_card_purchases.router, prefix="/api/v1")
 app.include_router(ia.router, prefix="/api/v1")
