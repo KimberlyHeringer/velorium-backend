@@ -4,11 +4,15 @@ Arquivo: backend/app/routes/score.py
 
 🔧 MODIFICADO: Regra 2.8 - Usa setup_logger em vez de logging diretamente
 🔧 MODIFICADO: Regra 2.2 - Usa format_mongo_doc para padronizar respostas
+🔧 MODIFICADO: Regra 3.1 - Score Financeiro com Cache
+- Endpoint /current agora busca score do dia no histórico (cache)
+- Se não existir score hoje, recalcula (primeiro acesso do dia)
+- Worker diário às 03:00 mantém o cache atualizado
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict
 
 from app.utils.auth import get_current_user
@@ -31,6 +35,7 @@ class ScoreResponse(BaseModel):
     score: int
     details: Optional[Dict] = None
     date: datetime
+    from_cache: bool = False  # 🔧 NOVO: indica se veio do cache
 
 
 # ========== ENDPOINTS ==========
@@ -40,18 +45,52 @@ async def get_current_score(
     current_user: UserResponse = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    """Retorna o score atual do usuário"""
+    """
+    Retorna o score atual do usuário (COM CACHE)
+    
+    🔧 REGRA 3.1: Score Financeiro com Cache
+    - Busca o score do dia no score_history
+    - Se não existir (primeiro acesso do dia), recalcula
+    - O worker diário (03:00) mantém o cache atualizado
+    """
     try:
-        result = await calculate_score(current_user.id, db)
+        user_id = str(current_user.id)
         
-        logger.info(f"Score atual calculado para usuário {current_user.id}: {result.get('score', 0)}")
+        # 🔧 CALCULA INÍCIO E FIM DO DIA ATUAL (UTC)
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
+        
+        # 🔧 BUSCA SCORE DO DIA NO HISTÓRICO (CACHE)
+        cached_score = await db.score_history.find_one({
+            "user_id": user_id,
+            "date": {"$gte": today_start, "$lt": today_end}
+        })
+        
+        if cached_score:
+            # ✅ Cache hit: retorna o score já calculado
+            logger.debug(f"✅ Cache hit para usuário {user_id}: score {cached_score.get('score', 0)}")
+            return ScoreResponse(
+                score=cached_score.get("score", 0),
+                details=cached_score.get("details"),
+                date=cached_score.get("date", now),
+                from_cache=True
+            )
+        
+        # 🔧 Cache miss: recalcula o score (primeiro acesso do dia)
+        logger.info(f"🔄 Cache miss para usuário {user_id} - recalculando score...")
+        result = await calculate_score(user_id, db)
+        
+        logger.info(f"✅ Score calculado para usuário {user_id}: {result.get('score', 0)}")
         return ScoreResponse(
             score=result.get("score", 0),
             details=result.get("details"),
-            date=datetime.now(timezone.utc)
+            date=datetime.now(timezone.utc),
+            from_cache=False
         )
+        
     except Exception as e:
-        logger.error(f"Erro ao calcular score para usuário {current_user.id}: {e}")
+        logger.error(f"Erro ao obter score para usuário {current_user.id}: {e}")
         import traceback
         logger.debug(f"Detalhes do erro no score: {traceback.format_exc()}")
         raise HTTPException(
@@ -100,7 +139,13 @@ async def get_score_history(
 # ✅ Removida conversão manual de date para string no histórico
 # ✅ Adicionado try/except com logging
 #
+# 🔧 REGRA 3.1 (NOVO):
+# ✅ Endpoint /current com cache (busca no score_history do dia)
+# ✅ Cache hit → retorna imediatamente (sem recalcular)
+# ✅ Cache miss → recalcula (primeiro acesso do dia)
+# ✅ Campo from_cache indica se veio do cache (para debug)
+# ✅ Worker diário (03:00) mantém cache atualizado
+#
 # 📌 Dívida técnica (pós-MVP):
-#    - Cache do score (evitar recalcular toda requisição)
-#    - Worker diário para recalcular score em lote
-#    - Paginação com skip/offset no histórico
+#    - Cache com Redis para melhor performance
+#    - Invalidação de cache por webhook
