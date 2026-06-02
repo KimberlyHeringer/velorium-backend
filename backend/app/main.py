@@ -1,7 +1,7 @@
 """
 Arquivo principal do backend Velorium
 Ponto de entrada da API FastAPI
-Arquivo: backend/main.py
+Arquivo: backend/app/main.py
 
 🔧 MODIFICADO: Regra 2.8 - Logs
 - Substituído print por logger.info/error
@@ -10,6 +10,9 @@ Arquivo: backend/main.py
 🔧 MODIFICADO: Regra 3.1 - Score Financeiro
 - Adicionado scheduler APScheduler para worker diário (03:00)
 - Adicionada função start_score_scheduler()
+
+🔧 CORRIGIDO: Import do worker para deploy no Render
+- Alterado 'from workers.score_worker' para 'from app.workers.score_worker'
 """
 
 from fastapi import FastAPI
@@ -25,7 +28,7 @@ from app.routes import auth, transactions, bills, credit_cards, credit_card_purc
 from app.routes import achievements  
 from app.utils.rate_limiter import init_rate_limiter
 from app.utils.logger import setup_logger
-from workers.score_worker import run_score_worker_sync
+from app.workers.score_worker import run_score_worker_sync
 
 # ========== CONFIGURAÇÃO DE LOG ==========
 logger = setup_logger(__name__)
