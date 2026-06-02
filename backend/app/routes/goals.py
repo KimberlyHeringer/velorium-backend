@@ -5,6 +5,7 @@ Arquivo: backend/app/routes/goals.py
 🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
 🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
 🔧 MODIFICADO: Regra 2.10 - Usa validate_object_id em vez de validação manual
+🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -18,6 +19,7 @@ from app.models.goal import GoalCreate, GoalUpdate, GoalResponse
 from app.database import get_database
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
+from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -47,6 +49,13 @@ async def list_goals(
         db.goals, query, params, sort=[("created_at", -1)]
     )
     
+    # 🔧 REGRA 2.11: converter target e current de centavos para reais (float)
+    for item in items:
+        if "target" in item:
+            item["target"] = from_cents(item["target"])
+        if "current" in item:
+            item["current"] = from_cents(item["current"])
+    
     formatted_items = format_mongo_docs(items)
     
     logger.debug(f"Listadas {len(formatted_items)} metas para usuário {current_user.id}")
@@ -60,17 +69,18 @@ async def create_goal(
     db=Depends(get_database)
 ):
     """Cria uma nova meta"""
-    target = round(goal.target, 2)
-    current = round(goal.current, 2)
+    # 🔧 REGRA 2.11: converter target e current para centavos (int)
+    target_cents = to_cents(goal.target)
+    current_cents = to_cents(goal.current)
     
     goal_dict = {
         "user_id": str(current_user.id),
         "name": goal.name,
-        "target": target,
-        "current": current,
+        "target": target_cents,
+        "current": current_cents,
         "category": goal.category,
         "unit": goal.unit,
-        "completed": current >= target,
+        "completed": current_cents >= target_cents,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc)
     }
@@ -78,7 +88,14 @@ async def create_goal(
     result = await db.goals.insert_one(goal_dict)
     created = await db.goals.find_one({"_id": result.inserted_id})
     
-    logger.info(f"Meta criada: '{goal.name}' (R$ {target}) para usuário {current_user.id}")
+    # 🔧 REGRA 2.11: converter de volta para reais (float) na resposta
+    if created:
+        if "target" in created:
+            created["target"] = from_cents(created["target"])
+        if "current" in created:
+            created["current"] = from_cents(created["current"])
+    
+    logger.info(f"Meta criada: '{goal.name}' ({target_cents} centavos) para usuário {current_user.id}")
     return format_mongo_doc(created)
 
 
@@ -99,6 +116,12 @@ async def get_goal(
     if not goal:
         logger.warning(f"Meta não encontrada: {goal_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Meta não encontrada")
+    
+    # 🔧 REGRA 2.11: converter target e current de centavos para reais (float)
+    if "target" in goal:
+        goal["target"] = from_cents(goal["target"])
+    if "current" in goal:
+        goal["current"] = from_cents(goal["current"])
     
     logger.debug(f"Meta recuperada: {goal_id} para usuário {current_user.id}")
     return format_mongo_doc(goal)
@@ -127,10 +150,11 @@ async def update_goal(
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
     
+    # 🔧 REGRA 2.11: converter target e current para centavos se presentes
     if "target" in update_data:
-        update_data["target"] = round(update_data["target"], 2)
+        update_data["target"] = to_cents(update_data["target"])
     if "current" in update_data:
-        update_data["current"] = round(update_data["current"], 2)
+        update_data["current"] = to_cents(update_data["current"])
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
@@ -144,6 +168,13 @@ async def update_goal(
     )
     
     updated = await db.goals.find_one({"_id": ObjectId(goal_id)})
+    
+    # 🔧 REGRA 2.11: converter de volta para reais (float) na resposta
+    if updated:
+        if "target" in updated:
+            updated["target"] = from_cents(updated["target"])
+        if "current" in updated:
+            updated["current"] = from_cents(updated["current"])
     
     logger.info(f"Meta atualizada: {goal_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)

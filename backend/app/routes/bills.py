@@ -5,6 +5,7 @@ Arquivo: backend/app/routes/bills.py
 🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
 🔧 CORREÇÃO: Regra 2.8 - Logs (substituído print por logger)
 🔧 CORREÇÃO: Regra 2.10 - Adicionado validate_object_id
+🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,6 +19,7 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
+from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -54,8 +56,9 @@ async def create_bill(
         bill_dict["created_at"] = datetime.now(timezone.utc)
         bill_dict["updated_at"] = datetime.now(timezone.utc)
 
+        # 🔧 REGRA 2.11: converter amount para centavos (int)
         if "amount" in bill_dict:
-            bill_dict["amount"] = round(bill_dict["amount"], 2)
+            bill_dict["amount"] = to_cents(bill_dict["amount"])
 
         if "installments" in bill_dict and isinstance(bill_dict["installments"], dict):
             bill_dict["installments"] = parse_installments_dates(bill_dict["installments"])
@@ -63,7 +66,11 @@ async def create_bill(
         result = await db.bills.insert_one(bill_dict)
         created = await db.bills.find_one({"_id": result.inserted_id})
         
-        logger.info(f"Conta criada: {bill_data.description} para usuário {current_user.id}")
+        # 🔧 REGRA 2.11: converter amount de volta para reais (float) na resposta
+        if created and "amount" in created:
+            created["amount"] = from_cents(created["amount"])
+        
+        logger.info(f"Conta criada: {bill_data.description} - {bill_dict['amount']} centavos para usuário {current_user.id}")
         return format_mongo_doc(created)
         
     except Exception as e:
@@ -92,6 +99,11 @@ async def list_bills(
         db.bills, query, params, sort=[("created_at", -1)]
     )
     
+    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
+    for item in items:
+        if "amount" in item:
+            item["amount"] = from_cents(item["amount"])
+    
     formatted_items = format_mongo_docs(items)
     
     logger.debug(f"Listadas {len(formatted_items)} contas para usuário {current_user.id}")
@@ -116,6 +128,10 @@ async def get_bill(
         logger.warning(f"Conta não encontrada: {bill_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Conta não encontrada")
     
+    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
+    if "amount" in bill:
+        bill["amount"] = from_cents(bill["amount"])
+    
     return format_mongo_doc(bill)
 
 
@@ -136,8 +152,9 @@ async def update_bill(
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
+    # 🔧 REGRA 2.11: converter amount para centavos se presente
     if "amount" in update_data:
-        update_data["amount"] = round(update_data["amount"], 2)
+        update_data["amount"] = to_cents(update_data["amount"])
     
     if update_data.get("paid") is True and update_data.get("paid_date") is None:
         update_data["paid_date"] = datetime.now(timezone.utc)
@@ -154,6 +171,10 @@ async def update_bill(
         raise HTTPException(status_code=404, detail="Conta não encontrada")
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
+    
+    # 🔧 REGRA 2.11: converter amount de volta para reais (float)
+    if updated and "amount" in updated:
+        updated["amount"] = from_cents(updated["amount"])
     
     logger.info(f"Conta atualizada: {bill_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)

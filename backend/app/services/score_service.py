@@ -3,6 +3,7 @@ Serviço de Cálculo do Score Financeiro
 Arquivo: backend/app/services/score_service.py
 
 🔧 MODIFICADO: Regra 2.8 - Usa setup_logger em vez de logging diretamente
+🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (from_cents)
 """
 
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from typing import Dict, Any, List, Optional
 from bson import ObjectId
 
 from app.utils.logger import setup_logger
+from app.utils.currency import from_cents
 
 # ========== CONFIGURAÇÃO DE LOG ==========
 logger = setup_logger(__name__)
@@ -46,9 +48,12 @@ async def calculate_score(
         })
         transactions = await transactions_cursor.to_list(1000)
     
+    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
     for t in transactions:
         if "date" in t:
             t["date"] = ensure_timezone(t["date"])
+        if "amount" in t:
+            t["amount"] = from_cents(t["amount"])
     
     if profile is None:
         profile = await db.user_profiles.find_one({"user_id": user_id}) or {}
@@ -66,6 +71,11 @@ async def calculate_score(
             g["updated_at"] = ensure_timezone(g["updated_at"])
         elif "updatedAt" in g:  # compatibilidade com nome antigo
             g["updated_at"] = ensure_timezone(g["updatedAt"])
+        # 🔧 REGRA 2.11: converter target e current de centavos para reais (float)
+        if "target" in g:
+            g["target"] = from_cents(g["target"])
+        if "current" in g:
+            g["current"] = from_cents(g["current"])
     
     # ========== 2. PONTOS BASE ==========
     score = 50

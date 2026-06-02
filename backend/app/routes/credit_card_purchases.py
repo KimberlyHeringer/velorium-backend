@@ -5,6 +5,7 @@ Arquivo: backend/app/routes/credit_card_purchases.py
 🔧 MODIFICADO: Regra 2.2 - Removido format_doc local, usando format_mongo_doc
 🔧 MODIFICADO: Regra 2.8 - Adicionado logs
 🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
+🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -19,6 +20,7 @@ from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
+from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -30,6 +32,7 @@ router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 # ========== FUNÇÕES AUXILIARES ==========
 
 def split_amount(total: float, parts: int) -> List[float]:
+    """Divide um valor total em partes iguais (para parcelas)"""
     base = round(total / parts, 2)
     remainder = round(total - base * parts, 2)
     amounts = [base] * parts
@@ -92,18 +95,25 @@ async def create_purchase(
     purchase_dict["first_due_date"] = first_due
     purchase_dict["created_at"] = datetime.now(timezone.utc)
     purchase_dict["updated_at"] = datetime.now(timezone.utc)
+    
+    # 🔧 REGRA 2.11: converter total_amount para centavos (int)
+    purchase_dict["total_amount"] = to_cents(purchase_dict["total_amount"])
 
     result = await db.credit_card_purchases.insert_one(purchase_dict)
 
-    amounts = split_amount(purchase_data.total_amount, purchase_data.installments)
+    # 🔧 REGRA 2.11: para split_amount, precisamos do valor em reais (float)
+    total_amount_reais = from_cents(purchase_dict["total_amount"])
+    amounts = split_amount(total_amount_reais, purchase_data.installments)
+    
     installments = []
     for i in range(purchase_data.installments):
         due_date = first_due + relativedelta(months=i)
+        # 🔧 REGRA 2.11: converter amount de cada parcela para centavos (int)
         installment = {
             "purchase_id": str(result.inserted_id),
             "user_id": str(current_user.id),
             "card_id": purchase_data.card_id,
-            "amount": amounts[i],
+            "amount": to_cents(amounts[i]),
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -114,11 +124,16 @@ async def create_purchase(
     if installments:
         await db.credit_card_installments.insert_many(installments)
 
-    await update_card_committed_amount(purchase_data.card_id, purchase_data.total_amount, db)
+    # 🔧 REGRA 2.11: usar o valor em centavos para atualizar o committed_amount
+    await update_card_committed_amount(purchase_data.card_id, purchase_dict["total_amount"], db)
 
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
     
-    logger.info(f"Compra criada: {purchase_data.description} - R$ {purchase_data.total_amount} para usuário {current_user.id}")
+    # 🔧 REGRA 2.11: converter de volta para reais (float) na resposta
+    if created and "total_amount" in created:
+        created["total_amount"] = from_cents(created["total_amount"])
+    
+    logger.info(f"Compra criada: {purchase_data.description} - {purchase_dict['total_amount']} centavos para usuário {current_user.id}")
     return format_mongo_doc(created)
 
 
@@ -141,6 +156,11 @@ async def get_purchases(
     items, total = await paginate_query(
         db.credit_card_purchases, query, params, sort=[("created_at", -1)]
     )
+    
+    # 🔧 REGRA 2.11: converter total_amount de centavos para reais (float)
+    for item in items:
+        if "total_amount" in item:
+            item["total_amount"] = from_cents(item["total_amount"])
     
     formatted_items = format_mongo_docs(items)
     
@@ -192,12 +212,16 @@ async def get_faturas(
             validate_object_id(pid, "purchase_id")
             purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
             if purchase:
+                # 🔧 REGRA 2.11: converter total_amount para reais
+                if "total_amount" in purchase:
+                    purchase["total_amount"] = from_cents(purchase["total_amount"])
                 purchases_map[pid] = format_mongo_doc(purchase)
 
     result = []
     for pid, purchase in purchases_map.items():
         purchase_installments = [i for i in installments if i["purchase_id"] == pid]
-        total = sum(i["amount"] for i in purchase_installments)
+        # 🔧 REGRA 2.11: converter amount das parcelas de centavos para reais
+        total = sum(from_cents(i["amount"]) for i in purchase_installments)
         result.append({
             "purchase_id": pid,
             "description": purchase["description"],
@@ -227,6 +251,10 @@ async def get_purchase(
     if not purchase:
         logger.warning(f"Compra não encontrada: {purchase_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Compra não encontrada")
+    
+    # 🔧 REGRA 2.11: converter total_amount de centavos para reais (float)
+    if "total_amount" in purchase:
+        purchase["total_amount"] = from_cents(purchase["total_amount"])
     
     return format_mongo_doc(purchase)
 
@@ -261,18 +289,21 @@ async def update_purchase(
         )
 
     old_total = purchase["total_amount"]
-    new_total = purchase_data.total_amount
+    new_total = to_cents(purchase_data.total_amount)
     delta = new_total - old_total
 
     if delta != 0:
         if delta > 0:
-            await check_available_limit(purchase_data.card_id, delta, db)
+            await check_available_limit(purchase_data.card_id, from_cents(delta), db)
         await update_card_committed_amount(purchase_data.card_id, delta, db)
 
     update_dict = purchase_data.model_dump()
     update_dict["updated_at"] = datetime.now(timezone.utc)
     if "first_due_date" in update_dict and isinstance(update_dict["first_due_date"], str):
         update_dict["first_due_date"] = datetime.fromisoformat(update_dict["first_due_date"].replace('Z', '+00:00'))
+    
+    # 🔧 REGRA 2.11: converter total_amount para centavos
+    update_dict["total_amount"] = to_cents(update_dict["total_amount"])
 
     await db.credit_card_purchases.update_one(
         {"_id": ObjectId(purchase_id)},
@@ -281,7 +312,9 @@ async def update_purchase(
 
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
     first_due = update_dict["first_due_date"]
-    amounts = split_amount(new_total, update_dict["installments"])
+    total_amount_reais = from_cents(update_dict["total_amount"])
+    amounts = split_amount(total_amount_reais, update_dict["installments"])
+    
     installments = []
     for i in range(update_dict["installments"]):
         due_date = first_due + relativedelta(months=i)
@@ -289,7 +322,7 @@ async def update_purchase(
             "purchase_id": purchase_id,
             "user_id": str(current_user.id),
             "card_id": update_dict["card_id"],
-            "amount": amounts[i],
+            "amount": to_cents(amounts[i]),
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -301,6 +334,10 @@ async def update_purchase(
         await db.credit_card_installments.insert_many(installments)
 
     updated = await db.credit_card_purchases.find_one({"_id": ObjectId(purchase_id)})
+    
+    # 🔧 REGRA 2.11: converter de volta para reais (float) na resposta
+    if updated and "total_amount" in updated:
+        updated["total_amount"] = from_cents(updated["total_amount"])
     
     logger.info(f"Compra atualizada: {purchase_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)
@@ -324,6 +361,7 @@ async def delete_purchase(
         logger.warning(f"Compra não encontrada para deleção: {purchase_id}")
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
+    # 🔧 REGRA 2.11: o valor já está em centavos no banco
     total_amount = purchase["total_amount"]
     await update_card_committed_amount(purchase["card_id"], -total_amount, db)
 
@@ -364,9 +402,10 @@ async def mark_installment_paid(
         {"$set": {"paid": True, "paid_date": datetime.now(timezone.utc)}}
     )
 
+    # 🔧 REGRA 2.11: o amount já está em centavos no banco
     await update_card_committed_amount(installment["card_id"], -installment["amount"], db)
 
-    logger.info(f"Parcela paga: {installment_id} - R$ {installment['amount']} para usuário {current_user.id}")
+    logger.info(f"Parcela paga: {installment_id} - {installment['amount']} centavos para usuário {current_user.id}")
     return {"message": "Parcela marcada como paga e compromisso reduzido"}
 
 
