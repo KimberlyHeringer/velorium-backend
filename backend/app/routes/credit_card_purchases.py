@@ -4,6 +4,7 @@ Arquivo: backend/app/routes/credit_card_purchases.py
 
 🔧 MODIFICADO: Regra 2.2 - Removido format_doc local, usando format_mongo_doc
 🔧 MODIFICADO: Regra 2.8 - Adicionado logs
+🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -17,7 +18,7 @@ from app.models.credit_card_purchase import CreditCardPurchaseCreate, CreditCard
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
-from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -39,6 +40,7 @@ def split_amount(total: float, parts: int) -> List[float]:
 
 async def update_card_committed_amount(card_id: str, delta: float, db):
     """Atualiza o committed_amount do cartão"""
+    validate_object_id(card_id, "card_id")
     await db.credit_cards.update_one(
         {"_id": ObjectId(card_id)},
         {"$inc": {"committed_amount": delta}, "$set": {"updated_at": datetime.now(timezone.utc)}}
@@ -47,6 +49,7 @@ async def update_card_committed_amount(card_id: str, delta: float, db):
 
 async def check_available_limit(card_id: str, required: float, db) -> float:
     """Retorna limite disponível ou levanta HTTPException se insuficiente"""
+    validate_object_id(card_id, "card_id")
     card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
@@ -68,13 +71,13 @@ async def create_purchase(
     db=Depends(get_database)
 ):
     """Cria uma nova compra parcelada"""
-    try:
-        card = await db.credit_cards.find_one({
-            "_id": ObjectId(purchase_data.card_id),
-            "user_id": str(current_user.id)
-        })
-    except:
-        raise HTTPException(status_code=400, detail="card_id inválido")
+    # 🔧 REGRA 2.10: validar card_id
+    validate_object_id(purchase_data.card_id, "card_id")
+    
+    card = await db.credit_cards.find_one({
+        "_id": ObjectId(purchase_data.card_id),
+        "user_id": str(current_user.id)
+    })
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
 
@@ -115,7 +118,6 @@ async def create_purchase(
 
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
     
-    # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
     logger.info(f"Compra criada: {purchase_data.description} - R$ {purchase_data.total_amount} para usuário {current_user.id}")
     return format_mongo_doc(created)
 
@@ -133,13 +135,13 @@ async def get_purchases(
     query = {"user_id": str(current_user.id)}
     
     if card_id:
+        validate_object_id(card_id, "card_id")
         query["card_id"] = card_id
 
     items, total = await paginate_query(
         db.credit_card_purchases, query, params, sort=[("created_at", -1)]
     )
     
-    # 🔧 CORREÇÃO 2.2: usando format_mongo_docs
     formatted_items = format_mongo_docs(items)
     
     logger.debug(f"Listadas {len(formatted_items)} compras para usuário {current_user.id}")
@@ -155,13 +157,13 @@ async def get_faturas(
     db=Depends(get_database)
 ):
     """Retorna faturas do cartão (sem paginação - resumo)"""
-    try:
-        card = await db.credit_cards.find_one({
-            "_id": ObjectId(card_id),
-            "user_id": str(current_user.id)
-        })
-    except:
-        raise HTTPException(status_code=400, detail="card_id inválido")
+    # 🔧 REGRA 2.10: validar card_id
+    validate_object_id(card_id, "card_id")
+    
+    card = await db.credit_cards.find_one({
+        "_id": ObjectId(card_id),
+        "user_id": str(current_user.id)
+    })
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
 
@@ -187,9 +189,9 @@ async def get_faturas(
     for inst in installments:
         pid = inst["purchase_id"]
         if pid not in purchases_map:
+            validate_object_id(pid, "purchase_id")
             purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
             if purchase:
-                # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
                 purchases_map[pid] = format_mongo_doc(purchase)
 
     result = []
@@ -215,6 +217,9 @@ async def get_purchase(
     db=Depends(get_database)
 ):
     """Busca uma compra específica"""
+    # 🔧 REGRA 2.10: validar purchase_id
+    validate_object_id(purchase_id, "purchase_id")
+    
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(purchase_id),
         "user_id": str(current_user.id)
@@ -223,7 +228,6 @@ async def get_purchase(
         logger.warning(f"Compra não encontrada: {purchase_id} para usuário {current_user.id}")
         raise HTTPException(status_code=404, detail="Compra não encontrada")
     
-    # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
     return format_mongo_doc(purchase)
 
 
@@ -235,6 +239,9 @@ async def update_purchase(
     db=Depends(get_database)
 ):
     """Atualiza uma compra existente"""
+    # 🔧 REGRA 2.10: validar purchase_id
+    validate_object_id(purchase_id, "purchase_id")
+    
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(purchase_id),
         "user_id": str(current_user.id)
@@ -306,6 +313,9 @@ async def delete_purchase(
     db=Depends(get_database)
 ):
     """Remove uma compra e suas parcelas"""
+    # 🔧 REGRA 2.10: validar purchase_id
+    validate_object_id(purchase_id, "purchase_id")
+    
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(purchase_id),
         "user_id": str(current_user.id)
@@ -331,6 +341,9 @@ async def mark_installment_paid(
     db=Depends(get_database)
 ):
     """Marca uma parcela como paga"""
+    # 🔧 REGRA 2.10: validar installment_id
+    validate_object_id(installment_id, "installment_id")
+    
     installment = await db.credit_card_installments.find_one({"_id": ObjectId(installment_id)})
     if not installment:
         logger.warning(f"Parcela não encontrada: {installment_id}")
@@ -355,6 +368,8 @@ async def mark_installment_paid(
 
     logger.info(f"Parcela paga: {installment_id} - R$ {installment['amount']} para usuário {current_user.id}")
     return {"message": "Parcela marcada como paga e compromisso reduzido"}
+
+
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #

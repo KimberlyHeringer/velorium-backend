@@ -4,6 +4,7 @@ Arquivo: backend/app/routes/bills.py
 
 🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
 🔧 CORREÇÃO: Regra 2.8 - Logs (substituído print por logger)
+🔧 CORREÇÃO: Regra 2.10 - Adicionado validate_object_id
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,7 +17,7 @@ from app.models.bill import BillCreate, BillResponse, BillUpdate
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
-from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -66,7 +67,6 @@ async def create_bill(
         return format_mongo_doc(created)
         
     except Exception as e:
-        # 🔧 CORREÇÃO 2.8: substituindo print por logger
         logger.error(f"❌ Erro ao criar conta: {e}")
         import traceback
         logger.debug(f"Detalhes do erro: {traceback.format_exc()}")
@@ -105,6 +105,9 @@ async def get_bill(
     db=Depends(get_database)
 ):
     """Busca uma conta específica"""
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(bill_id, "bill_id")
+    
     bill = await db.bills.find_one({
         "_id": ObjectId(bill_id),
         "user_id": str(current_user.id)
@@ -124,6 +127,9 @@ async def update_bill(
     db=Depends(get_database)
 ):
     """Atualiza uma conta existente"""
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(bill_id, "bill_id")
+    
     update_data = {k: v for k, v in bill_update.model_dump(exclude_unset=True).items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
@@ -160,6 +166,9 @@ async def delete_bill(
     db=Depends(get_database)
 ):
     """Remove uma conta"""
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(bill_id, "bill_id")
+    
     result = await db.bills.delete_one({
         "_id": ObjectId(bill_id),
         "user_id": str(current_user.id)

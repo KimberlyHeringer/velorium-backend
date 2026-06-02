@@ -3,6 +3,7 @@ Rotas de Conquistas do Usuário (sincronização)
 Arquivo: backend/app/routes/achievements.py
 
 🔧 MODIFICADO: Regra 2.2 - Removido format_doc local, usando format_mongo_doc
+🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -15,7 +16,7 @@ from app.models.achievement import AchievementCreate, AchievementResponse
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
-from app.utils.validators import format_mongo_doc
+from app.utils.validators import format_mongo_doc, validate_object_id
 
 router = APIRouter(prefix="/achievements", tags=["Conquistas"])
 
@@ -37,7 +38,6 @@ async def get_achievements(
         db.achievements, query, params, sort=[("date", -1)]
     )
     
-    # 🔧 CORREÇÃO: usando format_mongo_doc (Regra 2.2)
     formatted_items = [format_mongo_doc(item) for item in items]
     
     return paginate(formatted_items, total, params).model_dump()
@@ -55,7 +55,6 @@ async def create_achievement(
     ach_dict["date"] = datetime.now(timezone.utc)
     result = await db.achievements.insert_one(ach_dict)
     created = await db.achievements.find_one({"_id": result.inserted_id})
-    # 🔧 CORREÇÃO: usando format_mongo_doc (Regra 2.2)
     return format_mongo_doc(created)
 
 
@@ -91,6 +90,9 @@ async def delete_achievement(
     db=Depends(get_database)
 ):
     """Remove uma conquista"""
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(achievement_id, "achievement_id")
+    
     result = await db.achievements.delete_one({
         "_id": ObjectId(achievement_id),
         "user_id": str(current_user.id)

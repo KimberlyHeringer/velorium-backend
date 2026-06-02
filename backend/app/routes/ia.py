@@ -5,6 +5,7 @@ Arquivo: backend/app/routes/ia.py
 🔧 MODIFICADO: Regra 2.8 - Logs
 - Substituído print por logger.error
 - Adicionado logs para eventos importantes
+🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -18,6 +19,7 @@ from app.services.ia_service import obter_resposta_ia_async
 from app.database import get_database
 from app.utils.rate_limiter import limiter
 from app.utils.logger import setup_logger
+from app.utils.validators import validate_object_id
 from bson import ObjectId
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -113,7 +115,10 @@ async def chat(
     current_user: UserResponse = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    # 1. Buscar o documento completo do usuário (para acessar os campos de consentimento)
+    # 1. Validar ID do usuário (Regra 2.10)
+    validate_object_id(current_user.id, "user_id")
+    
+    # 2. Buscar o documento completo do usuário (para acessar os campos de consentimento)
     user_doc = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user_doc:
         logger.warning(f"Usuário não encontrado no chat: {current_user.id}")
@@ -122,7 +127,7 @@ async def chat(
     terms_accepted = user_doc.get("terms_accepted", False)
     research_consent = user_doc.get("research_consent", False)
     
-    # 2. Verificar se os termos foram aceitos
+    # 3. Verificar se os termos foram aceitos
     if not terms_accepted:
         logger.warning(f"Tentativa de usar IA sem aceitar termos: {current_user.id}")
         raise HTTPException(
@@ -130,7 +135,7 @@ async def chat(
             detail="Para usar o assistente, você precisa aceitar os Termos de Uso. Acesse Configurações > Consentimento."
         )
     
-    # 3. Escolher o modo de resposta
+    # 4. Escolher o modo de resposta
     try:
         if research_consent:
             logger.debug(f"Usando contexto completo para usuário {current_user.id} (research_consent=true)")

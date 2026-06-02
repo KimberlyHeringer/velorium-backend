@@ -4,6 +4,7 @@ Arquivo: backend/app/routes/goals.py
 
 🔧 CORREÇÃO: Substituído format_doc por format_mongo_doc (Seção 2.2)
 🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
+🔧 MODIFICADO: Regra 2.10 - Usa validate_object_id em vez de validação manual
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -16,7 +17,7 @@ from app.models.user import UserResponse
 from app.models.goal import GoalCreate, GoalUpdate, GoalResponse
 from app.database import get_database
 from app.utils.pagination import PaginationParams, paginate_query, paginate
-from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -88,9 +89,8 @@ async def get_goal(
     db=Depends(get_database)
 ):
     """Busca uma meta específica"""
-    if not ObjectId.is_valid(goal_id):
-        logger.warning(f"ID de meta inválido: {goal_id} para usuário {current_user.id}")
-        raise HTTPException(status_code=400, detail="ID inválido")
+    # 🔧 REGRA 2.10: usando validate_object_id
+    validate_object_id(goal_id, "goal_id")
     
     goal = await db.goals.find_one({
         "_id": ObjectId(goal_id),
@@ -112,9 +112,8 @@ async def update_goal(
     db=Depends(get_database)
 ):
     """Atualiza uma meta existente"""
-    if not ObjectId.is_valid(goal_id):
-        logger.warning(f"ID de meta inválido para atualização: {goal_id}")
-        raise HTTPException(status_code=400, detail="ID inválido")
+    # 🔧 REGRA 2.10: usando validate_object_id
+    validate_object_id(goal_id, "goal_id")
     
     existing = await db.goals.find_one({
         "_id": ObjectId(goal_id),
@@ -157,9 +156,8 @@ async def delete_goal(
     db=Depends(get_database)
 ):
     """Remove uma meta"""
-    if not ObjectId.is_valid(goal_id):
-        logger.warning(f"ID de meta inválido para deleção: {goal_id}")
-        raise HTTPException(status_code=400, detail="ID inválido")
+    # 🔧 REGRA 2.10: usando validate_object_id
+    validate_object_id(goal_id, "goal_id")
     
     result = await db.goals.delete_one({
         "_id": ObjectId(goal_id),

@@ -4,6 +4,7 @@ Arquivo: backend/app/routes/credit_cards.py
 
 🔧 MODIFICADO: Regra 2.2 - Usa format_mongo_doc
 🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
+🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -16,7 +17,7 @@ from app.models.credit_card import CreditCardCreate, CreditCardResponse, CreditC
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
-from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -79,6 +80,9 @@ async def update_credit_card(
     db=Depends(get_database)
 ):
     """Atualiza um cartão existente"""
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(card_id, "card_id")
+    
     # Verifica se o cartão existe e pertence ao usuário
     card = await db.credit_cards.find_one({
         "_id": ObjectId(card_id),
@@ -113,6 +117,9 @@ async def delete_credit_card(
     db=Depends(get_database)
 ):
     """Remove um cartão de crédito"""
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(card_id, "card_id")
+    
     # Verifica se o cartão existe e pertence ao usuário
     card = await db.credit_cards.find_one({
         "_id": ObjectId(card_id),
@@ -146,6 +153,9 @@ async def get_credit_card(
     db=Depends(get_database)
 ):
     """Busca um cartão específico pelo ID"""
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(card_id, "card_id")
+    
     card = await db.credit_cards.find_one({
         "_id": ObjectId(card_id),
         "user_id": str(current_user.id)

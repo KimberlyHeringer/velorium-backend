@@ -4,6 +4,7 @@ Arquivo: backend/app/routes/transactions.py
 
 🔧 CORREÇÃO: Substituído format_transaction_doc por format_mongo_doc (Seção 2.2)
 🔧 MODIFICADO: Regra 2.8 - Usa setup_logger em vez de logging diretamente
+🔧 MODIFICADO: Regra 2.10 - Usa validate_object_id em vez de validação manual
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,7 +17,7 @@ from app.models.transaction import TransactionCreate, TransactionUpdate, Transac
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, PaginatedResponse, paginate, paginate_query
-from app.utils.validators import format_mongo_doc, format_mongo_docs
+from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
 from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
@@ -147,11 +148,9 @@ async def get_transaction(
     db=Depends(get_database)
 ):
     """Retorna uma transação específica"""
-    try:
-        obj_id = ObjectId(transaction_id)
-    except Exception:
-        logger.warning(f"ID de transação inválido: {transaction_id} para usuário {current_user.id}")
-        raise HTTPException(status_code=400, detail="ID de transação inválido")
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(transaction_id, "transaction_id")
+    obj_id = ObjectId(transaction_id)
     
     transaction = await db.transactions.find_one({
         "_id": obj_id,
@@ -173,11 +172,9 @@ async def update_transaction(
     db=Depends(get_database)
 ):
     """Atualiza uma transação existente"""
-    try:
-        obj_id = ObjectId(transaction_id)
-    except Exception:
-        logger.warning(f"ID de transação inválido para atualização: {transaction_id}")
-        raise HTTPException(status_code=400, detail="ID de transação inválido")
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(transaction_id, "transaction_id")
+    obj_id = ObjectId(transaction_id)
     
     # Remover campos None
     update_data = {k: v for k, v in transaction_update.model_dump(exclude_unset=True).items() if v is not None}
@@ -212,11 +209,9 @@ async def delete_transaction(
     db=Depends(get_database)
 ):
     """Remove uma transação"""
-    try:
-        obj_id = ObjectId(transaction_id)
-    except Exception:
-        logger.warning(f"ID de transação inválido para deleção: {transaction_id}")
-        raise HTTPException(status_code=400, detail="ID de transação inválido")
+    # 🔧 REGRA 2.10: validar ID antes de usar
+    validate_object_id(transaction_id, "transaction_id")
+    obj_id = ObjectId(transaction_id)
     
     result = await db.transactions.delete_one({
         "_id": obj_id,
