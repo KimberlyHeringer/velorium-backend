@@ -5,6 +5,9 @@ Arquivo: backend/app/routes/bills.py
 🔧 MODIFICADO: Regra 3.3 - Refatoração de Bills
 - due_day agora é opcional (pode ser null)
 - Se due_day for null, usa o dia da start_date
+- 🔧 CORRIGIDO: create_bill_installments agora respeita o campo 'current'
+- Parcelas anteriores ao current são marcadas como paid=True
+- Ajusta start_date para a próxima parcela não paga
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -49,10 +52,12 @@ def split_amount(total: float, parts: int) -> List[float]:
 async def create_bill_installments(bill_id: str, user_id: str, amount: float, installments_data: dict, db):
     """
     Cria as parcelas individuais para uma conta
+    🔧 CORRIGIDO: Agora respeita o campo 'current' (parcelas já pagas)
     """
     total_parcelas = installments_data.get("total", 1)
     start_date = installments_data.get("start_date")
-    due_day = installments_data.get("due_day")  # 🔧 pode ser None
+    due_day = installments_data.get("due_day")
+    current = installments_data.get("current", 1)  # 🔧 PRÓXIMA parcela a pagar
     
     if not start_date:
         start_date = datetime.now(timezone.utc)
@@ -60,28 +65,37 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
     if isinstance(start_date, str):
         start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
     
-    # 🔧 Se due_day for None, usa o dia da start_date
-    day_of_month = due_day if due_day is not None else start_date.day
+    # 🔧 Calcula quantas parcelas já foram pagas (current - 1)
+    paid_count = current - 1 if current > 1 else 0
     
+    # 🔧 Ajusta a data de início para a próxima parcela não paga
+    adjusted_start_date = start_date
+    if paid_count > 0:
+        adjusted_start_date = start_date + relativedelta(months=paid_count)
+    
+    # Divide o valor total entre as parcelas
     amounts = split_amount(amount, total_parcelas)
     
     installments = []
     for i in range(total_parcelas):
-        # Calcula a data de vencimento
+        # 🔧 Calcula a data de vencimento baseada na data ajustada
         if due_day is not None:
             # Usa o dia fixo do mês
-            due_date = start_date + relativedelta(months=i)
+            due_date = adjusted_start_date + relativedelta(months=i)
             # Ajusta para o dia fixo
             try:
                 due_date = due_date.replace(day=due_day)
             except ValueError:
-                # Se o dia não existe no mês (ex: 31 em fevereiro), usa o último dia do mês
+                # Se o dia não existe no mês, usa o último dia do mês
                 next_month = due_date + relativedelta(months=1)
                 last_day = next_month - timedelta(days=1)
                 due_date = last_day
         else:
             # Usa o mesmo dia da start_date
-            due_date = start_date + relativedelta(months=i)
+            due_date = adjusted_start_date + relativedelta(months=i)
+        
+        # 🔧 Define se a parcela já está paga (baseado no paid_count)
+        is_paid = i < paid_count
         
         installment = {
             "bill_id": bill_id,
@@ -89,8 +103,8 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
             "number": i + 1,
             "amount": to_cents(amounts[i]),
             "due_date": due_date,
-            "paid": False,
-            "paid_date": None,
+            "paid": is_paid,
+            "paid_date": datetime.now(timezone.utc) if is_paid else None,
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc)
         }
@@ -98,7 +112,7 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
     
     if installments:
         await db.bill_installments.insert_many(installments)
-        logger.info(f"✅ {len(installments)} parcelas criadas para conta {bill_id}")
+        logger.info(f"✅ {len(installments)} parcelas criadas para conta {bill_id} ({paid_count} já pagas)")
 
 
 async def update_future_installments(bill_id: str, user_id: str, new_amount: float, new_total_parcelas: int, new_start_date: datetime, db):
@@ -181,6 +195,7 @@ async def create_bill(
         result = await db.bills.insert_one(bill_dict)
         bill_id = str(result.inserted_id)
         
+        # 🔧 Cria as parcelas (agora respeitando o campo current)
         await create_bill_installments(bill_id, str(current_user.id), amount_reais, installments_info, db)
         
         created = await db.bills.find_one({"_id": result.inserted_id})
