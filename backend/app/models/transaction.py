@@ -1,6 +1,9 @@
 """
 Modelo de Transações (Receitas e Despesas)
 Arquivo: backend/app/models/transaction.py
+
+🔧 MODIFICADO: Regra 2.12 - Integração com cartão de crédito
+- Adicionados campos card_id, installments, first_due_date para despesas com cartão
 """
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -8,7 +11,7 @@ from typing import Optional, Literal
 from datetime import datetime, timezone
 from bson import ObjectId
 
-from app.utils.validators import round_amount, validate_date_not_future  # ← centralizado
+from app.utils.validators import round_amount, validate_date_not_future
 
 
 class Transaction(BaseModel):
@@ -33,6 +36,10 @@ class Transaction(BaseModel):
     payment_method: Optional[str] = None
     context: Literal["individual", "familia", "profissional"] = "individual"
     family_id: Optional[str] = None
+    # 🔧 NOVOS CAMPOS PARA CARTÃO DE CRÉDITO (Regra 2.12)
+    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method = Cartão de Crédito)")
+    installments: int = Field(1, ge=1, description="Número de parcelas (padrão 1)")
+    first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -48,6 +55,18 @@ class Transaction(BaseModel):
         """Valida que a data não está no futuro (opcional para MVP)"""
         if self.date:
             validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def validate_credit_card_fields(self):
+        """Valida campos de cartão de crédito quando payment_method é cartão"""
+        if self.payment_method == "Cartão de Crédito" and self.type == "expense":
+            if not self.card_id:
+                raise ValueError("card_id é obrigatório quando payment_method é Cartão de Crédito")
+            if self.installments < 1:
+                raise ValueError("installments deve ser maior que 0")
+            if self.installments > 1 and not self.first_due_date:
+                raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
     @model_validator(mode='after')
@@ -68,6 +87,10 @@ class TransactionCreate(BaseModel):
     payment_method: Optional[str] = None
     context: Literal["individual", "familia", "profissional"] = "individual"
     family_id: Optional[str] = None
+    # 🔧 NOVOS CAMPOS PARA CARTÃO DE CRÉDITO (Regra 2.12)
+    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method = Cartão de Crédito)")
+    installments: int = Field(1, ge=1, description="Número de parcelas (padrão 1)")
+    first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -79,6 +102,18 @@ class TransactionCreate(BaseModel):
     def validate_date(self):
         if self.date:
             validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def validate_credit_card_fields(self):
+        """Valida campos de cartão de crédito quando payment_method é cartão"""
+        if self.payment_method == "Cartão de Crédito" and self.type == "expense":
+            if not self.card_id:
+                raise ValueError("card_id é obrigatório quando payment_method é Cartão de Crédito")
+            if self.installments < 1:
+                raise ValueError("installments deve ser maior que 0")
+            if self.installments > 1 and not self.first_due_date:
+                raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
     @model_validator(mode='after')
@@ -98,6 +133,10 @@ class TransactionUpdate(BaseModel):
     payment_method: Optional[str] = None
     context: Optional[Literal["individual", "familia", "profissional"]] = None
     family_id: Optional[str] = None
+    # 🔧 NOVOS CAMPOS PARA CARTÃO DE CRÉDITO (Regra 2.12)
+    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method = Cartão de Crédito)")
+    installments: Optional[int] = Field(None, ge=1, description="Número de parcelas")
+    first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -109,6 +148,18 @@ class TransactionUpdate(BaseModel):
     def validate_date(self):
         if self.date:
             validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def validate_credit_card_fields(self):
+        """Valida campos de cartão de crédito quando payment_method é cartão"""
+        if self.payment_method == "Cartão de Crédito" and self.type == "expense":
+            if not self.card_id:
+                raise ValueError("card_id é obrigatório quando payment_method é Cartão de Crédito")
+            if self.installments is not None and self.installments < 1:
+                raise ValueError("installments deve ser maior que 0")
+            if self.installments is not None and self.installments > 1 and not self.first_due_date:
+                raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
     @model_validator(mode='after')
@@ -137,6 +188,9 @@ class TransactionResponse(BaseModel):
     payment_method: Optional[str]
     context: str
     family_id: Optional[str]
+    card_id: Optional[str] = None
+    installments: int = 1
+    first_due_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
