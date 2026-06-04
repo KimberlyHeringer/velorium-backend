@@ -7,6 +7,8 @@ Arquivo: backend/app/routes/transactions.py
 - Ao criar despesa com payment_method = "Cartão de Crédito", criar compra no cartão
 - Ao editar despesa, sincronizar com compra do cartão
 - Ao deletar despesa, deletar compra do cartão
+🔧 CORRIGIDO: Ordem das operações (primeiro valida cartão, depois cria transação)
+- Evita criar transação se a compra no cartão falhar
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -30,15 +32,14 @@ router = APIRouter(prefix="/transactions", tags=["Transações"])
 
 # ========== FUNÇÕES AUXILIARES PARA CARTÃO ==========
 
-async def create_credit_card_purchase_from_transaction(
-    transaction_id: str,
+async def validate_and_create_credit_card_purchase(
     user_id: str,
     transaction_data: dict,
     db
 ):
     """
-    Cria uma compra no cartão de crédito baseada na despesa.
-    Retorna o ID da compra criada.
+    Valida e cria uma compra no cartão de crédito.
+    Retorna o ID da compra criada ou levanta exceção.
     """
     from app.routes.credit_card_purchases import split_amount
     
@@ -51,7 +52,7 @@ async def create_credit_card_purchase_from_transaction(
     notes = transaction_data.get("notes")
     
     if not card_id:
-        return None
+        raise HTTPException(status_code=400, detail="cartão de crédito não selecionado")
     
     # Busca o cartão para validar
     card = await db.credit_cards.find_one({
@@ -59,8 +60,7 @@ async def create_credit_card_purchase_from_transaction(
         "user_id": user_id
     })
     if not card:
-        logger.warning(f"Cartão não encontrado para criação de compra: {card_id}")
-        return None
+        raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
     # Valida limite disponível
     available = card.get("limit_total", 0) - card.get("committed_amount", 0)
@@ -80,7 +80,6 @@ async def create_credit_card_purchase_from_transaction(
         "first_due_date": first_due_date or datetime.now(timezone.utc),
         "category": category,
         "notes": notes,
-        "transaction_id": transaction_id,  # 🔧 Link com a despesa
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc)
     }
@@ -121,6 +120,76 @@ async def create_credit_card_purchase_from_transaction(
         {"$inc": {"committed_amount": amount}, "$set": {"updated_at": datetime.now(timezone.utc)}}
     )
     
+    logger.info(f"Compra no cartão criada: {purchase_id}")
+    return purchase_id
+
+
+async def create_credit_card_purchase_from_transaction(
+    transaction_id: str,
+    user_id: str,
+    transaction_data: dict,
+    db
+):
+    """
+    Cria uma compra no cartão de crédito baseada na despesa (já validada).
+    """
+    from app.routes.credit_card_purchases import split_amount
+    
+    card_id = transaction_data.get("card_id")
+    amount = transaction_data.get("amount")
+    description = transaction_data.get("description", "")
+    installments = transaction_data.get("installments", 1)
+    first_due_date = transaction_data.get("first_due_date")
+    category = transaction_data.get("category")
+    notes = transaction_data.get("notes")
+    
+    purchase_dict = {
+        "card_id": card_id,
+        "user_id": user_id,
+        "description": description,
+        "total_amount": amount,
+        "installments": installments,
+        "first_due_date": first_due_date or datetime.now(timezone.utc),
+        "category": category,
+        "notes": notes,
+        "transaction_id": transaction_id,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc)
+    }
+    
+    result = await db.credit_card_purchases.insert_one(purchase_dict)
+    purchase_id = str(result.inserted_id)
+    
+    total_amount_reais = from_cents(amount)
+    amounts = split_amount(total_amount_reais, installments)
+    first_due = purchase_dict["first_due_date"]
+    
+    from dateutil.relativedelta import relativedelta
+    
+    installments_list = []
+    for i in range(installments):
+        due_date = first_due + relativedelta(months=i)
+        installment = {
+            "purchase_id": purchase_id,
+            "user_id": user_id,
+            "card_id": card_id,
+            "amount": to_cents(amounts[i]),
+            "due_date": due_date,
+            "paid": False,
+            "paid_date": None,
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc)
+        }
+        installments_list.append(installment)
+    
+    if installments_list:
+        await db.credit_card_installments.insert_many(installments_list)
+    
+    await db.credit_cards.update_one(
+        {"_id": ObjectId(card_id)},
+        {"$inc": {"committed_amount": amount}, "$set": {"updated_at": datetime.now(timezone.utc)}}
+    )
+    
     logger.info(f"Compra no cartão criada a partir da despesa {transaction_id}: {purchase_id}")
     return purchase_id
 
@@ -134,17 +203,14 @@ async def update_credit_card_purchase_from_transaction(
     """
     Atualiza a compra no cartão associada à despesa.
     """
-    # Busca a compra associada
     purchase = await db.credit_card_purchases.find_one({
         "transaction_id": transaction_id,
         "user_id": user_id
     })
     
     if not purchase:
-        # Se não existe compra associada, pode ser uma nova compra
         return await create_credit_card_purchase_from_transaction(transaction_id, user_id, transaction_data, db)
     
-    # Verifica se já tem parcelas pagas
     paid_installments = await db.credit_card_installments.find_one({
         "purchase_id": purchase["_id"],
         "paid": True
@@ -156,7 +222,6 @@ async def update_credit_card_purchase_from_transaction(
             detail="Não é possível editar despesa que já possui parcelas pagas no cartão."
         )
     
-    # Atualiza a compra
     card_id = transaction_data.get("card_id", purchase.get("card_id"))
     new_amount = transaction_data.get("amount")
     old_amount = purchase.get("total_amount", 0)
@@ -176,11 +241,9 @@ async def update_credit_card_purchase_from_transaction(
     if card_id != purchase.get("card_id"):
         update_data["card_id"] = card_id
     
-    # Se o valor mudou, recalcular delta
     if new_amount and new_amount != old_amount:
         delta = new_amount - old_amount
         
-        # Verifica limite disponível se for aumento
         if delta > 0:
             card = await db.credit_cards.find_one({
                 "_id": ObjectId(card_id),
@@ -196,13 +259,11 @@ async def update_credit_card_purchase_from_transaction(
         
         update_data["total_amount"] = new_amount
         
-        # Atualiza committed_amount
         await db.credit_cards.update_one(
             {"_id": ObjectId(card_id)},
             {"$inc": {"committed_amount": delta}}
         )
         
-        # Recria as parcelas com os novos valores
         await db.credit_card_installments.delete_many({"purchase_id": str(purchase["_id"])})
         
         total_amount_reais = from_cents(new_amount)
@@ -260,7 +321,6 @@ async def delete_credit_card_purchase_from_transaction(
     if not purchase:
         return
     
-    # Verifica se já tem parcelas pagas
     paid_installments = await db.credit_card_installments.find_one({
         "purchase_id": str(purchase["_id"]),
         "paid": True
@@ -272,13 +332,11 @@ async def delete_credit_card_purchase_from_transaction(
             detail="Não é possível deletar despesa que já possui parcelas pagas no cartão."
         )
     
-    # Reduz committed_amount do cartão
     await db.credit_cards.update_one(
         {"_id": ObjectId(purchase["card_id"])},
         {"$inc": {"committed_amount": -purchase["total_amount"]}}
     )
     
-    # Deleta parcelas e compra
     await db.credit_card_installments.delete_many({"purchase_id": str(purchase["_id"])})
     await db.credit_card_purchases.delete_one({"_id": purchase["_id"]})
     
@@ -295,43 +353,66 @@ async def create_transaction(
 ):
     """Cria uma nova transação (receita ou despesa)"""
     try:
+        # 🔧 REGRA 2.12: Verificar se é despesa com cartão de crédito
+        is_credit_card_expense = (
+            transaction_data.type == "expense" and
+            transaction_data.payment_method == "Cartão de Crédito" and
+            transaction_data.card_id
+        )
+        
+        # 🔧 CORREÇÃO: Primeiro valida e cria a compra no cartão (se for o caso)
+        purchase_id = None
+        if is_credit_card_expense:
+            # Converte amount para centavos para validação
+            amount_cents = to_cents(float(transaction_data.amount))
+            
+            # Prepara dados para validação
+            temp_data = {
+                "card_id": transaction_data.card_id,
+                "amount": amount_cents,
+                "description": transaction_data.description or "",
+                "installments": transaction_data.installments or 1,
+                "first_due_date": transaction_data.first_due_date,
+                "category": transaction_data.category,
+                "notes": None
+            }
+            
+            # Valida e cria a compra (se falhar, levanta exceção)
+            purchase_id = await validate_and_create_credit_card_purchase(
+                str(current_user.id),
+                temp_data,
+                db
+            )
+        
+        # Agora cria a transação
         transaction_dict = transaction_data.model_dump()
         transaction_dict["user_id"] = str(current_user.id)
         
         if transaction_dict.get("date") is None:
             transaction_dict["date"] = datetime.now(timezone.utc)
         
-        # 🔧 REGRA 2.11: converter amount para centavos (int)
         amount_float = float(transaction_dict["amount"])
         transaction_dict["amount"] = to_cents(amount_float)
         
         transaction_dict["created_at"] = datetime.now(timezone.utc)
         transaction_dict["updated_at"] = datetime.now(timezone.utc)
-
-        # 🔧 REGRA 2.12: Verificar se é despesa com cartão de crédito
-        is_credit_card_expense = (
-            transaction_dict.get("type") == "expense" and
-            transaction_dict.get("payment_method") == "Cartão de Crédito" and
-            transaction_dict.get("card_id")
-        )
         
-        # Cria a transação
+        # 🔧 Se a compra foi criada, vincula à transação
+        if purchase_id:
+            transaction_dict["purchase_id"] = purchase_id
+
         result = await db.transactions.insert_one(transaction_dict)
         transaction_id = str(result.inserted_id)
         
-        # 🔧 REGRA 2.12: Se for despesa com cartão, criar compra no cartão
-        if is_credit_card_expense:
-            await create_credit_card_purchase_from_transaction(
-                transaction_id,
-                str(current_user.id),
-                transaction_dict,
-                db
+        # 🔧 Se a compra foi criada, atualiza com o transaction_id
+        if purchase_id:
+            await db.credit_card_purchases.update_one(
+                {"_id": ObjectId(purchase_id)},
+                {"$set": {"transaction_id": transaction_id}}
             )
         
-        # Buscar o documento inserido para retornar os dados completos
         created = await db.transactions.find_one({"_id": result.inserted_id})
         
-        # 🔧 REGRA 2.11: converter amount de volta para float (reais)
         if created and "amount" in created:
             created["amount"] = from_cents(created["amount"])
         
@@ -379,7 +460,6 @@ async def get_transactions(
         db.transactions, query, params, sort=[("date", -1)]
     )
     
-    # 🔧 REGRA 2.11: converter amount de centavos para reais (float)
     for item in items:
         if "amount" in item:
             item["amount"] = from_cents(item["amount"])
@@ -413,7 +493,6 @@ async def get_balance(
     result = await db.transactions.aggregate(pipeline).to_list(1)
     
     if result:
-        # 🔧 REGRA 2.11: os valores já vêm do banco em centavos, converter para reais
         income = from_cents(float(result[0]["total_income"]))
         expense = from_cents(float(result[0]["total_expense"]))
         logger.debug(f"Saldo calculado para usuário {current_user.id}: R$ {income - expense:.2f}")
@@ -468,7 +547,6 @@ async def update_transaction(
     validate_object_id(transaction_id, "transaction_id")
     obj_id = ObjectId(transaction_id)
     
-    # Busca a transação original
     original = await db.transactions.find_one({
         "_id": obj_id,
         "user_id": str(current_user.id)
@@ -477,7 +555,6 @@ async def update_transaction(
         logger.warning(f"Transação não encontrada para atualização: {transaction_id}")
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
-    # Remover campos None
     update_data = {k: v for k, v in transaction_update.model_dump(exclude_unset=True).items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
@@ -494,7 +571,6 @@ async def update_transaction(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
-    # 🔧 REGRA 2.12: Se for despesa com cartão, atualizar compra no cartão
     original_is_credit = (
         original.get("type") == "expense" and
         original.get("payment_method") == "Cartão de Crédito"
@@ -505,7 +581,6 @@ async def update_transaction(
     )
     
     if original_is_credit or new_is_credit:
-        # Prepara dados para atualização da compra
         purchase_data = {
             "card_id": update_data.get("card_id", original.get("card_id")),
             "amount": update_data.get("amount", original.get("amount")),
@@ -523,7 +598,6 @@ async def update_transaction(
             db
         )
     
-    # Buscar documento atualizado e retornar
     updated = await db.transactions.find_one({"_id": obj_id})
     
     if updated and "amount" in updated:
@@ -543,7 +617,6 @@ async def delete_transaction(
     validate_object_id(transaction_id, "transaction_id")
     obj_id = ObjectId(transaction_id)
     
-    # Busca a transação para verificar se tem compra associada
     transaction = await db.transactions.find_one({
         "_id": obj_id,
         "user_id": str(current_user.id)
@@ -552,7 +625,6 @@ async def delete_transaction(
         logger.warning(f"Transação não encontrada para deleção: {transaction_id}")
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
-    # 🔧 REGRA 2.12: Se for despesa com cartão, deletar compra no cartão
     is_credit_card_expense = (
         transaction.get("type") == "expense" and
         transaction.get("payment_method") == "Cartão de Crédito"
