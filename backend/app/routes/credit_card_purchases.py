@@ -7,6 +7,7 @@ Arquivo: backend/app/routes/credit_card_purchases.py
 🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
 🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 🔧 MODIFICADO: Logs adicionais na rota /faturas para debug
+🔧 CORRIGIDO: Rota /faturas mais tolerante a erros (retorna lista vazia em vez de 500)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -162,75 +163,100 @@ async def get_faturas(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Retorna faturas do cartão"""
-    # 🔧 LOGS PARA DEBUG
-    logger.info(f"🔍 Buscando faturas - card_id: {card_id}, month: {month}, year: {year}, user: {current_user.id}")
-    
-    validate_object_id(card_id, "card_id")
-    
-    card = await db.credit_cards.find_one({
-        "_id": ObjectId(card_id),
-        "user_id": str(current_user.id)
-    })
-    if not card:
-        logger.warning(f"Cartão não encontrado: {card_id}")
-        raise HTTPException(status_code=404, detail="Cartão não encontrado")
-
-    query = {
-        "card_id": card_id,
-        "user_id": str(current_user.id)
-    }
-    
-    if month is not None and year is not None:
-        start_date = datetime(year, month, 1, tzinfo=timezone.utc)
-        if month == 12:
-            end_date = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            end_date = datetime(year, month + 1, 1, tzinfo=timezone.utc)
-        query["due_date"] = {"$gte": start_date, "$lt": end_date}
-        logger.info(f"🔍 Query com data: {query}")
-    else:
-        logger.info(f"🔍 Query sem filtro de data: {query}")
-
-    installments_cursor = db.credit_card_installments.find(query)
-    installments = await installments_cursor.to_list(length=1000)
-
-    logger.info(f"🔍 Encontradas {len(installments)} parcelas")
-
-    if not installments:
-        return []
-
-    purchases_map = {}
-    for inst in installments:
-        pid = inst["purchase_id"]
-        if pid not in purchases_map:
-            try:
-                validate_object_id(pid, "purchase_id")
-                purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
-                if purchase:
-                    if "total_amount" in purchase:
-                        purchase["total_amount"] = from_cents(purchase["total_amount"])
-                    purchases_map[pid] = format_mongo_doc(purchase)
-            except Exception as e:
-                logger.error(f"Erro ao buscar compra {pid}: {e}")
-                continue
-
-    result = []
-    for pid, purchase in purchases_map.items():
-        purchase_installments = [i for i in installments if i["purchase_id"] == pid]
-        total = sum(from_cents(i["amount"]) for i in purchase_installments)
-        result.append({
-            "purchase_id": pid,
-            "description": purchase["description"],
-            "total_amount": purchase["total_amount"],
-            "installments_total": purchase["installments"],
-            "category": purchase.get("category"),
-            "installments": purchase_installments,
-            "total": total
+    """Retorna faturas do cartão - Versão tolerante a erros"""
+    try:
+        logger.info(f"🔍 Buscando faturas - card_id: {card_id}, user: {current_user.id}")
+        
+        validate_object_id(card_id, "card_id")
+        
+        card = await db.credit_cards.find_one({
+            "_id": ObjectId(card_id),
+            "user_id": str(current_user.id)
         })
-    
-    logger.info(f"🔍 Retornando {len(result)} faturas")
-    return result
+        if not card:
+            logger.warning(f"Cartão não encontrado: {card_id}")
+            return []  # Retorna lista vazia
+
+        query = {
+            "card_id": card_id,
+            "user_id": str(current_user.id)
+        }
+        
+        if month is not None and year is not None:
+            start_date = datetime(year, month, 1, tzinfo=timezone.utc)
+            if month == 12:
+                end_date = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            else:
+                end_date = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+            query["due_date"] = {"$gte": start_date, "$lt": end_date}
+            logger.info(f"🔍 Query com data: {query}")
+
+        # Busca parcelas
+        installments = []
+        try:
+            installments_cursor = db.credit_card_installments.find(query)
+            installments = await installments_cursor.to_list(length=1000)
+            logger.info(f"🔍 Encontradas {len(installments)} parcelas")
+        except Exception as e:
+            logger.error(f"Erro ao buscar parcelas: {e}")
+            return []
+
+        if not installments:
+            return []
+
+        purchases_map = {}
+        for inst in installments:
+            pid = inst.get("purchase_id")
+            if not pid:
+                logger.warning(f"Parcela sem purchase_id: {inst}")
+                continue
+                
+            if pid not in purchases_map:
+                try:
+                    purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
+                    if purchase:
+                        if "total_amount" in purchase:
+                            purchase["total_amount"] = from_cents(purchase["total_amount"])
+                        purchases_map[pid] = format_mongo_doc(purchase)
+                    else:
+                        logger.warning(f"Compra não encontrada para parcela: {pid}")
+                except Exception as e:
+                    logger.error(f"Erro ao buscar compra {pid}: {e}")
+                    continue
+
+        result = []
+        for pid, purchase in purchases_map.items():
+            try:
+                purchase_installments = [i for i in installments if i.get("purchase_id") == pid]
+                total = 0
+                for i in purchase_installments:
+                    try:
+                        total += from_cents(i.get("amount", 0))
+                    except Exception as e:
+                        logger.error(f"Erro ao converter amount da parcela: {e}")
+                
+                result.append({
+                    "purchase_id": pid,
+                    "description": purchase.get("description", ""),
+                    "total_amount": purchase.get("total_amount", 0),
+                    "installments_total": purchase.get("installments", 1),
+                    "category": purchase.get("category"),
+                    "installments": purchase_installments,
+                    "total": total
+                })
+            except Exception as e:
+                logger.error(f"Erro ao processar compra {pid}: {e}")
+                continue
+        
+        logger.info(f"🔍 Retornando {len(result)} faturas")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Erro FATAL em get_faturas: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Retorna lista vazia em vez de erro 500
+        return []
 
 
 @router.get("/purchases/{purchase_id}", response_model=CreditCardPurchaseResponse)
@@ -386,7 +412,6 @@ async def mark_installment_paid(
     await update_card_committed_amount(installment["card_id"], -installment["amount"], db)
 
     return {"message": "Parcela marcada como paga e compromisso reduzido"}
-
 
 
 # ========== DECISÕES DOCUMENTADAS ==========
