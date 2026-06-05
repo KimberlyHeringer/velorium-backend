@@ -8,6 +8,7 @@ Arquivo: backend/app/routes/credit_card_purchases.py
 🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 🔧 MODIFICADO: Logs adicionais na rota /faturas para debug
 🔧 CORRIGIDO: Rota /faturas mais tolerante a erros (retorna lista vazia em vez de 500)
+🔧 ADICIONADO: Endpoint temporário /debug/clean-invalid-data para limpar dados inconsistentes
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -175,7 +176,7 @@ async def get_faturas(
         })
         if not card:
             logger.warning(f"Cartão não encontrado: {card_id}")
-            return []  # Retorna lista vazia
+            return []
 
         query = {
             "card_id": card_id,
@@ -191,7 +192,6 @@ async def get_faturas(
             query["due_date"] = {"$gte": start_date, "$lt": end_date}
             logger.info(f"🔍 Query com data: {query}")
 
-        # Busca parcelas
         installments = []
         try:
             installments_cursor = db.credit_card_installments.find(query)
@@ -208,7 +208,7 @@ async def get_faturas(
         for inst in installments:
             pid = inst.get("purchase_id")
             if not pid:
-                logger.warning(f"Parcela sem purchase_id: {inst}")
+                logger.warning(f"Parcela sem purchase_id, ignorando")
                 continue
                 
             if pid not in purchases_map:
@@ -255,7 +255,6 @@ async def get_faturas(
         logger.error(f"❌ Erro FATAL em get_faturas: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        # Retorna lista vazia em vez de erro 500
         return []
 
 
@@ -412,6 +411,54 @@ async def mark_installment_paid(
     await update_card_committed_amount(installment["card_id"], -installment["amount"], db)
 
     return {"message": "Parcela marcada como paga e compromisso reduzido"}
+
+
+# ========== ENDPOINT TEMPORÁRIO PARA DEBUG ==========
+
+@router.get("/debug/clean-invalid-data")
+async def clean_invalid_data(
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Endpoint temporário para limpar dados inconsistentes.
+    Remove parcelas que não têm purchase_id válido ou compra associada.
+    """
+    try:
+        user_id = str(current_user.id)
+        logger.info(f"🔧 Iniciando limpeza de dados para usuário {user_id}")
+        
+        # Busca todas as parcelas do usuário
+        installments = await db.credit_card_installments.find({
+            "user_id": user_id
+        }).to_list(1000)
+        
+        invalid_count = 0
+        for inst in installments:
+            pid = inst.get("purchase_id")
+            if not pid:
+                await db.credit_card_installments.delete_one({"_id": inst["_id"]})
+                invalid_count += 1
+                logger.info(f"Removida parcela sem purchase_id: {inst['_id']}")
+                continue
+            
+            # Verifica se a compra existe
+            try:
+                purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
+                if not purchase:
+                    await db.credit_card_installments.delete_one({"_id": inst["_id"]})
+                    invalid_count += 1
+                    logger.info(f"Removida parcela com compra inexistente: {inst['_id']}")
+            except Exception as e:
+                logger.error(f"Erro ao verificar compra {pid}: {e}")
+                continue
+        
+        logger.info(f"🔧 Limpeza concluída: {invalid_count} parcelas removidas")
+        return {"message": "Limpeza concluída", "removidas": invalid_count}
+        
+    except Exception as e:
+        logger.error(f"Erro na limpeza: {e}")
+        return {"error": str(e)}
 
 
 # ========== DECISÕES DOCUMENTADAS ==========
