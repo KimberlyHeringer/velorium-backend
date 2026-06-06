@@ -6,7 +6,7 @@ Arquivo: backend/app/routes/credit_card_purchases.py
 🔧 MODIFICADO: Regra 2.8 - Adicionado logs
 🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
 🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
-🔧 CORRIGIDO: Rota /faturas com logs detalhados para debug
+🔧 CORRIGIDO: Converte ObjectId para string na resposta da rota /faturas
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -162,19 +162,16 @@ async def get_faturas(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Retorna faturas do cartão - Versão com logs detalhados"""
+    """Retorna faturas do cartão"""
     try:
-        logger.info(f"🔍 STEP 1: Iniciando get_faturas para card_id: {card_id}")
+        logger.info(f"🔍 Buscando faturas - card_id: {card_id}, user: {current_user.id}")
         
         validate_object_id(card_id, "card_id")
-        logger.info(f"🔍 STEP 2: card_id validado")
         
         card = await db.credit_cards.find_one({
             "_id": ObjectId(card_id),
             "user_id": str(current_user.id)
         })
-        logger.info(f"🔍 STEP 3: Cartão encontrado: {card is not None}")
-        
         if not card:
             logger.warning(f"Cartão não encontrado: {card_id}")
             return []
@@ -191,22 +188,16 @@ async def get_faturas(
             else:
                 end_date = datetime(year, month + 1, 1, tzinfo=timezone.utc)
             query["due_date"] = {"$gte": start_date, "$lt": end_date}
-            logger.info(f"🔍 STEP 4: Query com data: {query}")
-        else:
-            logger.info(f"🔍 STEP 4: Query sem filtro de data")
+            logger.info(f"🔍 Query com data: {query}")
 
-        logger.info(f"🔍 STEP 5: Buscando parcelas...")
         installments = await db.credit_card_installments.find(query).to_list(length=1000)
-        logger.info(f"🔍 STEP 6: Encontradas {len(installments)} parcelas")
+        logger.info(f"🔍 Encontradas {len(installments)} parcelas")
 
         if not installments:
             return []
 
-        logger.info(f"🔍 STEP 7: Processando {len(installments)} parcelas...")
         purchases_map = {}
-        
-        for idx, inst in enumerate(installments):
-            logger.info(f"🔍 STEP 7.{idx}: Processando parcela {idx}")
+        for inst in installments:
             pid = inst.get("purchase_id")
             if not pid:
                 logger.warning(f"Parcela sem purchase_id, ignorando")
@@ -214,21 +205,17 @@ async def get_faturas(
                 
             if pid not in purchases_map:
                 try:
-                    logger.info(f"🔍 STEP 7.{idx}.a: Buscando compra {pid}")
                     purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
                     if purchase:
-                        logger.info(f"🔍 STEP 7.{idx}.b: Compra encontrada")
                         if "total_amount" in purchase:
                             purchase["total_amount"] = from_cents(purchase["total_amount"])
                         purchases_map[pid] = format_mongo_doc(purchase)
                     else:
-                        logger.warning(f"Compra não encontrada: {pid}")
+                        logger.warning(f"Compra não encontrada para parcela: {pid}")
                 except Exception as e:
                     logger.error(f"Erro ao buscar compra {pid}: {e}")
                     continue
 
-        logger.info(f"🔍 STEP 8: {len(purchases_map)} compras encontradas")
-        
         result = []
         for pid, purchase in purchases_map.items():
             try:
@@ -249,7 +236,12 @@ async def get_faturas(
                 logger.error(f"Erro ao processar compra {pid}: {e}")
                 continue
         
-        logger.info(f"🔍 STEP 9: Retornando {len(result)} faturas")
+        # 🔧 CORREÇÃO: Converter ObjectIds para string nas parcelas
+        for item in result:
+            if "installments" in item:
+                item["installments"] = format_mongo_docs(item["installments"])
+        
+        logger.info(f"🔍 Retornando {len(result)} faturas")
         return result
         
     except Exception as e:
