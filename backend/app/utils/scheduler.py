@@ -11,6 +11,8 @@ from apscheduler.triggers.cron import CronTrigger
 import atexit
 
 from app.utils.logger import setup_logger
+from app.workers.score_worker import run_score_worker_sync
+from app.workers.daily_notifications import run_daily_notifications_sync
 
 logger = setup_logger(__name__)
 
@@ -29,10 +31,6 @@ def init_scheduler():
         return _scheduler
     
     _scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
-    
-    # Importa as funções dos workers
-    from workers.score_worker import run_score_worker_sync
-    from workers.daily_notifications import run_daily_notifications_sync
     
     # Agenda worker de score (03:00)
     _scheduler.add_job(
