@@ -1,6 +1,8 @@
 """
 Modelo de Contas a Pagar (Bills)
 Arquivo: backend/app/models/bill.py
+
+🔧 CORRIGIDO: amount agora é int (centavos) para consistência com to_cents()
 """
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -8,26 +10,28 @@ from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
 
-from app.utils.validators import round_amount
-
 
 class InstallmentInfo(BaseModel):
     """Informações sobre parcelamento da conta"""
-    total: int = Field(..., ge=1)
-    current: int = Field(1, ge=1)
-    start_date: datetime
-    due_day: Optional[int] = Field(None, ge=1, le=31)  # 🔧 Agora opcional
+    total: int = Field(..., ge=1, description="Número total de parcelas")
+    current: int = Field(1, ge=1, description="Parcela atual")
+    start_date: datetime = Field(..., description="Data da primeira parcela")
+    due_day: Optional[int] = Field(None, ge=1, le=31, description="Dia de vencimento (opcional)")
 
 
 class NotificationInfo(BaseModel):
     """Configurações de notificação para esta conta"""
-    enabled: bool = False
-    days_before: int = Field(0, ge=0)
+    enabled: bool = Field(default=False, description="Notificações ativas?")
+    days_before: int = Field(0, ge=0, description="Dias antes para lembrar")
 
 
 class Bill(BaseModel):
     """
     Modelo principal de Conta a Pagar
+    
+    🔧 IMPORTANTE: amount está em CENTAVOS (int)
+    - Exemplo: R$ 150,50 → 15050
+    - As rotas usam to_cents() e from_cents() automaticamente
     """
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -37,17 +41,17 @@ class Bill(BaseModel):
     )
 
     id: Optional[str] = Field(None, alias="_id")
-    user_id: str
-    description: str
-    amount: float = Field(..., gt=0)
-    installments: InstallmentInfo
-    category: Optional[str] = None
-    notes: Optional[str] = None
-    notification: NotificationInfo = Field(default_factory=NotificationInfo)
-    paid: bool = False
-    paid_date: Optional[datetime] = None
-    recurring: bool = False
-    recurring_end_date: Optional[datetime] = None
+    user_id: str = Field(..., description="ID do usuário (preenchido pelo backend)")
+    description: str = Field(..., max_length=200, description="Descrição da conta")
+    amount: int = Field(..., gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
+    installments: InstallmentInfo = Field(..., description="Informações de parcelamento")
+    category: Optional[str] = Field(None, max_length=50, description="Categoria da conta")
+    notes: Optional[str] = Field(None, max_length=500, description="Observações")
+    notification: NotificationInfo = Field(default_factory=NotificationInfo, description="Configurações de notificação")
+    paid: bool = Field(default=False, description="Conta totalmente paga?")
+    paid_date: Optional[datetime] = Field(None, description="Data em que foi totalmente paga")
+    recurring: bool = Field(default=False, description="É recorrente?")
+    recurring_end_date: Optional[datetime] = Field(None, description="Data final da recorrência")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -60,99 +64,55 @@ class Bill(BaseModel):
     
     @model_validator(mode='after')
     def validate_installment_due_day(self):
-        """🔧 due_day é opcional - pode ser None"""
-        # Removida a validação que exigia due_day
-        return self
-
-    @model_validator(mode='after')
-    def round_amount_field(self):
-        """Arredonda amount usando função centralizada"""
-        if self.amount is not None:
-            self.amount = round_amount(self.amount)
+        """due_day é opcional - pode ser None"""
         return self
 
 
 class BillCreate(BaseModel):
     """Schema usado para CRIAR uma nova conta"""
-    description: str
-    amount: float = Field(..., gt=0)
-    installments: InstallmentInfo
-    category: Optional[str] = None
-    notes: Optional[str] = None
-    notification: NotificationInfo = Field(default_factory=NotificationInfo)
-    recurring: bool = False
-    recurring_end_date: Optional[datetime] = None
+    description: str = Field(..., max_length=200, description="Descrição da conta")
+    amount: int = Field(..., gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
+    installments: InstallmentInfo = Field(..., description="Informações de parcelamento")
+    category: Optional[str] = Field(None, max_length=50, description="Categoria da conta")
+    notes: Optional[str] = Field(None, max_length=500, description="Observações")
+    notification: NotificationInfo = Field(default_factory=NotificationInfo, description="Configurações de notificação")
+    recurring: bool = Field(default=False, description="É recorrente?")
+    recurring_end_date: Optional[datetime] = Field(None, description="Data final da recorrência")
 
     @model_validator(mode='after')
     def validate_installment_due_day(self):
-        """🔧 due_day é opcional"""
-        return self
-
-    @model_validator(mode='after')
-    def round_amount_field(self):
-        if self.amount is not None:
-            self.amount = round_amount(self.amount)
         return self
 
 
 class BillUpdate(BaseModel):
     """Schema usado para ATUALIZAR uma conta existente"""
-    description: Optional[str] = None
-    amount: Optional[float] = Field(None, gt=0)
-    installments: Optional[InstallmentInfo] = None
-    category: Optional[str] = None
-    notes: Optional[str] = None
-    notification: Optional[NotificationInfo] = None
-    paid: Optional[bool] = None
-    paid_date: Optional[datetime] = None
-    recurring: Optional[bool] = None
-    recurring_end_date: Optional[datetime] = None
-
-    @model_validator(mode='after')
-    def round_amount_field(self):
-        if self.amount is not None:
-            self.amount = round_amount(self.amount)
-        return self
+    description: Optional[str] = Field(None, max_length=200, description="Descrição da conta")
+    amount: Optional[int] = Field(None, gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
+    installments: Optional[InstallmentInfo] = Field(None, description="Informações de parcelamento")
+    category: Optional[str] = Field(None, max_length=50, description="Categoria da conta")
+    notes: Optional[str] = Field(None, max_length=500, description="Observações")
+    notification: Optional[NotificationInfo] = Field(None, description="Configurações de notificação")
+    paid: Optional[bool] = Field(None, description="Conta totalmente paga?")
+    paid_date: Optional[datetime] = Field(None, description="Data em que foi totalmente paga")
+    recurring: Optional[bool] = Field(None, description="É recorrente?")
+    recurring_end_date: Optional[datetime] = Field(None, description="Data final da recorrência")
 
 
 class BillResponse(Bill):
-    """Schema usado para RESPOSTAS"""
+    """Schema usado para RESPOSTAS da API"""
     pass
+
 
 """
 ================================================================================
-📋 FEEDBACK DO ARQUIVO (MVP) – ATUALIZADO COM ANÁLISE DO FRONTEND
-
-✅ O QUE FOI MODIFICADO/MELHORADO NESTA VERSÃO:
---------------------------------------------------------------------------------
-1. Adicionada validação: parcelas com total > 1 exigem due_day
-2. Adicionados comentários de SEGURANÇA explicando que user_id NUNCA vem do frontend
-3. Documentação clara no BillCreate e BillResponse sobre o papel do user_id
-4. Removido import não utilizado (field_validator)
-
-✅ O QUE ESTÁ EXCELENTE E FOI MANTIDO:
---------------------------------------------------------------------------------
-1. Validação de 'paid' com 'paid_date' (paid=True exige paid_date)
-2. Arredondamento de float para 2 casas (evita problemas de precisão)
-3. ConfigDict com json_encoders para ObjectId
-4. NotificationInfo separado com days_before
-
-🔒 VERIFICAÇÃO DE SEGURANÇA COM O FRONTEND (REALIZADA):
---------------------------------------------------------------------------------
-- Frontend NÃO envia user_id nas requisições ✅
-- Frontend NÃO utiliza user_id nas respostas ✅
-- Backend injeta user_id via token JWT ✅
-- Arquitetura segura contra injeção de user_id malicioso ✅
-
-⚠️ PENDÊNCIAS PARA VERSÕES FUTURAS (NÃO CRÍTICAS PARA MVP):
---------------------------------------------------------------------------------
-1. Adicionar índices no MongoDB (database.py):
-   - bills: [("user_id", 1), ("paid", 1)]
-   - bills: [("user_id", 1), ("installments.start_date", 1)]
-
-2. Internacionalização (i18n) das mensagens de erro
-
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
 ================================================================================
-✅ STATUS: APROVADO PARA MVP (COM SEGURANÇA VERIFICADA)
+1. amount: float → int (centavos) - consistente com to_cents()
+2. Removido round_amount_field (não necessário para int)
+3. Adicionados max_length nos campos de texto
+4. Adicionados descriptions em todos os Field()
+5. Melhor documentação sobre centavos
+
+✅ STATUS: CONSISTENTE COM AS ROTAS E BANCO DE DADOS
 ================================================================================
 """
