@@ -5,7 +5,7 @@ Arquivo principal do backend Velorium - Versão Estável sem Workers
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 import atexit
 
@@ -30,13 +30,26 @@ app = FastAPI(
 # ========== INICIALIZA RATE LIMITER ==========
 init_rate_limiter(app)
 
-# ========== CONFIGURAÇÃO DO CORS ==========
-allowed_origins = ["*"]
-logger.info("🔧 CORS configurado para permitir todas as origens (TEMPORÁRIO PARA TESTE)")
+# ========== CONFIGURAÇÃO DO CORS (CORRIGIDA) ==========
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+if ENVIRONMENT == "development":
+    # Apenas para testes locais
+    ALLOWED_ORIGINS = ["*"]
+    logger.warning("🔧 CORS: Desenvolvimento - permitindo todas as origens")
+else:
+    # Produção - lista explícita
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "https://seuapp.expo.app")
+    ALLOWED_ORIGINS = [
+        FRONTEND_URL,
+        "https://expo.dev",
+        "exp://",
+    ]
+    logger.info(f"🔧 CORS: Produção - origens permitidas: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -103,5 +116,5 @@ async def health():
     return {
         "status": "ok",
         "database": db_status,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
