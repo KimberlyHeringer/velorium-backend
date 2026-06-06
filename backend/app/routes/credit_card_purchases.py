@@ -6,7 +6,7 @@ Arquivo: backend/app/routes/credit_card_purchases.py
 🔧 MODIFICADO: Regra 2.8 - Adicionado logs
 🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
 🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
-🔧 CORRIGIDO: Converte ObjectId para string na resposta da rota /faturas
+🔧 CORRIGIDO: Converte todos os ObjectId para string na resposta da rota /faturas
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -162,9 +162,9 @@ async def get_faturas(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Retorna faturas do cartão"""
+    """Retorna faturas do cartão - Versão com conversão de ObjectId"""
     try:
-        logger.info(f"🔍 Buscando faturas - card_id: {card_id}, user: {current_user.id}")
+        logger.info(f"🔍 Buscando faturas - card_id: {card_id}")
         
         validate_object_id(card_id, "card_id")
         
@@ -173,7 +173,6 @@ async def get_faturas(
             "user_id": str(current_user.id)
         })
         if not card:
-            logger.warning(f"Cartão não encontrado: {card_id}")
             return []
 
         query = {
@@ -188,11 +187,9 @@ async def get_faturas(
             else:
                 end_date = datetime(year, month + 1, 1, tzinfo=timezone.utc)
             query["due_date"] = {"$gte": start_date, "$lt": end_date}
-            logger.info(f"🔍 Query com data: {query}")
 
-        installments = await db.credit_card_installments.find(query).to_list(length=1000)
-        logger.info(f"🔍 Encontradas {len(installments)} parcelas")
-
+        installments = await db.credit_card_installments.find(query).to_list(1000)
+        
         if not installments:
             return []
 
@@ -200,7 +197,6 @@ async def get_faturas(
         for inst in installments:
             pid = inst.get("purchase_id")
             if not pid:
-                logger.warning(f"Parcela sem purchase_id, ignorando")
                 continue
                 
             if pid not in purchases_map:
@@ -209,37 +205,46 @@ async def get_faturas(
                     if purchase:
                         if "total_amount" in purchase:
                             purchase["total_amount"] = from_cents(purchase["total_amount"])
-                        purchases_map[pid] = format_mongo_doc(purchase)
-                    else:
-                        logger.warning(f"Compra não encontrada para parcela: {pid}")
+                        # 🔧 CONVERTE ObjectId para string
+                        purchase["_id"] = str(purchase["_id"])
+                        purchases_map[pid] = purchase
                 except Exception as e:
                     logger.error(f"Erro ao buscar compra {pid}: {e}")
                     continue
 
         result = []
         for pid, purchase in purchases_map.items():
-            try:
-                purchase_installments = [i for i in installments if i.get("purchase_id") == pid]
-                total = 0
-                for i in purchase_installments:
-                    total += from_cents(i.get("amount", 0))
-                result.append({
-                    "purchase_id": pid,
-                    "description": purchase.get("description", ""),
-                    "total_amount": purchase.get("total_amount", 0),
-                    "installments_total": purchase.get("installments", 1),
-                    "category": purchase.get("category"),
-                    "installments": purchase_installments,
-                    "total": total
-                })
-            except Exception as e:
-                logger.error(f"Erro ao processar compra {pid}: {e}")
-                continue
-        
-        # 🔧 CORREÇÃO: Converter ObjectIds para string nas parcelas
-        for item in result:
-            if "installments" in item:
-                item["installments"] = format_mongo_docs(item["installments"])
+            purchase_installments = [i for i in installments if i.get("purchase_id") == pid]
+            total = 0
+            for i in purchase_installments:
+                total += from_cents(i.get("amount", 0))
+            
+            # 🔧 CONVERTE ObjectIds das parcelas para string
+            installments_list = []
+            for inst in purchase_installments:
+                inst_copy = {
+                    "_id": str(inst.get("_id")),
+                    "purchase_id": str(inst.get("purchase_id")),
+                    "user_id": str(inst.get("user_id")),
+                    "card_id": str(inst.get("card_id")),
+                    "amount": inst.get("amount"),
+                    "due_date": inst.get("due_date"),
+                    "paid": inst.get("paid"),
+                    "paid_date": inst.get("paid_date"),
+                    "created_at": inst.get("created_at"),
+                    "updated_at": inst.get("updated_at")
+                }
+                installments_list.append(inst_copy)
+            
+            result.append({
+                "purchase_id": pid,
+                "description": purchase.get("description", ""),
+                "total_amount": purchase.get("total_amount", 0),
+                "installments_total": purchase.get("installments", 1),
+                "category": purchase.get("category"),
+                "installments": installments_list,
+                "total": total
+            })
         
         logger.info(f"🔍 Retornando {len(result)} faturas")
         return result
@@ -439,7 +444,6 @@ async def clean_invalid_data(
         return {"message": "Limpeza concluída", "removidas": invalid_count}
     except Exception as e:
         return {"error": str(e)}
-
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
