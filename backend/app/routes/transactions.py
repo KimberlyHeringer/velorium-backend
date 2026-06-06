@@ -4,12 +4,13 @@ Arquivo: backend/app/routes/transactions.py
 
 🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
 🔧 MODIFICADO: Regra 2.12 - Integração com cartão de crédito
-🔧 CORRIGIDO: Despesas com cartão são criadas, mas não aparecem duplicadas
+🔧 CORRIGIDO: Saldo agora é calculado apenas para o MÊS ATUAL
+🔧 CORRIGIDO: Exclui despesas com cartão de crédito do cálculo
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Optional, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 
 from app.database import get_database
@@ -24,6 +25,19 @@ from app.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/transactions", tags=["Transações"])
+
+
+# ========== FUNÇÕES AUXILIARES ==========
+
+def get_month_range() -> tuple:
+    """Retorna o início e fim do mês atual"""
+    now = datetime.now(timezone.utc)
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if now.month == 12:
+        end_of_month = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        end_of_month = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return start_of_month, end_of_month
 
 
 # ========== FUNÇÕES AUXILIARES PARA CARTÃO ==========
@@ -213,18 +227,17 @@ async def get_transactions(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Lista transações do usuário (exclui despesas de cartão da lista normal)"""
+    """Lista transações do usuário (exclui despesas de cartão)"""
     params = PaginationParams(page=page, limit=limit)
     
-    query = {"user_id": str(current_user.id)}
-    
-    # 🔧 FILTRO: Exclui despesas com cartão de crédito da lista normal
-    # (Elas aparecem apenas na tela de faturas do cartão)
-    query["$or"] = [
-        {"type": "income"},
-        {"type": "expense", "payment_method": {"$ne": "Cartão de Crédito"}},
-        {"type": "expense", "payment_method": {"$exists": False}}
-    ]
+    query = {
+        "user_id": str(current_user.id),
+        "$or": [
+            {"type": "income"},
+            {"type": "expense", "payment_method": {"$ne": "Cartão de Crédito"}},
+            {"type": "expense", "payment_method": {"$exists": False}}
+        ]
+    }
     
     if context:
         query["context"] = context
@@ -254,8 +267,69 @@ async def get_balance(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Retorna o saldo (receitas - despesas) do usuário"""
-    match = {"user_id": str(current_user.id)}
+    """
+    Retorna o saldo do MÊS ATUAL (receitas - despesas).
+    Exclui despesas com cartão de crédito.
+    """
+    start_of_month, end_of_month = get_month_range()
+    
+    match = {
+        "user_id": str(current_user.id),
+        "date": {"$gte": start_of_month, "$lt": end_of_month},
+        "$or": [
+            {"type": "income"},
+            {"type": "expense", "payment_method": {"$ne": "Cartão de Crédito"}},
+            {"type": "expense", "payment_method": {"$exists": False}}
+        ]
+    }
+    if context:
+        match["context"] = context
+
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": None,
+            "total_income": {"$sum": {"$cond": [{"$eq": ["$type", "income"]}, "$amount", 0]}},
+            "total_expense": {"$sum": {"$cond": [{"$eq": ["$type", "expense"]}, "$amount", 0]}}
+        }}
+    ]
+
+    result = await db.transactions.aggregate(pipeline).to_list(1)
+    
+    logger.info(f"Saldo calculado para usuário {current_user.id} - Período: {start_of_month} a {end_of_month}")
+    
+    if result:
+        income = from_cents(float(result[0]["total_income"]))
+        expense = from_cents(float(result[0]["total_expense"]))
+        return TransactionBalance(
+            income=income,
+            expense=expense,
+            balance=income - expense,
+            context=context
+        )
+    
+    return TransactionBalance(income=0.0, expense=0.0, balance=0.0, context=context)
+
+
+@router.get("/total-balance", response_model=TransactionBalance)
+async def get_total_balance(
+    context: Optional[str] = Query(None, regex="^(individual|familia|profissional)$"),
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Retorna o saldo TOTAL (soma de TODAS as transações).
+    Exclui despesas com cartão de crédito.
+    Útil para mostrar "saldo acumulado" se desejar.
+    """
+    match = {
+        "user_id": str(current_user.id),
+        "$or": [
+            {"type": "income"},
+            {"type": "expense", "payment_method": {"$ne": "Cartão de Crédito"}},
+            {"type": "expense", "payment_method": {"$exists": False}}
+        ]
+    }
     if context:
         match["context"] = context
 
@@ -378,6 +452,7 @@ async def delete_transaction(
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
     return {"message": "Transação deletada com sucesso", "success": True}
+
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
