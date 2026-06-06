@@ -9,10 +9,14 @@ Arquivo: backend/app/main.py
 
 🔧 MODIFICADO: Regra 3.1 - Score Financeiro
 - Adicionado scheduler APScheduler para worker diário (03:00)
-- Adicionada função start_score_scheduler()
 
 🔧 MODIFICADO: Regra 3.3 - Refatoração de Bills
 - Adicionado router bill_installments
+
+🔧 MODIFICADO: Regra 4.1 - Notificações Proativas
+- Unificado scheduler para todos os workers
+- Adicionado worker de notificações diárias (09:00)
+- Adicionado router notifications
 """
 
 from fastapi import FastAPI
@@ -21,14 +25,16 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 import atexit
 
 from app.database import connect_to_mongo, close_mongo_connection, create_indexes
-from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user, investments
-from app.routes import achievements, bill_installments  # 🔧 NOVO: bill_installments
+from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user, investments, notifications
+from app.routes import achievements, bill_installments
 from app.utils.rate_limiter import init_rate_limiter
 from app.utils.logger import setup_logger
 from app.workers.score_worker import run_score_worker_sync
+from app.workers.daily_notifications import run_daily_notifications_sync
 
 # ========== CONFIGURAÇÃO DE LOG ==========
 logger = setup_logger(__name__)
@@ -62,27 +68,37 @@ app.add_middleware(
 )
 
 
-# ========== FUNÇÃO PARA INICIAR SCHEDULER ==========
-def start_score_scheduler():
+# ========== FUNÇÃO PARA INICIAR SCHEDULER UNIFICADO ==========
+def start_scheduler():
     """
-    Inicia o scheduler para executar worker de score diariamente às 03:00
-    🔧 REGRA 3.1: Score Financeiro - Worker Diário
+    Inicia o scheduler com todos os workers configurados
+    🔧 REGRA 3.1: Score Financeiro - Worker Diário (03:00)
+    🔧 REGRA 4.1: Notificações Proativas - Worker Diário (09:00)
     """
     scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
     
-    # Agenda o job para rodar todos os dias às 03:00
+    # Agenda worker de score (03:00)
     scheduler.add_job(
         func=run_score_worker_sync,
-        trigger="cron",
-        hour=3,
-        minute=0,
+        trigger=CronTrigger(hour=3, minute=0),
         id="score_daily_worker",
         replace_existing=True,
-        misfire_grace_time=3600  # 1 hora de tolerância se o scheduler estava off
+        misfire_grace_time=3600  # 1 hora de tolerância
     )
+    logger.info("⏰ Worker de score agendado para 03:00")
+    
+    # Agenda worker de notificações proativas (09:00)
+    scheduler.add_job(
+        func=run_daily_notifications_sync,
+        trigger=CronTrigger(hour=9, minute=0),
+        id="daily_notifications_worker",
+        replace_existing=True,
+        misfire_grace_time=1800  # 30 minutos de tolerância
+    )
+    logger.info("⏰ Worker de notificações proativas agendado para 09:00")
     
     scheduler.start()
-    logger.info("⏰ Scheduler de score iniciado! Executará diariamente às 03:00")
+    logger.info("✅ Scheduler unificado iniciado com sucesso!")
     
     # Garante que o scheduler será desligado ao final do processo
     atexit.register(lambda: scheduler.shutdown())
@@ -98,8 +114,8 @@ async def startup():
     await connect_to_mongo()
     await create_indexes()
     
-    # 🔧 REGRA 3.1: Iniciar scheduler de score
-    start_score_scheduler()
+    # 🔧 Iniciar scheduler unificado
+    start_scheduler()
     
     logger.info("✅ Velorium API pronta para uso!")
 
@@ -116,7 +132,7 @@ async def shutdown():
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(bills.router, prefix="/api/v1")
-app.include_router(bill_installments.router, prefix="/api/v1")  # 🔧 NOVO: rotas de parcelas
+app.include_router(bill_installments.router, prefix="/api/v1")
 app.include_router(credit_cards.router, prefix="/api/v1")
 app.include_router(credit_card_purchases.router, prefix="/api/v1")
 app.include_router(ia.router, prefix="/api/v1")
@@ -126,6 +142,7 @@ app.include_router(goals.router, prefix="/api/v1")
 app.include_router(user.router, prefix="/api/v1")
 app.include_router(achievements.router, prefix="/api/v1")
 app.include_router(investments.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")  # 🔧 NOVO: rotas de notificações
 
 
 # ========== ENDPOINTS PÚBLICOS ==========
