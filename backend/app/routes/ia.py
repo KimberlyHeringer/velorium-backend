@@ -8,12 +8,15 @@ Arquivo: backend/app/routes/ia.py
 - Adicionada anonimização dos dados
 - Adicionado histórico de conversa (últimas 3 mensagens)
 - Respostas mais diretas e focadas em finanças
+🔧 MODIFICADO: Regra 3.5 - Leitura de Notificações
+- Adicionada rota /extract-from-text para extrair dados de notificações
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone, timedelta
 import os
+import json
 
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
@@ -42,6 +45,21 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     resposta: str
+
+
+# ========== SCHEMAS PARA EXTRAÇÃO DE TEXTO ==========
+
+class ExtractTextRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000, description="Texto da notificação")
+    source: str = Field("notification", description="Fonte do texto (notification, screenshot, etc)")
+
+
+class ExtractTextResponse(BaseModel):
+    amount: Optional[float] = None
+    merchant: Optional[str] = None
+    suggested_category: Optional[str] = None
+    confidence: float = 0.0
+    raw_text: str
 
 
 # ========== FUNÇÕES AUXILIARES ==========
@@ -220,6 +238,86 @@ async def chat(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Não foi possível processar sua solicitação. Tente novamente mais tarde."
+        )
+
+
+# ========== ENDPOINT PARA EXTRAIR DADOS DE TEXTO (NOTIFICAÇÕES) ==========
+
+@router.post("/extract-from-text", response_model=ExtractTextResponse)
+@limiter.limit("20/minute")
+async def extract_from_text(
+    request: Request,
+    extract_request: ExtractTextRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """
+    Extrai dados financeiros de um texto (notificação, screenshot, etc.)
+    Usa IA para identificar valor, estabelecimento, categoria.
+    🔧 REGRA 3.5: Leitura de Notificações
+    """
+    try:
+        logger.info(f"Extraindo dados de texto para usuário {current_user.id} - Fonte: {extract_request.source}")
+        
+        # Monta prompt para extração
+        system_prompt = """
+Você é um assistente especializado em extrair informações financeiras de textos.
+
+Dado um texto (geralmente de notificação de banco ou app de compras), extraia:
+1. amount: valor da transação (número, sem R$)
+2. merchant: nome do estabelecimento (se disponível)
+3. suggested_category: categoria sugerida (Alimentação, Transporte, Moradia, Lazer, Saúde, Educação, Investimentos, Outros)
+
+Regras:
+- Se não encontrar valor, retorne amount = null
+- Se não encontrar estabelecimento, retorne merchant = null
+- Use apenas as categorias listadas acima
+- Retorne confidence (0-1) baseado na sua certeza
+
+Responda APENAS com JSON no formato:
+{"amount": 123.45, "merchant": "Nome do local", "suggested_category": "Alimentação", "confidence": 0.95}
+"""
+        
+        user_message = f"Texto: {extract_request.text}\n\nExtraia as informações financeiras."
+        
+        resposta = await obter_resposta_ia_async(system_prompt, user_message)
+        
+        # Tenta parsear o JSON da resposta
+        try:
+            # Limpa a resposta (pode ter markdown)
+            clean_response = resposta.strip()
+            if clean_response.startswith('```json'):
+                clean_response = clean_response[7:]
+            if clean_response.startswith('```'):
+                clean_response = clean_response[3:]
+            if clean_response.endswith('```'):
+                clean_response = clean_response[:-3]
+            
+            data = json.loads(clean_response.strip())
+            
+            logger.info(f"Extração concluída: amount={data.get('amount')}, merchant={data.get('merchant')}, confidence={data.get('confidence')}")
+            
+            return ExtractTextResponse(
+                amount=data.get('amount'),
+                merchant=data.get('merchant'),
+                suggested_category=data.get('suggested_category'),
+                confidence=data.get('confidence', 0.5),
+                raw_text=extract_request.text
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"Erro ao parsear resposta da IA: {resposta} - Erro: {e}")
+            return ExtractTextResponse(
+                confidence=0.0,
+                raw_text=extract_request.text
+            )
+        
+    except Exception as e:
+        logger.error(f"Erro ao extrair dados do texto: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        return ExtractTextResponse(
+            confidence=0.0,
+            raw_text=extract_request.text
         )
 
 
