@@ -1,25 +1,5 @@
 """
-Arquivo principal do backend Velorium
-Ponto de entrada da API FastAPI
-Arquivo: backend/app/main.py
-
-🔧 MODIFICADO: Regra 2.8 - Logs
-- Substituído print por logger.info/error
-- Adicionado logger configurado
-
-🔧 MODIFICADO: Regra 3.1 - Score Financeiro
-- Adicionado scheduler APScheduler para worker diário (03:00)
-
-🔧 MODIFICADO: Regra 3.3 - Refatoração de Bills
-- Adicionado router bill_installments
-
-🔧 MODIFICADO: Regra 4.1 - Notificações Proativas
-- Unificado scheduler para todos os workers
-- Adicionado worker de notificações diárias (09:00)
-- Adicionado router notifications
-
-🔧 DESABILITADO: Worker de score (corrompido no Render)
-- Temporariamente removido para permitir deploy
+Arquivo principal do backend Velorium - Versão Estável sem Workers
 """
 
 from fastapi import FastAPI
@@ -27,8 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from datetime import datetime
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 import atexit
 
 from app.database import connect_to_mongo, close_mongo_connection, create_indexes
@@ -36,8 +14,6 @@ from app.routes import auth, transactions, bills, credit_cards, credit_card_purc
 from app.routes import achievements, bill_installments
 from app.utils.rate_limiter import init_rate_limiter
 from app.utils.logger import setup_logger
-# from app.workers.score_worker import run_score_worker_sync  # DESABILITADO
-from app.workers.daily_notifications import run_daily_notifications_sync
 
 logger = setup_logger(__name__)
 
@@ -55,10 +31,7 @@ app = FastAPI(
 init_rate_limiter(app)
 
 # ========== CONFIGURAÇÃO DO CORS ==========
-# 🔧 TEMPORARIAMENTE: permite todas as origens para resolver o problema de conexão
-# ⚠️ DEPOIS DOS TESTES, REVERTA PARA A CONFIGURAÇÃO ORIGINAL
 allowed_origins = ["*"]
-
 logger.info("🔧 CORS configurado para permitir todas as origens (TEMPORÁRIO PARA TESTE)")
 
 app.add_middleware(
@@ -70,42 +43,11 @@ app.add_middleware(
 )
 
 
-# ========== FUNÇÃO PARA INICIAR SCHEDULER UNIFICADO ==========
+# ========== FUNÇÃO PARA INICIAR SCHEDULER (DESABILITADA) ==========
 def start_scheduler():
-    """
-    Inicia o scheduler com todos os workers configurados
-    🔧 REGRA 3.1: Score Financeiro - DESABILITADO TEMPORARIAMENTE
-    🔧 REGRA 4.1: Notificações Proativas - Worker Diário (09:00)
-    """
-    scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
-    
-    # Agenda worker de score (03:00) - DESABILITADO
-    # scheduler.add_job(
-    #     func=run_score_worker_sync,
-    #     trigger=CronTrigger(hour=3, minute=0),
-    #     id="score_daily_worker",
-    #     replace_existing=True,
-    #     misfire_grace_time=3600
-    # )
-    # logger.info("⏰ Worker de score agendado para 03:00")
-    
-    # Agenda worker de notificações proativas (09:00)
-    scheduler.add_job(
-        func=run_daily_notifications_sync,
-        trigger=CronTrigger(hour=9, minute=0),
-        id="daily_notifications_worker",
-        replace_existing=True,
-        misfire_grace_time=1800
-    )
-    logger.info("⏰ Worker de notificações proativas agendado para 09:00")
-    
-    scheduler.start()
-    logger.info("✅ Scheduler unificado iniciado com sucesso!")
-    
-    # Garante que o scheduler será desligado ao final do processo
-    atexit.register(lambda: scheduler.shutdown())
-    
-    return scheduler
+    """Scheduler desabilitado temporariamente para troubleshooting"""
+    logger.info("⏰ Scheduler desabilitado (workers em manutenção)")
+    return None
 
 
 # ========== EVENTOS DE INICIALIZAÇÃO E DESLIGAMENTO ==========
@@ -115,10 +57,7 @@ async def startup():
     logger.info("🚀 Iniciando Velorium API...")
     await connect_to_mongo()
     await create_indexes()
-    
-    # 🔧 Iniciar scheduler unificado
     start_scheduler()
-    
     logger.info("✅ Velorium API pronta para uso!")
 
 
@@ -150,7 +89,6 @@ app.include_router(notifications.router, prefix="/api/v1")
 # ========== ENDPOINTS PÚBLICOS ==========
 @app.get("/")
 async def root():
-    """Endpoint raiz para verificar se a API está no ar"""
     return {
         "message": "Velorium API - Online",
         "version": "1.0.0",
@@ -160,7 +98,6 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Endpoint de saúde para monitoramento (ex: Render.com)"""
     from app.database import health_check
     db_status = await health_check()
     return {
