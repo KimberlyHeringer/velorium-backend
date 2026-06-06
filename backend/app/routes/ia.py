@@ -10,6 +10,7 @@ Arquivo: backend/app/routes/ia.py
 - Respostas mais diretas e focadas em finanças
 🔧 MODIFICADO: Regra 3.5 - Leitura de Notificações
 - Adicionada rota /extract-from-text para extrair dados de notificações
+🔧 CORRIGIDO: Importação de Optional adicionada
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timezone, timedelta
 import os
 import json
+from typing import Optional
 
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
