@@ -13,7 +13,7 @@ from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 from app.database import get_database
 from app.utils.logger import setup_logger
-from workers.daily_notifications import send_daily_notification
+from app.workers.daily_notifications import send_daily_notification  # 🔧 CORRIGIDO
 
 logger = setup_logger(__name__)
 
@@ -63,5 +63,5 @@ async def get_notification_status(
     return {
         "push_enabled": has_token,
         "has_token": has_token,
-        "platform": "android"  # ou detectar
+        "platform": "android"
     }
