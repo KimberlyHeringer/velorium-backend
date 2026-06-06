@@ -17,6 +17,9 @@ Arquivo: backend/app/main.py
 - Unificado scheduler para todos os workers
 - Adicionado worker de notificações diárias (09:00)
 - Adicionado router notifications
+
+🔧 DESABILITADO: Worker de score (corrompido no Render)
+- Temporariamente removido para permitir deploy
 """
 
 from fastapi import FastAPI
@@ -33,10 +36,9 @@ from app.routes import auth, transactions, bills, credit_cards, credit_card_purc
 from app.routes import achievements, bill_installments
 from app.utils.rate_limiter import init_rate_limiter
 from app.utils.logger import setup_logger
-from app.workers.score_worker import run_score_worker_sync
+# from app.workers.score_worker import run_score_worker_sync  # DESABILITADO
 from app.workers.daily_notifications import run_daily_notifications_sync
 
-# ========== CONFIGURAÇÃO DE LOG ==========
 logger = setup_logger(__name__)
 
 # Carrega variáveis de ambiente
@@ -61,7 +63,7 @@ logger.info("🔧 CORS configurado para permitir todas as origens (TEMPORÁRIO P
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite todas as origens
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -72,20 +74,20 @@ app.add_middleware(
 def start_scheduler():
     """
     Inicia o scheduler com todos os workers configurados
-    🔧 REGRA 3.1: Score Financeiro - Worker Diário (03:00)
+    🔧 REGRA 3.1: Score Financeiro - DESABILITADO TEMPORARIAMENTE
     🔧 REGRA 4.1: Notificações Proativas - Worker Diário (09:00)
     """
     scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
     
-    # Agenda worker de score (03:00)
-    scheduler.add_job(
-        func=run_score_worker_sync,
-        trigger=CronTrigger(hour=3, minute=0),
-        id="score_daily_worker",
-        replace_existing=True,
-        misfire_grace_time=3600  # 1 hora de tolerância
-    )
-    logger.info("⏰ Worker de score agendado para 03:00")
+    # Agenda worker de score (03:00) - DESABILITADO
+    # scheduler.add_job(
+    #     func=run_score_worker_sync,
+    #     trigger=CronTrigger(hour=3, minute=0),
+    #     id="score_daily_worker",
+    #     replace_existing=True,
+    #     misfire_grace_time=3600
+    # )
+    # logger.info("⏰ Worker de score agendado para 03:00")
     
     # Agenda worker de notificações proativas (09:00)
     scheduler.add_job(
@@ -93,7 +95,7 @@ def start_scheduler():
         trigger=CronTrigger(hour=9, minute=0),
         id="daily_notifications_worker",
         replace_existing=True,
-        misfire_grace_time=1800  # 30 minutos de tolerância
+        misfire_grace_time=1800
     )
     logger.info("⏰ Worker de notificações proativas agendado para 09:00")
     
@@ -142,7 +144,7 @@ app.include_router(goals.router, prefix="/api/v1")
 app.include_router(user.router, prefix="/api/v1")
 app.include_router(achievements.router, prefix="/api/v1")
 app.include_router(investments.router, prefix="/api/v1")
-app.include_router(notifications.router, prefix="/api/v1")  # 🔧 NOVO: rotas de notificações
+app.include_router(notifications.router, prefix="/api/v1")
 
 
 # ========== ENDPOINTS PÚBLICOS ==========
