@@ -2,8 +2,11 @@
 Modelo de Transações (Receitas e Despesas)
 Arquivo: backend/app/models/transaction.py
 
-🔧 MODIFICADO: Regra 2.12 - Integração com cartão de crédito
-- Adicionados campos card_id, installments, first_due_date para despesas com cartão
+🔧 CORRIGIDO:
+- amount agora é int (centavos)
+- payment_method agora é Literal com valores padronizados
+- TransactionBalance com int (centavos)
+- Removido round_amount (não necessário)
 """
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
@@ -11,13 +14,16 @@ from typing import Optional, Literal
 from datetime import datetime, timezone
 from bson import ObjectId
 
-from app.utils.validators import round_amount, validate_date_not_future
+from app.utils.validators import validate_date_not_future
 
 
 class Transaction(BaseModel):
     """
     Modelo principal de Transação.
     Suporta receitas (income) e despesas (expense).
+    
+    🔧 IMPORTANTE: amount está em CENTAVOS (int)
+    - Exemplo: R$ 150,50 → 15050
     """
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -27,21 +33,36 @@ class Transaction(BaseModel):
     )
 
     id: Optional[str] = Field(None, alias="_id")
-    user_id: str
-    type: Literal["income", "expense"]
-    amount: float = Field(..., gt=0)
-    category: str
-    description: Optional[str] = None
-    date: datetime
-    payment_method: Optional[str] = None
-    context: Literal["individual", "familia", "profissional"] = "individual"
-    family_id: Optional[str] = None
-    # 🔧 NOVOS CAMPOS PARA CARTÃO DE CRÉDITO (Regra 2.12)
-    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method = Cartão de Crédito)")
-    installments: int = Field(1, ge=1, description="Número de parcelas (padrão 1)")
+    user_id: str = Field(..., description="ID do usuário (injetado pelo backend)")
+    type: Literal["income", "expense"] = Field(..., description="Tipo: receita ou despesa")
+    
+    # 🔧 CORRIGIDO: float → int (centavos)
+    amount: int = Field(..., gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
+    
+    category: str = Field(..., max_length=50, description="Categoria da transação")
+    description: Optional[str] = Field(None, max_length=200, description="Descrição opcional")
+    date: datetime = Field(..., description="Data da transação")
+    
+    # 🔧 CORRIGIDO: Literal com valores padronizados
+    payment_method: Optional[Literal["dinheiro", "cartao_credito", "cartao_debito", "pix", "transferencia", "boleto", "outros"]] = Field(
+        None, description="Método de pagamento"
+    )
+    
+    context: Literal["individual", "familia", "profissional"] = Field(
+        default="individual", description="Contexto da transação"
+    )
+    family_id: Optional[str] = Field(None, description="ID da família (obrigatório se context='familia')")
+    
+    # ========== CAMPOS PARA CARTÃO DE CRÉDITO ==========
+    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method='cartao_credito')")
+    installments: int = Field(default=1, ge=1, description="Número de parcelas (padrão 1)")
     first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
+    
+    # ========== METADADOS ==========
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # ========== VALIDADORES ==========
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -52,45 +73,37 @@ class Transaction(BaseModel):
 
     @model_validator(mode='after')
     def validate_date(self):
-        """Valida que a data não está no futuro (opcional para MVP)"""
+        """Valida que a data não está no futuro"""
         if self.date:
             validate_date_not_future(self.date, "date")
         return self
 
     @model_validator(mode='after')
     def validate_credit_card_fields(self):
-        """Valida campos de cartão de crédito quando payment_method é cartão"""
-        if self.payment_method == "Cartão de Crédito" and self.type == "expense":
+        """Valida campos de cartão de crédito quando payment_method é cartao_credito"""
+        if self.payment_method == "cartao_credito" and self.type == "expense":
             if not self.card_id:
-                raise ValueError("card_id é obrigatório quando payment_method é Cartão de Crédito")
+                raise ValueError("card_id é obrigatório quando payment_method é cartao_credito")
             if self.installments < 1:
                 raise ValueError("installments deve ser maior que 0")
             if self.installments > 1 and not self.first_due_date:
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
-    @model_validator(mode='after')
-    def round_amount_field(self):
-        """Arredonda amount usando função centralizada"""
-        if self.amount is not None:
-            self.amount = round_amount(self.amount)
-        return self
-
 
 class TransactionCreate(BaseModel):
     """Schema usado para CRIAR uma nova transação"""
     type: Literal["income", "expense"]
-    amount: float = Field(..., gt=0)
-    category: str
-    description: Optional[str] = None
+    amount: int = Field(..., gt=0, description="Valor em CENTAVOS")
+    category: str = Field(..., max_length=50)
+    description: Optional[str] = Field(None, max_length=200)
     date: Optional[datetime] = None
-    payment_method: Optional[str] = None
+    payment_method: Optional[Literal["dinheiro", "cartao_credito", "cartao_debito", "pix", "transferencia", "boleto", "outros"]] = None
     context: Literal["individual", "familia", "profissional"] = "individual"
     family_id: Optional[str] = None
-    # 🔧 NOVOS CAMPOS PARA CARTÃO DE CRÉDITO (Regra 2.12)
-    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method = Cartão de Crédito)")
-    installments: int = Field(1, ge=1, description="Número de parcelas (padrão 1)")
-    first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
+    card_id: Optional[str] = None
+    installments: int = Field(default=1, ge=1)
+    first_due_date: Optional[datetime] = None
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -106,37 +119,29 @@ class TransactionCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_credit_card_fields(self):
-        """Valida campos de cartão de crédito quando payment_method é cartão"""
-        if self.payment_method == "Cartão de Crédito" and self.type == "expense":
+        if self.payment_method == "cartao_credito" and self.type == "expense":
             if not self.card_id:
-                raise ValueError("card_id é obrigatório quando payment_method é Cartão de Crédito")
+                raise ValueError("card_id é obrigatório quando payment_method é cartao_credito")
             if self.installments < 1:
                 raise ValueError("installments deve ser maior que 0")
             if self.installments > 1 and not self.first_due_date:
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
-    @model_validator(mode='after')
-    def round_amount_field(self):
-        if self.amount is not None:
-            self.amount = round_amount(self.amount)
-        return self
-
 
 class TransactionUpdate(BaseModel):
     """Schema usado para ATUALIZAR uma transação existente"""
     type: Optional[Literal["income", "expense"]] = None
-    amount: Optional[float] = Field(None, gt=0)
-    category: Optional[str] = None
-    description: Optional[str] = None
+    amount: Optional[int] = Field(None, gt=0)
+    category: Optional[str] = Field(None, max_length=50)
+    description: Optional[str] = Field(None, max_length=200)
     date: Optional[datetime] = None
-    payment_method: Optional[str] = None
+    payment_method: Optional[Literal["dinheiro", "cartao_credito", "cartao_debito", "pix", "transferencia", "boleto", "outros"]] = None
     context: Optional[Literal["individual", "familia", "profissional"]] = None
     family_id: Optional[str] = None
-    # 🔧 NOVOS CAMPOS PARA CARTÃO DE CRÉDITO (Regra 2.12)
-    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method = Cartão de Crédito)")
-    installments: Optional[int] = Field(None, ge=1, description="Número de parcelas")
-    first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
+    card_id: Optional[str] = None
+    installments: Optional[int] = Field(None, ge=1)
+    first_due_date: Optional[datetime] = None
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -152,20 +157,13 @@ class TransactionUpdate(BaseModel):
 
     @model_validator(mode='after')
     def validate_credit_card_fields(self):
-        """Valida campos de cartão de crédito quando payment_method é cartão"""
-        if self.payment_method == "Cartão de Crédito" and self.type == "expense":
+        if self.payment_method == "cartao_credito" and self.type == "expense":
             if not self.card_id:
-                raise ValueError("card_id é obrigatório quando payment_method é Cartão de Crédito")
+                raise ValueError("card_id é obrigatório quando payment_method é cartao_credito")
             if self.installments is not None and self.installments < 1:
                 raise ValueError("installments deve ser maior que 0")
             if self.installments is not None and self.installments > 1 and not self.first_due_date:
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
-        return self
-
-    @model_validator(mode='after')
-    def round_amount_field(self):
-        if self.amount is not None:
-            self.amount = round_amount(self.amount)
         return self
 
 
@@ -181,7 +179,7 @@ class TransactionResponse(BaseModel):
     id: str = Field(..., alias="_id")
     user_id: str
     type: str
-    amount: float
+    amount: int  # 🔧 CORRIGIDO: int (centavos)
     category: str
     description: Optional[str]
     date: datetime
@@ -197,17 +195,36 @@ class TransactionResponse(BaseModel):
 
 class TransactionBalance(BaseModel):
     """Schema para retorno de saldo"""
-    income: float
-    expense: float
-    balance: float
+    # 🔧 CORRIGIDO: float → int (centavos)
+    income: int = Field(..., description="Receitas em CENTAVOS")
+    expense: int = Field(..., description="Despesas em CENTAVOS")
+    balance: int = Field(..., description="Saldo em CENTAVOS")
     context: Optional[str] = None
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Mantivemos float (não Decimal) por compatibilidade com MongoDB
-# ✅ Adicionamos round(amount, 2) para evitar problemas de precisão
-# ✅ Adicionamos validação context/family_id (obrigatório quando context="familia")
-# ✅ Separação clara entre Create, Update, Response e Balance
-#
-# ⏳ Validação de data futura (date >= hoje): postergado (opcional para MVP)
-# ⏳ updated_at automático: postergado (mantém atualização manual nas rotas)
+
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. amount: float → int (centavos)
+2. payment_method: agora Literal com valores padronizados (dinheiro, cartao_credito, etc.)
+3. TransactionBalance: income/expense/balance agora int (centavos)
+4. Removido round_amount (não necessário para int)
+5. Adicionados max_length em category e description
+6. Adicionados descriptions em todos os Field()
+
+⚠️ ATENÇÃO PARA O FRONTEND:
+================================================================================
+O frontend precisa enviar payment_method com os valores padronizados:
+- "dinheiro" (antes "Dinheiro")
+- "cartao_credito" (antes "Cartão de Crédito")
+- "cartao_debito" (antes "Cartão de Débito")
+- "pix" (antes "Pix")
+- "transferencia" (antes "Transferência")
+- "boleto" (antes "Boleto")
+- "outros" (antes "Outros")
+
+================================================================================
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+================================================================================
+"""
