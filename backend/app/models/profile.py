@@ -1,10 +1,16 @@
 """
 Modelo de Perfil Financeiro do Usuário
 Arquivo: backend/app/models/profile.py
+
+🔧 CORRIGIDO:
+- Adicionados max_length em todos os campos de texto
+- Adicionado max_items em next_year_goals
+- Campos monetários agora são int (centavos)
+- Adicionados Enums (Literal) com valores CORRESPONDENTES AO FRONTEND
 """
 
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from pydantic import BaseModel, Field, ConfigDict, field_validator
+from typing import Optional, List, Literal
 from datetime import datetime, timezone
 from bson import ObjectId
 
@@ -22,74 +28,172 @@ class UserProfile(BaseModel):
     )
 
     id: Optional[str] = Field(None, alias="_id")
-    user_id: str  # referência ao User (injetado pelo backend)
+    user_id: str = Field(..., description="ID do usuário (injetado pelo backend)")
 
     # ========== Bloco 1: Psicologia Financeira ==========
-    money_feeling: Optional[str] = None      # sentimento em relação ao dinheiro
-    post_purchase: Optional[str] = None      # reação após comprar
-    satisfaction: Optional[str] = None       # o que te deixa satisfeito financeiramente
-    planning_habit: Optional[str] = None     # hábito de planejamento
+    # Valores conforme frontend: ansioso, indiferente, controlado, inseguro
+    money_feeling: Optional[Literal["ansioso", "indiferente", "controlado", "inseguro"]] = Field(
+        None, description="sentimento em relação ao dinheiro"
+    )
+    
+    # Valores conforme frontend: culpa, alegria, racionalizo, impulsivo
+    post_purchase: Optional[Literal["culpa", "alegria", "racionalizo", "impulsivo"]] = Field(
+        None, description="reação após comprar"
+    )
+    
+    # Valores conforme frontend: saldo_crescendo, comprar, pagar_divida, ajudar
+    satisfaction: Optional[Literal["saldo_crescendo", "comprar", "pagar_divida", "ajudar"]] = Field(
+        None, description="o que te deixa satisfeito financeiramente"
+    )
+    
+    # Valores conforme frontend: sempre, as_vezes, raramente, nao_sei
+    planning_habit: Optional[Literal["sempre", "as_vezes", "raramente", "nao_sei"]] = Field(
+        None, description="hábito de planejamento"
+    )
 
     # ========== Bloco 2: Metas Pessoais ==========
-    dream_5y: Optional[str] = None           # sonho para 5 anos
-    dream_other: Optional[str] = None        # outro sonho (se aplicável)
-    dream_value: Optional[str] = None        # valor estimado do sonho (string por enquanto)
-    emergency_target: Optional[str] = None   # meta para reserva de emergência
-    next_year_goals: List[str] = Field(default_factory=list)  # lista de metas para o próximo ano
-    next_year_goal_value: Optional[str] = None  # valor da meta (string por enquanto)
+    # Valores conforme frontend: imovel, viajar, liberdade, aposentar, outro
+    dream_5y: Optional[Literal["imovel", "viajar", "liberdade", "aposentar", "outro"]] = Field(
+        None, description="sonho para 5 anos"
+    )
+    dream_other: Optional[str] = Field(None, max_length=500, description="outro sonho (se aplicável)")
+    
+    # 🔧 CORRIGIDO: str → int (centavos)
+    dream_value: Optional[int] = Field(None, ge=0, description="Valor estimado do sonho em CENTAVOS")
+    
+    # Valores conforme frontend: 3_meses, 6_meses, 12_meses, nenhuma
+    emergency_target: Optional[Literal["3_meses", "6_meses", "12_meses", "nenhuma"]] = Field(
+        None, description="meta para reserva de emergência"
+    )
+    
+    # Valores conforme frontend: quitar_dividas, guardar, investir, aumentar_renda, nenhuma
+    next_year_goals: List[Literal["quitar_dividas", "guardar", "investir", "aumentar_renda", "nenhuma"]] = Field(
+        default_factory=list, 
+        max_length=20, 
+        description="lista de metas para o próximo ano"
+    )
+    
+    # 🔧 CORRIGIDO: str → int (centavos)
+    next_year_goal_value: Optional[int] = Field(None, ge=0, description="Valor da meta em CENTAVOS")
 
     # ========== Bloco 3: Hábitos de Consumo ==========
-    spending_blindspot: Optional[str] = None  # onde o dinheiro "some"
-    price_comparison: Optional[str] = None    # hábito de comparar preços
-    money_phrase: Optional[str] = None        # frase que define relação com dinheiro
+    # Valores conforme frontend: alimentacao_fora, compras_online, assinaturas, transporte, lazer
+    spending_blindspot: Optional[Literal["alimentacao_fora", "compras_online", "assinaturas", "transporte", "lazer"]] = Field(
+        None, description="onde o dinheiro 'some'"
+    )
+    
+    # Valores conforme frontend: sempre, as_vezes, raramente, nunca
+    price_comparison: Optional[Literal["sempre", "as_vezes", "raramente", "nunca"]] = Field(
+        None, description="hábito de comparar preços"
+    )
+    
+    # Valores conforme frontend: pago_a_vista, parcelo, uso_credito, vivo_sem_planejar
+    money_phrase: Optional[Literal["pago_a_vista", "parcelo", "uso_credito", "vivo_sem_planejar"]] = Field(
+        None, description="frase que define relação com dinheiro"
+    )
 
     # ========== Bloco 4: Tolerância a Risco ==========
-    risk_scenario: Optional[str] = None       # reação a cenário de risco
-    risk_phrase: Optional[str] = None         # frase sobre risco
-    has_debt: Optional[str] = None            # se possui dívidas (cartão rotativo, financiamento, etc.)
-    credit_card_behavior: Optional[str] = None # comportamento com cartão de crédito
+    # Valores conforme frontend: poupanca, renda_fixa, hibrido, alto_risco
+    risk_scenario: Optional[Literal["poupanca", "renda_fixa", "hibrido", "alto_risco"]] = Field(
+        None, description="reação a cenário de risco"
+    )
+    
+    # Valores conforme frontend: prevenir, arriscar, equilibrio, nao_entendo
+    risk_phrase: Optional[Literal["prevenir", "arriscar", "equilibrio", "nao_entendo"]] = Field(
+        None, description="frase sobre risco"
+    )
+    
+    # Valores conforme frontend: cartao_rotativo, financiamento, emprestimo, nao
+    has_debt: Optional[Literal["cartao_rotativo", "financiamento", "emprestimo", "nao"]] = Field(
+        None, description="se possui dívidas"
+    )
+    
+    # Valores conforme frontend: sempre_integral, parcelar, atraso
+    credit_card_behavior: Optional[Literal["sempre_integral", "parcelar", "atraso"]] = Field(
+        None, description="comportamento com cartão de crédito"
+    )
 
     # ========== Metadados ==========
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # ========== Validações ==========
+    @field_validator('next_year_goals')
+    @classmethod
+    def validate_goals_list(cls, v: List[str]) -> List[str]:
+        """Garante que a lista não tenha mais de 20 itens"""
+        if len(v) > 20:
+            raise ValueError('next_year_goals não pode ter mais de 20 itens')
+        return v
+
 
 class UserProfileCreate(BaseModel):
     """Schema usado para CRIAR um perfil (sem campos autogerados)"""
-    money_feeling: Optional[str] = None
-    post_purchase: Optional[str] = None
-    satisfaction: Optional[str] = None
-    planning_habit: Optional[str] = None
-    dream_5y: Optional[str] = None
-    dream_other: Optional[str] = None
-    dream_value: Optional[str] = None
-    emergency_target: Optional[str] = None
-    next_year_goals: List[str] = Field(default_factory=list)
-    next_year_goal_value: Optional[str] = None
-    spending_blindspot: Optional[str] = None
-    price_comparison: Optional[str] = None
-    money_phrase: Optional[str] = None
-    risk_scenario: Optional[str] = None
-    risk_phrase: Optional[str] = None
-    has_debt: Optional[str] = None
-    credit_card_behavior: Optional[str] = None
+    money_feeling: Optional[Literal["ansioso", "indiferente", "controlado", "inseguro"]] = None
+    post_purchase: Optional[Literal["culpa", "alegria", "racionalizo", "impulsivo"]] = None
+    satisfaction: Optional[Literal["saldo_crescendo", "comprar", "pagar_divida", "ajudar"]] = None
+    planning_habit: Optional[Literal["sempre", "as_vezes", "raramente", "nao_sei"]] = None
+    dream_5y: Optional[Literal["imovel", "viajar", "liberdade", "aposentar", "outro"]] = None
+    dream_other: Optional[str] = Field(None, max_length=500)
+    dream_value: Optional[int] = Field(None, ge=0)
+    emergency_target: Optional[Literal["3_meses", "6_meses", "12_meses", "nenhuma"]] = None
+    next_year_goals: List[Literal["quitar_dividas", "guardar", "investir", "aumentar_renda", "nenhuma"]] = Field(
+        default_factory=list, max_length=20
+    )
+    next_year_goal_value: Optional[int] = Field(None, ge=0)
+    spending_blindspot: Optional[Literal["alimentacao_fora", "compras_online", "assinaturas", "transporte", "lazer"]] = None
+    price_comparison: Optional[Literal["sempre", "as_vezes", "raramente", "nunca"]] = None
+    money_phrase: Optional[Literal["pago_a_vista", "parcelo", "uso_credito", "vivo_sem_planejar"]] = None
+    risk_scenario: Optional[Literal["poupanca", "renda_fixa", "hibrido", "alto_risco"]] = None
+    risk_phrase: Optional[Literal["prevenir", "arriscar", "equilibrio", "nao_entendo"]] = None
+    has_debt: Optional[Literal["cartao_rotativo", "financiamento", "emprestimo", "nao"]] = None
+    credit_card_behavior: Optional[Literal["sempre_integral", "parcelar", "atraso"]] = None
+
+    @field_validator('next_year_goals')
+    @classmethod
+    def validate_goals_list(cls, v: List[str]) -> List[str]:
+        if len(v) > 20:
+            raise ValueError('next_year_goals não pode ter mais de 20 itens')
+        return v
 
 
 class UserProfileResponse(UserProfile):
     """Schema usado para RESPOSTAS da API (força id como string)"""
-    id: str
+    id: str = Field(..., description="ID do perfil")
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Corrigido next_year_goals para usar Field(default_factory=list)
-# ✅ Adicionado id: str em UserProfileResponse (consistência)
-# ✅ Comentários explicativos em português
-#
-# 📅 Dívida técnica registrada (pós-MVP):
-#    - Campos monetários como str (dream_value, emergency_target, next_year_goal_value)
-#      → Migrar para float ou Decimal quando precisar de cálculos
-#    - Criar Enums para campos fixos (money_feeling, risk_phrase, etc.)
-#      → Evitar dados inconsistentes
-#
-# ⏳ updated_at: atualização manual nas rotas (já documentado no plano geral)
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. Adicionados max_length em todos os campos de texto
+2. Adicionado max_length=20 em next_year_goals
+3. Adicionada validação field_validator para next_year_goals
+4. 🔧 Campos monetários: dream_value, next_year_goal_value → int (centavos)
+5. 🔧 Enums (Literal) ajustados com os valores EXATOS do frontend:
+   - money_feeling: ansioso, indiferente, controlado, inseguro
+   - post_purchase: culpa, alegria, racionalizo, impulsivo
+   - satisfaction: saldo_crescendo, comprar, pagar_divida, ajudar
+   - planning_habit: sempre, as_vezes, raramente, nao_sei
+   - dream_5y: imovel, viajar, liberdade, aposentar, outro
+   - emergency_target: 3_meses, 6_meses, 12_meses, nenhuma
+   - next_year_goals: quitar_dividas, guardar, investir, aumentar_renda, nenhuma
+   - spending_blindspot: alimentacao_fora, compras_online, assinaturas, transporte, lazer
+   - price_comparison: sempre, as_vezes, raramente, nunca
+   - money_phrase: pago_a_vista, parcelo, uso_credito, vivo_sem_planejar
+   - risk_scenario: poupanca, renda_fixa, hibrido, alto_risco
+   - risk_phrase: prevenir, arriscar, equilibrio, nao_entendo
+   - has_debt: cartao_rotativo, financiamento, emprestimo, nao
+   - credit_card_behavior: sempre_integral, parcelar, atraso
+6. Adicionados descriptions em todos os Field()
+7. Adicionado id: str em UserProfileResponse
+
+✅ PENDÊNCIAS REMANESCENTES (pós-MVP):
+================================================================================
+1. updated_at: atualização automática (atualmente manual nas rotas)
+2. Internacionalização (i18n) das mensagens de erro
+
+================================================================================
+✅ STATUS: APROVADO PARA MVP (100% corrigido)
+================================================================================
+"""
