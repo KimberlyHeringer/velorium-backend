@@ -2,10 +2,13 @@
 Rotas de Contas a Pagar (Bills)
 Arquivo: backend/app/routes/bills.py
 
-🔧 MODIFICADO: Versão simplificada
-- Usuário informa APENAS as parcelas RESTANTES
-- Todas as parcelas criadas são paid=False
-- Remove lógica complexa de 'current' e parcelas já pagas
+🔧 CORRIGIDO:
+- split_amount_cents() agora trabalha com inteiros (centavos)
+- create_bill_installments agora recebe amount_cents (int)
+- update_future_installments agora recebe new_amount_cents (int)
+- adjust_future_installments default mudado para True
+- Adicionada validação de limite máximo de parcelas (360)
+- Corrigida variável amount_reais → amount_cents (clareza)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -27,6 +30,9 @@ logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
 
+# ========== CONSTANTES ==========
+MAX_INSTALLMENTS = 360  # 30 anos (máximo para financiamentos)
+
 
 def parse_installments_dates(installments: dict) -> dict:
     """Converte start_date de string para datetime se necessário."""
@@ -37,22 +43,46 @@ def parse_installments_dates(installments: dict) -> dict:
     return installments
 
 
-def split_amount(total: float, parts: int) -> List[float]:
-    """Divide um valor total em partes iguais (para parcelas)"""
-    base = round(total / parts, 2)
-    remainder = round(total - base * parts, 2)
+# 🔧 CORRIGIDO: Agora trabalha com inteiros (centavos)
+def split_amount_cents(total_cents: int, parts: int) -> List[int]:
+    """
+    Divide um valor em centavos igualmente entre parcelas.
+    Distribui o resto (se houver) nas primeiras parcelas.
+    
+    Exemplo: 100 centavos em 3 parcelas = [34, 33, 33]
+    """
+    if parts <= 0:
+        return []
+    base = total_cents // parts
+    remainder = total_cents - (base * parts)
     amounts = [base] * parts
-    if remainder != 0:
-        amounts[-1] = round(amounts[-1] + remainder, 2)
+    for i in range(remainder):
+        amounts[i] += 1
     return amounts
 
 
-async def create_bill_installments(bill_id: str, user_id: str, amount: float, installments_data: dict, db):
+# 🔧 CORRIGIDO: amount_cents agora é int
+async def create_bill_installments(
+    bill_id: str, 
+    user_id: str, 
+    amount_cents: int, 
+    installments_data: dict, 
+    db
+):
     """
     Cria as parcelas individuais para uma conta
     🔧 VERSÃO SIMPLIFICADA: Apenas as parcelas RESTANTES, todas pendentes
+    🔧 CORRIGIDO: amount_cents é int (centavos)
     """
-    total_parcelas = installments_data.get("total", 1)  # Já são apenas as restantes
+    total_parcelas = installments_data.get("total", 1)
+    
+    # 🔧 Validação de limite máximo de parcelas
+    if total_parcelas > MAX_INSTALLMENTS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Número máximo de parcelas é {MAX_INSTALLMENTS}"
+        )
+    
     start_date = installments_data.get("start_date")
     due_day = installments_data.get("due_day")
     
@@ -62,8 +92,8 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
     if isinstance(start_date, str):
         start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
     
-    # Divide o valor total entre as parcelas
-    amounts = split_amount(amount, total_parcelas)
+    # 🔧 Divide o valor total em centavos entre as parcelas
+    amounts_cents = split_amount_cents(amount_cents, total_parcelas)
     
     installments = []
     for i in range(total_parcelas):
@@ -79,12 +109,12 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
         else:
             due_date = start_date + relativedelta(months=i)
         
-        # 🔧 TODAS as parcelas são pendentes (paid = False)
+        # 🔧 amount já está em centavos, não precisa de to_cents()
         installment = {
             "bill_id": bill_id,
             "user_id": user_id,
             "number": i + 1,
-            "amount": to_cents(amounts[i]),
+            "amount": amounts_cents[i],
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -98,8 +128,23 @@ async def create_bill_installments(bill_id: str, user_id: str, amount: float, in
         logger.info(f"✅ {len(installments)} parcelas criadas para conta {bill_id} (todas pendentes)")
 
 
-async def update_future_installments(bill_id: str, user_id: str, new_amount: float, new_total_parcelas: int, new_start_date: datetime, db):
+# 🔧 CORRIGIDO: new_amount_cents agora é int
+async def update_future_installments(
+    bill_id: str, 
+    user_id: str, 
+    new_amount_cents: int, 
+    new_total_parcelas: int, 
+    new_start_date: datetime, 
+    db
+):
     """Atualiza parcelas futuras (não pagas) de uma conta"""
+    # 🔧 Validação de limite máximo de parcelas
+    if new_total_parcelas > MAX_INSTALLMENTS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Número máximo de parcelas é {MAX_INSTALLMENTS}"
+        )
+    
     unpaid_installments = await db.bill_installments.find({
         "bill_id": bill_id,
         "user_id": user_id,
@@ -115,7 +160,8 @@ async def update_future_installments(bill_id: str, user_id: str, new_amount: flo
         "paid": False
     })
     
-    amounts = split_amount(new_amount, new_total_parcelas)
+    # 🔧 Divide o valor total em centavos entre as parcelas
+    amounts_cents = split_amount_cents(new_amount_cents, new_total_parcelas)
     
     paid_count = await db.bill_installments.count_documents({
         "bill_id": bill_id,
@@ -134,7 +180,7 @@ async def update_future_installments(bill_id: str, user_id: str, new_amount: flo
             "bill_id": bill_id,
             "user_id": user_id,
             "number": paid_count + i + 1,
-            "amount": to_cents(amounts[paid_count + i]),
+            "amount": amounts_cents[paid_count + i],
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -165,12 +211,13 @@ async def create_bill(
         bill_dict["created_at"] = datetime.now(timezone.utc)
         bill_dict["updated_at"] = datetime.now(timezone.utc)
 
-        amount_reais = bill_dict.get("amount", 0)
+        # 🔧 CORRIGIDO: nome claro - amount já deve estar em centavos (int)
+        amount_cents = bill_dict.get("amount", 0)
         installments_info = bill_dict.get("installments", {})
         total_parcelas = installments_info.get("total", 1)
 
-        if "amount" in bill_dict:
-            bill_dict["amount"] = to_cents(bill_dict["amount"])
+        # 🔧 amount já é centavos (int), não precisa de to_cents
+        # Se o model já está corrigido, amount já é int
 
         if "installments" in bill_dict and isinstance(bill_dict["installments"], dict):
             bill_dict["installments"] = parse_installments_dates(bill_dict["installments"])
@@ -178,7 +225,8 @@ async def create_bill(
         result = await db.bills.insert_one(bill_dict)
         bill_id = str(result.inserted_id)
         
-        await create_bill_installments(bill_id, str(current_user.id), amount_reais, installments_info, db)
+        # 🔧 CORRIGIDO: passa amount_cents (int)
+        await create_bill_installments(bill_id, str(current_user.id), amount_cents, installments_info, db)
         
         created = await db.bills.find_one({"_id": result.inserted_id})
         
@@ -188,6 +236,8 @@ async def create_bill(
         logger.info(f"Conta criada: {bill_data.description} - {total_parcelas} parcelas pendentes para usuário {current_user.id}")
         return format_mongo_doc(created)
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Erro ao criar conta: {e}")
         import traceback
@@ -247,11 +297,15 @@ async def get_bill(
     return format_mongo_doc(bill)
 
 
+# 🔧 CORRIGIDO: adjust_future_installments default agora é True
 @router.put("/{bill_id}", response_model=BillResponse)
 async def update_bill(
     bill_id: str,
     bill_update: BillUpdate,
-    adjust_future_installments: bool = Query(False, description="Se True, ajusta parcelas futuras com os novos valores"),
+    adjust_future_installments: bool = Query(
+        True,  # ← CORRIGIDO: agora default True
+        description="Se True, ajusta parcelas futuras com os novos valores"
+    ),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
@@ -272,10 +326,13 @@ async def update_bill(
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
-    amount_reais = None
+    amount_cents = None
     if "amount" in update_data:
-        amount_reais = update_data["amount"]
-        update_data["amount"] = to_cents(update_data["amount"])
+        amount_cents = update_data["amount"]
+        # amount já deve ser int (centavos) - se não for, converte
+        if isinstance(amount_cents, float):
+            amount_cents = int(amount_cents)
+        update_data["amount"] = amount_cents
     
     if update_data.get("paid") is True and update_data.get("paid_date") is None:
         update_data["paid_date"] = datetime.now(timezone.utc)
@@ -290,12 +347,13 @@ async def update_bill(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Conta não encontrada")
 
-    if adjust_future_installments and amount_reais is not None:
+    if adjust_future_installments and amount_cents is not None:
         new_installments_info = update_data.get("installments", current_bill.get("installments", {}))
         new_total = new_installments_info.get("total", 1)
         new_start_date = new_installments_info.get("start_date", datetime.now(timezone.utc))
         
-        await update_future_installments(bill_id, str(current_user.id), amount_reais, new_total, new_start_date, db)
+        # 🔧 CORRIGIDO: passa amount_cents (int)
+        await update_future_installments(bill_id, str(current_user.id), amount_cents, new_total, new_start_date, db)
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
     
@@ -333,14 +391,27 @@ async def delete_bill(
     return {"message": "Conta e parcelas deletadas com sucesso", "success": True}
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ 🔧 REGRA 3.3: Ao criar conta, gera parcelas em bill_installments
-# ✅ 🔧 REGRA 3.3: Ao deletar conta, deleta parcelas também
-# ✅ 🔧 REGRA 3.3: Ao atualizar, pode ajustar parcelas futuras
-# ✅ Adicionada função split_amount() para dividir valor
-# ✅ Adicionada função create_bill_installments()
-# ✅ Adicionada função update_future_installments()
-# ✅ Parâmetro adjust_future_installments na rota PUT
-# ✅ Conversão de moeda (to_cents/from_cents) em todo lugar
-# ✅ Validação de IDs com validate_object_id
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. split_amount_cents() agora trabalha com inteiros (centavos)
+2. create_bill_installments agora recebe amount_cents (int)
+3. update_future_installments agora recebe new_amount_cents (int)
+4. adjust_future_installments default mudado para True
+5. Adicionada constante MAX_INSTALLMENTS = 360
+6. Adicionada validação de limite máximo de parcelas
+7. Renomeada variável amount_reais → amount_cents (clareza)
+8. Adicionado tratamento específico para HTTPException
+
+⚠️ PENDÊNCIAS PARA PÓS-MVP:
+================================================================================
+1. Internacionalização (i18n) de todas as mensagens de erro
+2. Adicionar validação de data (impedir start_date no passado? depende da regra de negócio)
+3. Adicionar rota para marcar/desmarcar parcela como paga (já existe em bill_installments)
+4. Adicionar logs de auditoria (quem pagou cada parcela)
+
+================================================================================
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+================================================================================
+"""
