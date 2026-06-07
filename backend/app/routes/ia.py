@@ -2,15 +2,11 @@
 Rotas de IA (Inteligência Artificial)
 Arquivo: backend/app/routes/ia.py
 
-🔧 MODIFICADO: Regra 2.8 - Logs
-🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
-🔧 MODIFICADO: Regra 3.4 - IA e Dados do Usuário
-- Adicionada anonimização dos dados
-- Adicionado histórico de conversa (últimas 3 mensagens)
-- Respostas mais diretas e focadas em finanças
-🔧 MODIFICADO: Regra 3.5 - Leitura de Notificações
-- Adicionada rota /extract-from-text para extrair dados de notificações
-🔧 CORRIGIDO: Importação de Optional adicionada
+🔧 CORRIGIDO:
+- Convertidos centavos para reais no contexto da IA (to_cents/from_cents)
+- Protegido endpoint /perguntar (teste) apenas em desenvolvimento
+- Adicionada validação min_length=1 para pergunta
+- Removida função não utilizada montar_contexto_ia_anonimizado
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -32,6 +28,7 @@ from app.utils.anonimizer import (
     get_conversation_context,
     get_score_range
 )
+from app.utils.currency import from_cents
 from bson import ObjectId
 
 logger = setup_logger(__name__)
@@ -42,7 +39,8 @@ router = APIRouter(prefix="/ia", tags=["IA"])
 # ========== SCHEMAS ==========
 
 class ChatRequest(BaseModel):
-    pergunta: str = Field(..., max_length=500)
+    # 🔧 CORRIGIDO: adicionado min_length=1
+    pergunta: str = Field(..., min_length=1, max_length=500, description="Pergunta do usuário")
 
 
 class ChatResponse(BaseModel):
@@ -57,7 +55,7 @@ class ExtractTextRequest(BaseModel):
 
 
 class ExtractTextResponse(BaseModel):
-    amount: Optional[float] = None
+    amount: Optional[float] = None  # 🔧 Nota: IA retorna float, será convertido para centavos no frontend
     merchant: Optional[str] = None
     suggested_category: Optional[str] = None
     confidence: float = 0.0
@@ -66,23 +64,11 @@ class ExtractTextResponse(BaseModel):
 
 # ========== FUNÇÕES AUXILIARES ==========
 
-async def montar_contexto_ia_anonimizado() -> str:
-    """Versão anonimizada do contexto (sem dados pessoais)"""
-    return """
-Contexto: O usuário optou por não compartilhar dados financeiros detalhados.
-
-Orientações:
-- Responda com dicas genéricas e conceitos gerais sobre finanças pessoais.
-- Seja direta e prática.
-- Não peça dados específicos do usuário.
-- Mantenha respostas curtas (1-3 frases para perguntas simples).
-"""
-
-
 async def montar_contexto_ia_completo_anonimizado(current_user: UserResponse, db, conversation_history: str = "") -> str:
     """
     Monta o contexto com dados ANONIMIZADOS do usuário (research_consent = true)
     🔧 REGRA 3.4: Remove nome, email, valores exatos
+    🔧 CORRIGIDO: Converte centavos para reais antes de enviar para IA
     """
     # Busca perfil do usuário (dados comportamentais, sem identificação)
     profile = await db.user_profiles.find_one({"user_id": current_user.id})
@@ -102,14 +88,15 @@ async def montar_contexto_ia_completo_anonimizado(current_user: UserResponse, db
         "date": {"$gte": thirty_days_ago}
     }).to_list(100)
     
-    # Calcula gastos por categoria e total
+    # 🔧 CORRIGIDO: Calcula gastos por categoria convertendo centavos para reais
     gastos_por_categoria = {}
     total_gasto = 0
     for t in transactions:
         cat = t.get("category", "Outros")
-        amount = t["amount"]
-        gastos_por_categoria[cat] = gastos_por_categoria.get(cat, 0) + amount
-        total_gasto += amount
+        amount_cents = t.get("amount", 0)
+        amount_reais = from_cents(amount_cents)  # Converte para reais (float)
+        gastos_por_categoria[cat] = gastos_por_categoria.get(cat, 0) + amount_reais
+        total_gasto += amount_reais
     
     # 🔧 ANONIMIZAÇÃO: converte para faixas e categorias agregadas
     anonymized_data = anonymize_user_data(
@@ -178,17 +165,16 @@ async def chat(
             detail="Para usar o assistente, você precisa aceitar os Termos de Uso. Acesse Configurações > Consentimento."
         )
     
-    # 4. 🔧 NOVO: Buscar histórico da conversa (últimas 3 interações)
+    # 4. Buscar histórico da conversa (últimas 3 interações)
     conversation_history = []
     if research_consent:
-        # Busca histórico de mensagens do usuário
         history_cursor = db.chat_history.find(
             {"user_id": current_user.id},
             sort=[("created_at", -1)],
-            limit=6  # 3 interações (3 perguntas + 3 respostas)
+            limit=6
         )
         history = await history_cursor.to_list(6)
-        history.reverse()  # Ordem cronológica
+        history.reverse()
         
         for msg in history:
             conversation_history.append({
@@ -203,7 +189,6 @@ async def chat(
                     "created_at": msg.get("created_at")
                 })
     
-    # 🔧 Formata o histórico para contexto
     history_context = get_conversation_context(conversation_history)
     
     # 5. Escolher o modo de resposta (com anonimização)
@@ -221,7 +206,7 @@ async def chat(
             conversation_history=history_context
         )
         
-        # 6. 🔧 Salvar histórico da conversa
+        # 6. Salvar histórico da conversa
         if research_consent:
             await db.chat_history.insert_one({
                 "user_id": current_user.id,
@@ -261,7 +246,6 @@ async def extract_from_text(
     try:
         logger.info(f"Extraindo dados de texto para usuário {current_user.id} - Fonte: {extract_request.source}")
         
-        # Monta prompt para extração
         system_prompt = """
 Você é um assistente especializado em extrair informações financeiras de textos.
 
@@ -284,9 +268,7 @@ Responda APENAS com JSON no formato:
         
         resposta = await obter_resposta_ia_async(system_prompt, user_message)
         
-        # Tenta parsear o JSON da resposta
         try:
-            # Limpa a resposta (pode ter markdown)
             clean_response = resposta.strip()
             if clean_response.startswith('```json'):
                 clean_response = clean_response[7:]
@@ -323,18 +305,44 @@ Responda APENAS com JSON no formato:
         )
 
 
-# ========== ENDPOINT DE TESTE ==========
+# ========== ENDPOINT DE TESTE (APENAS EM DESENVOLVIMENTO) ==========
 
-if os.getenv("DEBUG", "false").lower() == "true":
+# 🔧 CORRIGIDO: Protegido apenas para ambiente de desenvolvimento
+if os.getenv("ENVIRONMENT", "development") != "production" and os.getenv("DEBUG", "false").lower() == "true":
     class PerguntaRequestTeste(BaseModel):
         prompt_context: str
-        pergunta_usuario: str = Field(..., max_length=500)
+        pergunta_usuario: str = Field(..., min_length=1, max_length=500)
 
     @router.post("/perguntar", response_model=ChatResponse)
     async def perguntar_teste(
         request: PerguntaRequestTeste,
         current_user: UserResponse = Depends(get_current_user)
     ):
+        """Endpoint de teste - disponível apenas em desenvolvimento com DEBUG=true"""
         logger.debug(f"Endpoint de teste IA usado por usuário {current_user.id}")
         resposta = await obter_resposta_ia_async(request.prompt_context, request.pergunta_usuario, "")
         return ChatResponse(resposta=resposta)
+
+
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. Convertidos centavos para reais antes de enviar para IA (from_cents)
+2. Removida função não utilizada montar_contexto_ia_anonimizado
+3. Adicionada validação min_length=1 para pergunta
+4. Protegido endpoint /perguntar com verificação ENVIRONMENT e DEBUG
+5. Adicionada importação de from_cents
+
+⚠️ PENDÊNCIAS PARA PÓS-MVP:
+================================================================================
+1. Internacionalização (i18n) de todas as mensagens de erro
+2. Adicionar cache para respostas de IA (reduzir custos)
+3. Adicionar feedback do usuário (útil/não útil) nas respostas da IA
+4. Remover raw_text da resposta de extração (pode conter dados sensíveis)
+5. Adicionar rate limiting por usuário (não apenas por IP)
+
+================================================================================
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO
+================================================================================
+"""
