@@ -2,11 +2,12 @@
 Rotas de Cartões de Crédito
 Arquivo: backend/app/routes/credit_cards.py
 
-🔧 MODIFICADO: Regra 2.2 - Usa format_mongo_doc
-🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
-🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
-🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
-🔧 CORRIGIDO: limit_total agora é igual ao limit (não zero)
+🔧 CORRIGIDO:
+- Alinhada nomenclatura com o model corrigido (total_limit, used_limit, available_limit)
+- Removido campo duplicado 'limit'
+- Adicionado campo 'available_limit' calculado
+- Corrigida validação de redução de limite (considera used_limit + committed_amount)
+- Adicionado campo 'available_limit' na resposta
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -28,6 +29,20 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/credit-cards", tags=["Cartões de Crédito"])
 
 
+# ========== FUNÇÃO AUXILIAR ==========
+
+def add_available_limit(card: dict) -> dict:
+    """Adiciona o campo available_limit calculado ao cartão"""
+    if card:
+        total_limit = card.get("total_limit", 0)
+        used_limit = card.get("used_limit", 0)
+        committed_amount = card.get("committed_amount", 0)
+        card["available_limit"] = total_limit - used_limit - committed_amount
+        if card["available_limit"] < 0:
+            card["available_limit"] = 0
+    return card
+
+
 # ========== ENDPOINTS ==========
 
 @router.get("/", response_model=dict)
@@ -46,12 +61,15 @@ async def get_credit_cards(
     )
     
     for item in items:
-        if "limit" in item:
-            item["limit"] = from_cents(item["limit"])
-        if "limit_total" in item:
-            item["limit_total"] = from_cents(item["limit_total"])
+        # 🔧 CORRIGIDO: nomenclatura alinhada com o model
+        if "total_limit" in item:
+            item["total_limit"] = from_cents(item["total_limit"])
+        if "used_limit" in item:
+            item["used_limit"] = from_cents(item["used_limit"])
         if "committed_amount" in item:
             item["committed_amount"] = from_cents(item["committed_amount"])
+        # Adiciona available_limit calculado
+        item = add_available_limit(item)
     
     formatted_items = format_mongo_docs(items)
     
@@ -71,12 +89,15 @@ async def create_credit_card(
     card_dict["created_at"] = datetime.now(timezone.utc)
     card_dict["updated_at"] = datetime.now(timezone.utc)
     
-    # 🔧 REGRA 2.11: converter limit para centavos (int)
-    limit_cents = to_cents(card_dict["limit"]) if card_dict.get("limit") else 0
-    card_dict["limit"] = limit_cents
-    # 🔧 CORREÇÃO: limit_total deve ser igual ao limite do cartão
-    card_dict["limit_total"] = limit_cents
+    # 🔧 CORRIGIDO: converte total_limit para centavos (int)
+    total_limit_cents = to_cents(card_dict.get("total_limit", 0)) if card_dict.get("total_limit") else 0
+    card_dict["total_limit"] = total_limit_cents
+    
+    # 🔧 CORRIGIDO: campos de controle de limite
+    card_dict["used_limit"] = 0
     card_dict["committed_amount"] = 0
+    card_dict["available_limit"] = total_limit_cents  # inicialmente igual ao total
+    
     card_dict["last_statement_closed_at"] = None
     card_dict["next_statement_due_date"] = None
     
@@ -84,14 +105,15 @@ async def create_credit_card(
     created = await db.credit_cards.find_one({"_id": result.inserted_id})
     
     if created:
-        if "limit" in created:
-            created["limit"] = from_cents(created["limit"])
-        if "limit_total" in created:
-            created["limit_total"] = from_cents(created["limit_total"])
+        if "total_limit" in created:
+            created["total_limit"] = from_cents(created["total_limit"])
+        if "used_limit" in created:
+            created["used_limit"] = from_cents(created["used_limit"])
         if "committed_amount" in created:
             created["committed_amount"] = from_cents(created["committed_amount"])
+        created = add_available_limit(created)
     
-    logger.info(f"Cartão criado: {card_data.name} (ID: {result.inserted_id}) para usuário {current_user.id} - Limite: R$ {from_cents(limit_cents):.2f}")
+    logger.info(f"Cartão criado: {card_data.name} (ID: {result.inserted_id}) para usuário {current_user.id} - Limite: R$ {from_cents(total_limit_cents):.2f}")
     return format_mongo_doc(created)
 
 
@@ -117,19 +139,21 @@ async def update_credit_card(
     update_data = card_data.model_dump(exclude_unset=True)
     update_data["updated_at"] = datetime.now(timezone.utc)
     
-    if "limit" in update_data and update_data["limit"] is not None:
-        new_limit_cents = to_cents(update_data["limit"])
-        update_data["limit"] = new_limit_cents
-        # 🔧 CORREÇÃO: Ao atualizar o limite, também atualiza limit_total
-        # Mas cuidado: não pode reduzir abaixo do que já está comprometido
-        current_limit_total = card.get("limit_total", 0)
-        new_limit_total = new_limit_cents
-        if new_limit_total < card.get("committed_amount", 0):
+    # 🔧 CORRIGIDO: atualização do total_limit
+    if "total_limit" in update_data and update_data["total_limit"] is not None:
+        new_total_limit_cents = to_cents(update_data["total_limit"])
+        update_data["total_limit"] = new_total_limit_cents
+        
+        # 🔧 CORRIGIDO: verifica se não está reduzindo abaixo do já utilizado
+        current_used = card.get("used_limit", 0)
+        current_committed = card.get("committed_amount", 0)
+        total_used = current_used + current_committed
+        
+        if new_total_limit_cents < total_used:
             raise HTTPException(
                 status_code=400,
-                detail=f"Não é possível reduzir o limite abaixo do valor já comprometido (R$ {from_cents(card.get('committed_amount', 0)):.2f})"
+                detail=f"Não é possível reduzir o limite abaixo do valor já utilizado (R$ {from_cents(total_used):.2f})"
             )
-        update_data["limit_total"] = new_limit_total
     
     await db.credit_cards.update_one(
         {"_id": ObjectId(card_id)},
@@ -139,12 +163,13 @@ async def update_credit_card(
     updated_card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
     
     if updated_card:
-        if "limit" in updated_card:
-            updated_card["limit"] = from_cents(updated_card["limit"])
-        if "limit_total" in updated_card:
-            updated_card["limit_total"] = from_cents(updated_card["limit_total"])
+        if "total_limit" in updated_card:
+            updated_card["total_limit"] = from_cents(updated_card["total_limit"])
+        if "used_limit" in updated_card:
+            updated_card["used_limit"] = from_cents(updated_card["used_limit"])
         if "committed_amount" in updated_card:
             updated_card["committed_amount"] = from_cents(updated_card["committed_amount"])
+        updated_card = add_available_limit(updated_card)
     
     logger.info(f"Cartão atualizado: {card_id} para usuário {current_user.id}")
     return format_mongo_doc(updated_card)
@@ -168,6 +193,7 @@ async def delete_credit_card(
         logger.warning(f"Tentativa de deletar cartão inexistente: {card_id}")
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
+    # Verifica se há compras associadas
     purchases = await db.credit_card_purchases.find_one({"card_id": card_id})
     if purchases:
         logger.warning(f"Tentativa de deletar cartão com compras associadas: {card_id}")
@@ -200,11 +226,38 @@ async def get_credit_card(
         logger.warning(f"Cartão não encontrado: {card_id}")
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
     
-    if "limit" in card:
-        card["limit"] = from_cents(card["limit"])
-    if "limit_total" in card:
-        card["limit_total"] = from_cents(card["limit_total"])
+    # 🔧 CORRIGIDO: nomenclatura alinhada
+    if "total_limit" in card:
+        card["total_limit"] = from_cents(card["total_limit"])
+    if "used_limit" in card:
+        card["used_limit"] = from_cents(card["used_limit"])
     if "committed_amount" in card:
         card["committed_amount"] = from_cents(card["committed_amount"])
+    card = add_available_limit(card)
     
     return format_mongo_doc(card)
+
+
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. Alinhada nomenclatura: limit → total_limit, limit_total → used_limit
+2. Removido campo duplicado 'limit'
+3. Adicionado campo 'available_limit' calculado automaticamente
+4. Adicionada função auxiliar add_available_limit()
+5. Corrigida validação de redução de limite (considera used_limit + committed_amount)
+6. Atualizada criação do cartão com os campos corretos
+7. Atualizada listagem e busca com os novos nomes
+
+⚠️ PENDÊNCIAS PARA PÓS-MVP:
+================================================================================
+1. Internacionalização (i18n) de todas as mensagens de erro
+2. Adicionar rota para recalcular limites (caso haja inconsistência)
+3. Adicionar suporte a múltiplas faturas (fatura atual, próxima)
+4. Adicionar webhook para notificar quando limite estiver próximo do fim
+
+================================================================================
+✅ STATUS: CONSISTENTE COM O MODEL CORRIGIDO (credit_card.py)
+================================================================================
+"""
