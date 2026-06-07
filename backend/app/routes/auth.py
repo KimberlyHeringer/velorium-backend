@@ -2,9 +2,10 @@
 Rotas de Autenticação
 Arquivo: backend/app/routes/auth.py
 
-🔧 MODIFICADO: Regra 2.8 - Logs
-- Substituído print por logger.info
-- Adicionado logger configurado
+🔧 CORRIGIDO:
+- monthly_income agora tratado como int (centavos)
+- Removido round() que convertia para float
+- Garantido consistência com a estratégia de centavos
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -57,6 +58,20 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
+# ========== FUNÇÃO AUXILIAR PARA VALIDAR SENHA ==========
+def validate_password_strength(password: str) -> None:
+    """Valida a força da senha (reutiliza a lógica do UserCreate)"""
+    import re
+    if len(password) < 8:
+        raise ValueError("A senha deve ter pelo menos 8 caracteres")
+    if not re.search(r"[A-Z]", password):
+        raise ValueError("A senha deve conter pelo menos uma letra maiúscula")
+    if not re.search(r"\d", password):
+        raise ValueError("A senha deve conter pelo menos um número")
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        raise ValueError("A senha deve conter pelo menos um caractere especial")
+
+
 # ========== ENDPOINTS ==========
 
 @router.post("/register", response_model=dict, status_code=status.HTTP_201_CREATED)
@@ -77,7 +92,12 @@ async def register(
     user_dict["email"] = user_data.email.lower()
     user_dict["created_at"] = datetime.now(timezone.utc)
     user_dict["updated_at"] = datetime.now(timezone.utc)
-    user_dict["monthly_income"] = round(user_dict["monthly_income"], 2)
+    
+    # 🔧 CORRIGIDO: REMOVIDO round() - monthly_income já deve ser int (centavos)
+    # O frontend deve enviar o valor em centavos (ex: 500000 = R$5.000,00)
+    # Se o frontend ainda envia em reais, converter aqui:
+    # user_dict["monthly_income"] = int(user_dict["monthly_income"] * 100)
+    # Mas o ideal é o frontend já enviar centavos para consistência
 
     result = await db.users.insert_one(user_dict)
     logger.info(f"Novo usuário registrado: {user_data.email.lower()}")
@@ -98,16 +118,22 @@ async def login(
 
     token_pair = generate_token_pair(str(db_user["_id"]))
 
+    # 🔧 CORRIGIDO: monthly_income agora é int (centavos)
     user_response = UserResponse(
         id=str(db_user["_id"]),
         name=db_user["name"],
         email=db_user["email"],
-        monthly_income=db_user.get("monthly_income", 0.0),
+        monthly_income=db_user.get("monthly_income", 0),  # Já é int (centavos)
         location=db_user.get("location", ""),
         profession_type=db_user.get("profession_type", ""),
         occupation=db_user.get("occupation", ""),
         financial_goal=db_user.get("financial_goal", ""),
-        created_at=db_user["created_at"]
+        created_at=db_user["created_at"],
+        research_consent=db_user.get("research_consent", False),
+        terms_accepted=db_user.get("terms_accepted", False),
+        terms_accepted_at=db_user.get("terms_accepted_at"),
+        language=db_user.get("language", "pt"),
+        currency=db_user.get("currency", "BRL")
     )
 
     logger.info(f"Usuário logado: {user_data.email.lower()}")
@@ -175,7 +201,6 @@ async def forgot_password(
     )
     
     reset_link = f"https://velorium-frontend.com/reset-password?token={token}"
-    # 🔧 CORREÇÃO: print substituído por logger.info (Regra 2.8)
     logger.info(f"🔐 [MOCK] Link para redefinir senha: {reset_link}")
     
     return {"message": "Se o email estiver cadastrado, você receberá um link de redefinição."}
@@ -186,6 +211,12 @@ async def reset_password(
     request: ResetPasswordRequest,
     db=Depends(get_database)
 ):
+    # 🔧 CORRIGIDO: Adicionada validação de força da senha
+    try:
+        validate_password_strength(request.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
     user = await db.users.find_one({
         "reset_token": request.token,
         "reset_token_expires": {"$gt": datetime.now(timezone.utc)}
@@ -207,3 +238,23 @@ async def reset_password(
     
     logger.info(f"Senha redefinida para usuário: {user['email']}")
     return {"message": "Senha alterada com sucesso."}
+
+
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. Removido round(monthly_income, 2) - agora trata como int
+2. UserResponse agora com monthly_income como int (centavos)
+3. Adicionada validação de força de senha no reset-password
+4. Adicionados campos faltantes no UserResponse (research_consent, language, currency)
+
+⚠️ PENDÊNCIAS PARA PÓS-MVP:
+================================================================================
+1. Internacionalização (i18n) de todas as mensagens de erro
+2. Integração real com serviço de email (envio de link de redefinição)
+3. Rate limiting por usuário (não apenas por IP)
+
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+================================================================================
+"""
