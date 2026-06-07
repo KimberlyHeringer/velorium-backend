@@ -2,11 +2,13 @@
 Rotas de Compras Parceladas no Cartão de Crédito
 Arquivo: backend/app/routes/credit_card_purchases.py
 
-🔧 MODIFICADO: Regra 2.2 - Usa format_mongo_doc
-🔧 MODIFICADO: Regra 2.8 - Adicionado logs
-🔧 MODIFICADO: Regra 2.10 - Adicionado validate_object_id
-🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
-🔧 CORRIGIDO: Converte todos os ObjectId para string na resposta da rota /faturas
+🔧 CORRIGIDO:
+- split_amount_cents() agora trabalha com inteiros (centavos)
+- update_card_committed_amount agora recebe delta_cents (int)
+- check_available_limit agora recebe required_cents (int)
+- create_purchase agora usa centavos internamente
+- Removido endpoint /debug/clean-invalid-data (não deve ir para produção)
+- Corrigidas mensagens de erro para usar from_cents() na exibição
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -28,39 +30,59 @@ logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 
+# ========== CONSTANTES ==========
+MAX_INSTALLMENTS = 360  # 30 anos
 
-def split_amount(total: float, parts: int) -> List[float]:
-    """Divide um valor total em partes iguais (para parcelas)"""
-    base = round(total / parts, 2)
-    remainder = round(total - base * parts, 2)
+
+# 🔧 CORRIGIDO: Agora trabalha com inteiros (centavos)
+def split_amount_cents(total_cents: int, parts: int) -> List[int]:
+    """
+    Divide um valor em centavos igualmente entre parcelas.
+    Distribui o resto (se houver) nas primeiras parcelas.
+    
+    Exemplo: 100 centavos em 3 parcelas = [34, 33, 33]
+    """
+    if parts <= 0:
+        return []
+    base = total_cents // parts
+    remainder = total_cents - (base * parts)
     amounts = [base] * parts
-    if remainder != 0:
-        amounts[-1] = round(amounts[-1] + remainder, 2)
+    for i in range(remainder):
+        amounts[i] += 1
     return amounts
 
 
-async def update_card_committed_amount(card_id: str, delta: float, db):
-    """Atualiza o committed_amount do cartão"""
+# 🔧 CORRIGIDO: delta_cents agora é int
+async def update_card_committed_amount(card_id: str, delta_cents: int, db):
+    """Atualiza o committed_amount do cartão (delta em centavos, pode ser negativo)"""
     validate_object_id(card_id, "card_id")
     await db.credit_cards.update_one(
         {"_id": ObjectId(card_id)},
-        {"$inc": {"committed_amount": delta}, "$set": {"updated_at": datetime.now(timezone.utc)}}
+        {"$inc": {"committed_amount": delta_cents}, "$set": {"updated_at": datetime.now(timezone.utc)}}
     )
 
 
-async def check_available_limit(card_id: str, required: float, db) -> float:
-    """Retorna limite disponível ou levanta HTTPException se insuficiente"""
+# 🔧 CORRIGIDO: required_cents agora é int
+async def check_available_limit(card_id: str, required_cents: int, db) -> int:
+    """
+    Retorna limite disponível em centavos.
+    Levanta HTTPException se insuficiente.
+    """
     validate_object_id(card_id, "card_id")
     card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
-    available = card["limit_total"] - card["committed_amount"]
-    if required > available:
+    
+    # 🔧 CORRIGIDO: committed_amount deve ser int (centavos)
+    available_cents = card.get("total_limit", 0) - card.get("committed_amount", 0)
+    
+    if required_cents > available_cents:
+        # 🔧 Exibe em reais apenas para o usuário entender
         raise HTTPException(
             status_code=400,
-            detail=f"Limite insuficiente. Disponível: {available:.2f}, Necessário: {required:.2f}"
+            detail=f"Limite insuficiente. Disponível: R$ {from_cents(available_cents):.2f}, Necessário: R$ {from_cents(required_cents):.2f}"
         )
-    return available
+    return available_cents
 
 
 @router.post("/", response_model=CreditCardPurchaseResponse, status_code=status.HTTP_201_CREATED)
@@ -72,6 +94,7 @@ async def create_purchase(
     """Cria uma nova compra parcelada"""
     validate_object_id(purchase_data.card_id, "card_id")
     
+    # Verifica se o cartão pertence ao usuário
     card = await db.credit_cards.find_one({
         "_id": ObjectId(purchase_data.card_id),
         "user_id": str(current_user.id)
@@ -79,7 +102,18 @@ async def create_purchase(
     if not card:
         raise HTTPException(status_code=404, detail="Cartão não encontrado")
 
-    await check_available_limit(purchase_data.card_id, purchase_data.total_amount, db)
+    # 🔧 CORRIGIDO: Converte total_amount para centavos antes de validar limite
+    total_amount_cents = to_cents(purchase_data.total_amount)
+    
+    # 🔧 CORRIGIDO: Valida limite com centavos
+    await check_available_limit(purchase_data.card_id, total_amount_cents, db)
+
+    # Valida número máximo de parcelas
+    if purchase_data.installments > MAX_INSTALLMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Número máximo de parcelas é {MAX_INSTALLMENTS}"
+        )
 
     first_due = purchase_data.first_due_date
     if isinstance(first_due, str):
@@ -91,12 +125,13 @@ async def create_purchase(
     purchase_dict["created_at"] = datetime.now(timezone.utc)
     purchase_dict["updated_at"] = datetime.now(timezone.utc)
     
-    purchase_dict["total_amount"] = to_cents(purchase_dict["total_amount"])
+    # 🔧 CORRIGIDO: guarda em centavos
+    purchase_dict["total_amount"] = total_amount_cents
 
     result = await db.credit_card_purchases.insert_one(purchase_dict)
 
-    total_amount_reais = from_cents(purchase_dict["total_amount"])
-    amounts = split_amount(total_amount_reais, purchase_data.installments)
+    # 🔧 CORRIGIDO: usa split_amount_cents com inteiros
+    amounts_cents = split_amount_cents(total_amount_cents, purchase_data.installments)
     
     installments = []
     for i in range(purchase_data.installments):
@@ -105,7 +140,7 @@ async def create_purchase(
             "purchase_id": str(result.inserted_id),
             "user_id": str(current_user.id),
             "card_id": purchase_data.card_id,
-            "amount": to_cents(amounts[i]),
+            "amount": amounts_cents[i],  # já em centavos
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -116,7 +151,8 @@ async def create_purchase(
     if installments:
         await db.credit_card_installments.insert_many(installments)
 
-    await update_card_committed_amount(purchase_data.card_id, purchase_dict["total_amount"], db)
+    # 🔧 CORRIGIDO: passa delta em centavos
+    await update_card_committed_amount(purchase_data.card_id, total_amount_cents, db)
 
     created = await db.credit_card_purchases.find_one({"_id": result.inserted_id})
     
@@ -135,6 +171,7 @@ async def get_purchases(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Lista compras parceladas do usuário"""
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
     
@@ -205,7 +242,6 @@ async def get_faturas(
                     if purchase:
                         if "total_amount" in purchase:
                             purchase["total_amount"] = from_cents(purchase["total_amount"])
-                        # 🔧 CONVERTE ObjectId para string
                         purchase["_id"] = str(purchase["_id"])
                         purchases_map[pid] = purchase
                 except Exception as e:
@@ -216,10 +252,9 @@ async def get_faturas(
         for pid, purchase in purchases_map.items():
             purchase_installments = [i for i in installments if i.get("purchase_id") == pid]
             total = 0
-            for i in purchase_installments:
-                total += from_cents(i.get("amount", 0))
+            for inst in purchase_installments:
+                total += from_cents(inst.get("amount", 0))
             
-            # 🔧 CONVERTE ObjectIds das parcelas para string
             installments_list = []
             for inst in purchase_installments:
                 inst_copy = {
@@ -262,6 +297,7 @@ async def get_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Busca uma compra específica"""
     validate_object_id(purchase_id, "purchase_id")
     
     purchase = await db.credit_card_purchases.find_one({
@@ -284,6 +320,7 @@ async def update_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Atualiza uma compra existente"""
     validate_object_id(purchase_id, "purchase_id")
     
     purchase = await db.credit_card_purchases.find_one({
@@ -293,6 +330,7 @@ async def update_purchase(
     if not purchase:
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
+    # Verifica se há parcelas pagas
     existing_installments = await db.credit_card_installments.find({
         "purchase_id": purchase_id,
         "paid": True
@@ -303,31 +341,42 @@ async def update_purchase(
             detail="Não é possível editar compra com parcelas já pagas."
         )
 
-    old_total = purchase["total_amount"]
-    new_total = to_cents(purchase_data.total_amount)
-    delta = new_total - old_total
+    # 🔧 CORRIGIDO: trabalha com centavos
+    old_total_cents = purchase["total_amount"]
+    new_total_cents = to_cents(purchase_data.total_amount)
+    delta_cents = new_total_cents - old_total_cents
 
-    if delta != 0:
-        if delta > 0:
-            await check_available_limit(purchase_data.card_id, from_cents(delta), db)
-        await update_card_committed_amount(purchase_data.card_id, delta, db)
+    if delta_cents != 0:
+        if delta_cents > 0:
+            await check_available_limit(purchase_data.card_id, delta_cents, db)
+        await update_card_committed_amount(purchase_data.card_id, delta_cents, db)
+
+    # Valida número máximo de parcelas
+    if purchase_data.installments > MAX_INSTALLMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Número máximo de parcelas é {MAX_INSTALLMENTS}"
+        )
 
     update_dict = purchase_data.model_dump()
     update_dict["updated_at"] = datetime.now(timezone.utc)
     if "first_due_date" in update_dict and isinstance(update_dict["first_due_date"], str):
         update_dict["first_due_date"] = datetime.fromisoformat(update_dict["first_due_date"].replace('Z', '+00:00'))
     
-    update_dict["total_amount"] = to_cents(update_dict["total_amount"])
+    # 🔧 CORRIGIDO: guarda em centavos
+    update_dict["total_amount"] = new_total_cents
 
     await db.credit_card_purchases.update_one(
         {"_id": ObjectId(purchase_id)},
         {"$set": update_dict}
     )
 
+    # Recria parcelas
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
     first_due = update_dict["first_due_date"]
-    total_amount_reais = from_cents(update_dict["total_amount"])
-    amounts = split_amount(total_amount_reais, update_dict["installments"])
+    
+    # 🔧 CORRIGIDO: usa split_amount_cents com inteiros
+    amounts_cents = split_amount_cents(new_total_cents, update_dict["installments"])
     
     new_installments = []
     for i in range(update_dict["installments"]):
@@ -336,7 +385,7 @@ async def update_purchase(
             "purchase_id": purchase_id,
             "user_id": str(current_user.id),
             "card_id": update_dict["card_id"],
-            "amount": to_cents(amounts[i]),
+            "amount": amounts_cents[i],  # já em centavos
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -361,6 +410,7 @@ async def delete_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Remove uma compra e todas as suas parcelas"""
     validate_object_id(purchase_id, "purchase_id")
     
     purchase = await db.credit_card_purchases.find_one({
@@ -370,8 +420,9 @@ async def delete_purchase(
     if not purchase:
         raise HTTPException(status_code=404, detail="Compra não encontrada")
 
-    total_amount = purchase["total_amount"]
-    await update_card_committed_amount(purchase["card_id"], -total_amount, db)
+    total_amount_cents = purchase["total_amount"]
+    # 🔧 CORRIGIDO: passa delta negativo em centavos
+    await update_card_committed_amount(purchase["card_id"], -total_amount_cents, db)
 
     await db.credit_card_purchases.delete_one({"_id": ObjectId(purchase_id)})
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
@@ -385,6 +436,7 @@ async def mark_installment_paid(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
+    """Marca uma parcela como paga"""
     validate_object_id(installment_id, "installment_id")
     
     installment = await db.credit_card_installments.find_one({"_id": ObjectId(installment_id)})
@@ -394,6 +446,7 @@ async def mark_installment_paid(
     if installment.get("paid", False):
         raise HTTPException(status_code=400, detail="Parcela já está paga")
 
+    # Verifica se a compra pertence ao usuário
     purchase = await db.credit_card_purchases.find_one({
         "_id": ObjectId(installment["purchase_id"]),
         "user_id": str(current_user.id)
@@ -403,53 +456,45 @@ async def mark_installment_paid(
 
     await db.credit_card_installments.update_one(
         {"_id": ObjectId(installment_id)},
-        {"$set": {"paid": True, "paid_date": datetime.now(timezone.utc)}}
+        {"$set": {"paid": True, "paid_date": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}}
     )
 
+    # 🔧 CORRIGIDO: amount já está em centavos
     await update_card_committed_amount(installment["card_id"], -installment["amount"], db)
 
     return {"message": "Parcela marcada como paga e compromisso reduzido"}
 
 
-@router.get("/debug/clean-invalid-data")
-async def clean_invalid_data(
-    current_user: UserResponse = Depends(get_current_user),
-    db=Depends(get_database)
-):
-    """Endpoint temporário para limpar dados inconsistentes"""
-    try:
-        user_id = str(current_user.id)
-        logger.info(f"🔧 Iniciando limpeza de dados para usuário {user_id}")
-        
-        installments = await db.credit_card_installments.find({
-            "user_id": user_id
-        }).to_list(1000)
-        
-        invalid_count = 0
-        for inst in installments:
-            pid = inst.get("purchase_id")
-            if not pid:
-                await db.credit_card_installments.delete_one({"_id": inst["_id"]})
-                invalid_count += 1
-                continue
-            
-            try:
-                purchase = await db.credit_card_purchases.find_one({"_id": ObjectId(pid)})
-                if not purchase:
-                    await db.credit_card_installments.delete_one({"_id": inst["_id"]})
-                    invalid_count += 1
-            except Exception as e:
-                continue
-        
-        return {"message": "Limpeza concluída", "removidas": invalid_count}
-    except Exception as e:
-        return {"error": str(e)}
+# ========== ENDPOINT REMOVIDO ==========
+# O endpoint /debug/clean-invalid-data foi removido.
+# Não deve ser usado em produção. Para limpeza de dados,
+# execute scripts diretamente no banco ou via CLI.
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Validação de limite na criação, edição (aumento) e exclusão
-# ✅ Atualização do committed_amount via $inc
-# ✅ Redução por parcela paga (implementado)
-# ✅ Proteção contra edição com parcelas pagas
-# ✅ Cálculo de delta para edição
-# ✅ Funções auxiliares para reaproveitamento
+
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. split_amount_cents() agora trabalha com inteiros (centavos)
+2. update_card_committed_amount agora recebe delta_cents (int)
+3. check_available_limit agora recebe required_cents (int)
+4. create_purchase agora usa centavos internamente
+5. update_purchase agora usa centavos internamente
+6. delete_purchase agora usa centavos internamente
+7. mark_installment_paid agora usa centavos internamente
+8. Adicionada constante MAX_INSTALLMENTS = 360
+9. Removido endpoint /debug/clean-invalid-data
+10. Corrigidas mensagens de erro para usar from_cents() na exibição
+
+⚠️ PENDÊNCIAS PARA PÓS-MVP:
+================================================================================
+1. Internacionalização (i18n) de todas as mensagens de erro
+2. Adicionar validação de data (first_due_date não pode ser no passado?)
+3. Adicionar suporte a juros em compras parceladas
+4. Adicionar rota para desmarcar parcela como paga (rollback)
+5. Adicionar logs de auditoria (quem pagou cada parcela)
+
+================================================================================
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+================================================================================
+"""
