@@ -1,9 +1,11 @@
 """
 Modelo de Parcelas de Cartão de Crédito
 Arquivo: backend/app/models/credit_card_installment.py
+
+🔧 CORRIGIDO: amount agora é int (centavos) para consistência com to_cents()
 """
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -13,6 +15,10 @@ class CreditCardInstallment(BaseModel):
     """
     Modelo de uma parcela individual de uma compra no cartão de crédito.
     Cada compra parcelada gera N parcelas.
+    
+    🔧 IMPORTANTE: amount está em CENTAVOS (int)
+    - Exemplo: R$ 150,50 → 15050
+    - As rotas devem usar to_cents() e from_cents()
     """
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -22,13 +28,13 @@ class CreditCardInstallment(BaseModel):
     )
 
     id: Optional[str] = Field(None, alias="_id")
-    purchase_id: str          # ID da compra original
-    user_id: str              # injetado pelo backend
-    card_id: str              # ID do cartão usado
-    amount: float = Field(..., gt=0)   # valor da parcela individual
-    due_date: datetime        # data de vencimento da parcela
-    paid: bool = False        # se já foi paga
-    paid_date: Optional[datetime] = None
+    purchase_id: str = Field(..., description="ID da compra original")
+    user_id: str = Field(..., description="ID do usuário (injetado pelo backend)")
+    card_id: str = Field(..., description="ID do cartão usado")
+    amount: int = Field(..., gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
+    due_date: datetime = Field(..., description="Data de vencimento da parcela")
+    paid: bool = Field(default=False, description="Se já foi paga")
+    paid_date: Optional[datetime] = Field(None, description="Data do pagamento")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -44,28 +50,30 @@ class CreditCardInstallment(BaseModel):
             raise ValueError('paid_date é obrigatório quando paid=True')
         return self
 
-    @field_validator('amount')
-    @classmethod
-    def round_amount(cls, v):
-        """
-        Arredonda o valor para 2 casas decimais.
-        Evita problemas de precisão com float.
-        """
-        return round(v, 2) if v is not None else v
-
 
 class CreditCardInstallmentResponse(CreditCardInstallment):
     """
     Schema para respostas da API.
     Força que o campo id seja obrigatório (não opcional).
     """
-    id: str   # garante que o frontend sempre receba um ID
+    id: str = Field(..., description="ID único da parcela")
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Mantivemos float (não Decimal) por compatibilidade com MongoDB
-# ✅ Adicionamos round(amount, 2) para evitar precisão de float
-# ✅ Adicionamos validador paid/paid_date
-# ⏳ Validação de due_date >= hoje: postergado (opcional para MVP)
-# ⏳ updated_at automático: postergado (mantém atualização manual nas rotas)
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. amount: float → int (centavos) - consistente com to_cents()
+2. Removido round_amount (não necessário para int)
+3. Adicionados descriptions em todos os Field()
+4. Melhor documentação sobre centavos
+
+✅ PENDENTE PARA FUTURO (pós-MVP):
+================================================================================
+1. Adicionar validação de due_date >= hoje (opcional)
+2. Adicionar updated_at automático via evento no MongoDB
+
+================================================================================
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+================================================================================
+"""
