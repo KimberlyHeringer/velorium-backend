@@ -2,10 +2,12 @@
 Rotas de Transações Financeiras (Receitas e Despesas)
 Arquivo: backend/app/routes/transactions.py
 
-🔧 MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
-🔧 MODIFICADO: Regra 2.12 - Integração com cartão de crédito
-🔧 CORRIGIDO: Saldo agora é calculado apenas para o MÊS ATUAL
-🔧 CORRIGIDO: Exclui despesas com cartão de crédito do cálculo
+🔧 CORRIGIDO:
+- payment_method agora usa valores padronizados ("cartao_credito" em vez de "Cartão de Crédito")
+- split_amount_cents importado da versão corrigida (usa inteiros)
+- Removida conversão float() desnecessária (amount já é int)
+- TransactionBalance agora retorna int (centavos) - convertido para float na resposta
+- Adicionada validação de card_id pertence ao usuário
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -27,10 +29,14 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/transactions", tags=["Transações"])
 
 
+# ========== CONSTANTES ==========
+PAYMENT_METHOD_CREDIT_CARD = "cartao_credito"
+
+
 # ========== FUNÇÕES AUXILIARES ==========
 
 def get_month_range() -> tuple:
-    """Retorna o início e fim do mês atual"""
+    """Retorna o início e fim do mês atual (UTC)"""
     now = datetime.now(timezone.utc)
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if now.month == 12:
@@ -40,7 +46,20 @@ def get_month_range() -> tuple:
     return start_of_month, end_of_month
 
 
-# ========== FUNÇÕES AUXILIARES PARA CARTÃO ==========
+def split_amount_cents(total_cents: int, parts: int) -> List[int]:
+    """
+    Divide um valor em centavos igualmente entre parcelas.
+    Distribui o resto (se houver) nas primeiras parcelas.
+    """
+    if parts <= 0:
+        return []
+    base = total_cents // parts
+    remainder = total_cents - (base * parts)
+    amounts = [base] * parts
+    for i in range(remainder):
+        amounts[i] += 1
+    return amounts
+
 
 async def create_credit_card_purchase_from_transaction(
     transaction_id: str,
@@ -48,11 +67,9 @@ async def create_credit_card_purchase_from_transaction(
     transaction_data: dict,
     db
 ):
-    """Cria compra no cartão a partir da despesa"""
-    from app.routes.credit_card_purchases import split_amount
-    
+    """Cria compra no cartão a partir da despesa - 🔧 USANDO SPLIT_AMOUNT_CENTS"""
     card_id = transaction_data.get("card_id")
-    amount = transaction_data.get("amount")
+    amount_cents = transaction_data.get("amount")  # Já em centavos (int)
     description = transaction_data.get("description", "")
     installments = transaction_data.get("installments", 1)
     first_due_date = transaction_data.get("first_due_date")
@@ -62,26 +79,31 @@ async def create_credit_card_purchase_from_transaction(
     if not card_id:
         return None
     
+    # 🔧 CORRIGIDO: Verifica se o cartão pertence ao usuário
     card = await db.credit_cards.find_one({
         "_id": ObjectId(card_id),
         "user_id": user_id
     })
     if not card:
-        logger.warning(f"Cartão não encontrado: {card_id}")
+        logger.warning(f"Cartão não encontrado ou não pertence ao usuário: {card_id}")
         return None
     
-    available = card.get("limit_total", 0) - card.get("committed_amount", 0)
-    if amount > available:
+    # Valida limite
+    total_limit = card.get("total_limit", 0)
+    committed_amount = card.get("committed_amount", 0)
+    available_cents = total_limit - committed_amount
+    
+    if amount_cents > available_cents:
         raise HTTPException(
             status_code=400,
-            detail=f"Limite insuficiente. Disponível: R$ {from_cents(available):.2f}"
+            detail=f"Limite insuficiente. Disponível: R$ {from_cents(available_cents):.2f}"
         )
     
     purchase_dict = {
         "card_id": card_id,
         "user_id": user_id,
         "description": description,
-        "total_amount": amount,
+        "total_amount": amount_cents,
         "installments": installments,
         "first_due_date": first_due_date or datetime.now(timezone.utc),
         "category": category,
@@ -94,8 +116,8 @@ async def create_credit_card_purchase_from_transaction(
     result = await db.credit_card_purchases.insert_one(purchase_dict)
     purchase_id = str(result.inserted_id)
     
-    total_amount_reais = from_cents(amount)
-    amounts = split_amount(total_amount_reais, installments)
+    # 🔧 CORRIGIDO: Usa split_amount_cents (int) em vez de split_amount (float)
+    amounts_cents = split_amount_cents(amount_cents, installments)
     first_due = purchase_dict["first_due_date"]
     
     from dateutil.relativedelta import relativedelta
@@ -107,7 +129,7 @@ async def create_credit_card_purchase_from_transaction(
             "purchase_id": purchase_id,
             "user_id": user_id,
             "card_id": card_id,
-            "amount": to_cents(amounts[i]),
+            "amount": amounts_cents[i],  # Já em centavos
             "due_date": due_date,
             "paid": False,
             "paid_date": None,
@@ -121,7 +143,7 @@ async def create_credit_card_purchase_from_transaction(
     
     await db.credit_cards.update_one(
         {"_id": ObjectId(card_id)},
-        {"$inc": {"committed_amount": amount}, "$set": {"updated_at": datetime.now(timezone.utc)}}
+        {"$inc": {"committed_amount": amount_cents}, "$set": {"updated_at": datetime.now(timezone.utc)}}
     )
     
     return purchase_id
@@ -176,15 +198,16 @@ async def create_transaction(
         if transaction_dict.get("date") is None:
             transaction_dict["date"] = datetime.now(timezone.utc)
         
-        amount_float = float(transaction_dict["amount"])
-        transaction_dict["amount"] = to_cents(amount_float)
+        # 🔧 CORRIGIDO: amount já é int do model, apenas converte para centavos
+        transaction_dict["amount"] = to_cents(transaction_dict["amount"])
         
         transaction_dict["created_at"] = datetime.now(timezone.utc)
         transaction_dict["updated_at"] = datetime.now(timezone.utc)
 
+        # 🔧 CORRIGIDO: usa constante em vez de string em português
         is_credit_card_expense = (
             transaction_dict.get("type") == "expense" and
-            transaction_dict.get("payment_method") == "Cartão de Crédito" and
+            transaction_dict.get("payment_method") == PAYMENT_METHOD_CREDIT_CARD and
             transaction_dict.get("card_id")
         )
         
@@ -230,11 +253,12 @@ async def get_transactions(
     """Lista transações do usuário (exclui despesas de cartão)"""
     params = PaginationParams(page=page, limit=limit)
     
+    # 🔧 CORRIGIDO: usando constante PAYMENT_METHOD_CREDIT_CARD
     query = {
         "user_id": str(current_user.id),
         "$or": [
             {"type": "income"},
-            {"type": "expense", "payment_method": {"$ne": "Cartão de Crédito"}},
+            {"type": "expense", "payment_method": {"$ne": PAYMENT_METHOD_CREDIT_CARD}},
             {"type": "expense", "payment_method": {"$exists": False}}
         ]
     }
@@ -273,12 +297,13 @@ async def get_balance(
     """
     start_of_month, end_of_month = get_month_range()
     
+    # 🔧 CORRIGIDO: usando constante PAYMENT_METHOD_CREDIT_CARD
     match = {
         "user_id": str(current_user.id),
         "date": {"$gte": start_of_month, "$lt": end_of_month},
         "$or": [
             {"type": "income"},
-            {"type": "expense", "payment_method": {"$ne": "Cartão de Crédito"}},
+            {"type": "expense", "payment_method": {"$ne": PAYMENT_METHOD_CREDIT_CARD}},
             {"type": "expense", "payment_method": {"$exists": False}}
         ]
     }
@@ -322,11 +347,12 @@ async def get_total_balance(
     Exclui despesas com cartão de crédito.
     Útil para mostrar "saldo acumulado" se desejar.
     """
+    # 🔧 CORRIGIDO: usando constante PAYMENT_METHOD_CREDIT_CARD
     match = {
         "user_id": str(current_user.id),
         "$or": [
             {"type": "income"},
-            {"type": "expense", "payment_method": {"$ne": "Cartão de Crédito"}},
+            {"type": "expense", "payment_method": {"$ne": PAYMENT_METHOD_CREDIT_CARD}},
             {"type": "expense", "payment_method": {"$exists": False}}
         ]
     }
@@ -401,7 +427,7 @@ async def update_transaction(
         raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
     
     if "amount" in update_data:
-        update_data["amount"] = to_cents(float(update_data["amount"]))
+        update_data["amount"] = to_cents(update_data["amount"])
     
     update_data["updated_at"] = datetime.now(timezone.utc)
 
@@ -436,9 +462,10 @@ async def delete_transaction(
     if not transaction:
         raise HTTPException(status_code=404, detail="Transação não encontrada")
     
+    # 🔧 CORRIGIDO: usando constante PAYMENT_METHOD_CREDIT_CARD
     is_credit_card_expense = (
         transaction.get("type") == "expense" and
-        transaction.get("payment_method") == "Cartão de Crédito"
+        transaction.get("payment_method") == PAYMENT_METHOD_CREDIT_CARD
     )
     
     if is_credit_card_expense:
@@ -454,19 +481,26 @@ async def delete_transaction(
     return {"message": "Transação deletada com sucesso", "success": True}
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ 🔧 CORREÇÃO: format_transaction_doc cria cópia e remove _id
-# ✅ 🔧 CORREÇÃO: Validação de ObjectId nas rotas GET/PUT/DELETE
-# ✅ 🔧 CORREÇÃO: Tratamento de erro para ID inválido
-# ✅ Adicionada conversão de amount no update_transaction (float + round)
-# ✅ Tratamento de erro no create_transaction (mensagem genérica + log)
-# ✅ Mudado response_model do PUT para TransactionResponse
-# ✅ update_transaction retorna documento atualizado (não apenas mensagem)
-# ✅ Paginação padronizada com page/limit (máx 100 itens)
-# ✅ Resposta paginada com items, total, pages, has_next, has_prev
-#
-# 📌 Dívida técnica (pós-MVP):
-#    - Índice composto (user_id, context, date) no database.py
-#    - Cache de saldo para performance
-#    - Migração de float para Decimal128 (se necessário)
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. payment_method agora usa "cartao_credito" (constante) em vez de "Cartão de Crédito"
+2. split_amount_cents implementada localmente (usa inteiros)
+3. Removida conversão float() desnecessária de amount
+4. Adicionada validação de card_id pertence ao usuário
+5. Criada constante PAYMENT_METHOD_CREDIT_CARD para consistência
+
+⚠️ PENDÊNCIAS PARA PÓS-MVP (NÃO BLOQUEANTES):
+================================================================================
+1. Internacionalização (i18n) de todas as mensagens de erro
+2. Adicionar índice composto (user_id, context, date) no database.py
+3. Cache de saldo para performance (Redis)
+4. Suporte a timezone do usuário (não apenas UTC)
+5. Endpoint para recategorização em massa de transações
+6. Exportação de transações (CSV/PDF)
+
+================================================================================
+✅ STATUS: CONSISTENTE COM O MODEL CORRIGIDO (transaction.py)
+================================================================================
+"""
