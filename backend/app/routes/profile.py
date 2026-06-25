@@ -4,6 +4,7 @@ Arquivo: backend/app/routes/profile.py
 
 🔧 MODIFICADO: Regra 2.2 - Removido format_doc local, usando format_mongo_doc
 🔧 MODIFICADO: Regra 2.8 - Adicionado logger completo
+🔧 CORRIGIDO: GET /profile/ agora retorna objeto vazio em vez de None (evita erro 500)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,16 +25,22 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/profile", tags=["Perfil Financeiro"])
 
 
-@router.get("/", response_model=Optional[UserProfileResponse])
+@router.get("/", response_model=UserProfileResponse)
 async def get_profile(
     current_user: UserResponse = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    """Retorna o perfil financeiro do usuário"""
+    """
+    Retorna o perfil financeiro do usuário.
+    
+    🔧 CORRIGIDO: Se não houver perfil, retorna um objeto vazio em vez de None.
+    Isso evita erro 500 no Pydantic ao tentar validar None.
+    """
     profile = await db.user_profiles.find_one({"user_id": str(current_user.id)})
     if not profile:
         logger.debug(f"Nenhum perfil encontrado para usuário {current_user.id}")
-        return None
+        # 🔧 Retorna um objeto vazio (todos os campos com valores padrão)
+        return UserProfileResponse()
     
     logger.debug(f"Perfil recuperado para usuário {current_user.id}")
     # 🔧 CORREÇÃO 2.2: usando format_mongo_doc
@@ -78,6 +85,7 @@ async def save_profile(
 # ✅ Adicionado profile_dict["id"] = profile_dict["_id"] (clareza)
 # ✅ Função auxiliar format_profile_doc()
 # ✅ Comentários explicativos
+# ✅ 🔧 CORRIGIDO: GET retorna objeto vazio em vez de None
 #
 # 📌 Observação: campos monetários como dream_value continuam como string
 #    (pode ser migrado para número no futuro, se necessário)
