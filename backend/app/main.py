@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 import atexit
 
-from app.database import connect_to_mongo, close_mongo_connection, create_indexes
+from app.database import connect_to_mongo, close_mongo_connection, get_database
+# 🔧 CORRIGIDO: Importa create_indexes de indexes.py (não mais de database.py)
+from app.indexes import create_indexes
 from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user, investments, notifications
 from app.routes import achievements, bill_installments
 from app.utils.rate_limiter import init_rate_limiter
@@ -68,8 +70,14 @@ def start_scheduler():
 async def startup():
     """Executado quando o servidor inicia"""
     logger.info("🚀 Iniciando Velorium API...")
+    
+    # Conecta ao MongoDB
     await connect_to_mongo()
-    await create_indexes()
+    
+    # 🔧 CORRIGIDO: Obtém a instância do banco e passa para create_indexes
+    db = get_database()
+    await create_indexes(db)  # ← AGORA PASSA db COMO PARÂMETRO
+    
     start_scheduler()
     logger.info("✅ Velorium API pronta para uso!")
 
