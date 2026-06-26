@@ -14,7 +14,7 @@ Arquivo: backend/app/database.py
 - 🔧 CORRIGIDO: init_telemetry() agora é chamada
 - 🔧 CORRIGIDO: DATABASE_NAME com fallback para string vazia
 - 🔧 MELHORADO: Health check com mais métricas
-- 🔧 MELHORADO: Fallback para certifi com verificação
+- 🔧 MELHORADO: Fallback para certifi com verifikasição
 - 🔧 NOVO: Retry logic com backoff exponencial configurável
 - 🔧 NOVO: Schema de amount aceita int ou double com mínimo 0.01
 - 🔧 NOVO: Context manager para transações com timeout configurável
@@ -26,6 +26,7 @@ Arquivo: backend/app/database.py
 - 🔧 OTIMIZADO: apply_schemas() com list_collections() e comparação robusta
 - 🔧 CORRIGIDO: schemas_are_equal() para comparação ignorando ordem
 - 🔧 NOVO: FORCE_SCHEMA_UPDATE via .env para desenvolvimento
+- 🔧 CORRIGIDO: list_collections() com to_list() para Motor (corrige erro de deploy)
 """
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -394,6 +395,7 @@ async def apply_schemas():
     """
     Aplica JSON Schema validation nas coleções do MongoDB.
     🔧 CORRIGIDO: Usa list_collections() que é mais confiável.
+    🔧 CORRIGIDO: list_collections() com to_list() para Motor.
     🔧 CORRIGIDO: Comparação robusta com schemas_are_equal().
     🔧 NOVO: FORCE_SCHEMA_UPDATE para forçar recriação em dev.
     """
@@ -405,11 +407,17 @@ async def apply_schemas():
     
     # Obtém informações das coleções
     collections = await db.list_collection_names()
-    collection_infos = await db.list_collections()
-    collection_validators = {
-        info["name"]: info.get("options", {}).get("validator", {}) 
-        for info in collection_infos
-    }
+    
+    # 🔧 CORRIGIDO: Motor retorna cursor, precisa de to_list()
+    try:
+        collection_infos = await db.list_collections().to_list(length=100)
+        collection_validators = {
+            info["name"]: info.get("options", {}).get("validator", {}) 
+            for info in collection_infos
+        }
+    except Exception as e:
+        logger.warning(f"⚠️ Erro ao obter validadores: {e}, usando fallback")
+        collection_validators = {}
     
     for collection_name, schema in SCHEMAS.items():
         try:
@@ -474,5 +482,6 @@ if OTEL_ENABLED:
 # ✅ 🔧 OTIMIZADO: apply_schemas() com list_collections()
 # ✅ 🔧 CORRIGIDO: schemas_are_equal() para comparação robusta
 # ✅ 🔧 NOVO: FORCE_SCHEMA_UPDATE via .env
+# ✅ 🔧 CORRIGIDO: list_collections() com to_list() para Motor
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
