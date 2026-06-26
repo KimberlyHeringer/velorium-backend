@@ -7,6 +7,7 @@ Arquivo: backend/app/routes/profile.py
 - Logs detalhados para diagnóstico
 - Tratamento de erro 500
 - Retorno de objeto com campos obrigatórios
+- 🔧 CORRIGIDO: Adiciona campo 'id' explicitamente antes de retornar
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -39,6 +40,7 @@ async def get_profile(
     - Verifica se a coleção existe, cria se necessário
     - Retorna objeto com campos obrigatórios se não houver perfil
     - Logs detalhados para diagnóstico
+    - 🔧 Adiciona campo 'id' explicitamente
     """
     logger.info(f"🔍 Buscando perfil para usuário: {current_user.id}")
     
@@ -68,7 +70,13 @@ async def get_profile(
         
         # 🔧 Converte ObjectId para string e retorna
         logger.debug(f"✅ Perfil recuperado para usuário {current_user.id}")
-        return format_mongo_doc(profile)
+        
+        # 🔧 CORREÇÃO CRÍTICA: Adiciona 'id' explicitamente
+        # O format_mongo_doc pode não estar convertendo _id para id corretamente
+        profile_dict = format_mongo_doc(profile)
+        profile_dict["id"] = str(profile["_id"])
+        
+        return profile_dict
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar perfil: {str(e)}", exc_info=True)
@@ -133,7 +141,11 @@ async def save_profile(
             logger.info(f"✅ Perfil criado para usuário {current_user.id}")
         
         # 🔧 Converte ObjectId para string e retorna
-        return format_mongo_doc(profile_dict)
+        # 🔧 CORREÇÃO CRÍTICA: Adiciona 'id' explicitamente
+        result_dict = format_mongo_doc(profile_dict)
+        result_dict["id"] = str(profile_dict["_id"])
+        
+        return result_dict
         
     except Exception as e:
         logger.error(f"❌ Erro ao salvar perfil: {str(e)}", exc_info=True)
@@ -151,10 +163,12 @@ async def save_profile(
 # ✅ Tratamento de exceções com logging completo
 # ✅ Uso de format_mongo_doc para converter ObjectId
 # ✅ Campos obrigatórios preenchidos no objeto vazio
+# ✅ 🔧 Campo 'id' adicionado explicitamente em GET e POST
 #
 # 🔧 CORREÇÕES REALIZADAS:
 # - ✅ Erro 500 no GET: coleção não existe → criada automaticamente
 # - ✅ Erro 500 no GET: profile None → retorna objeto com campos obrigatórios
+# - ✅ Erro 500 no GET: campo 'id' faltando → adicionado explicitamente
 # - ✅ Logs para diagnóstico rápido
 # - ✅ Fallback em caso de exceção
 #
