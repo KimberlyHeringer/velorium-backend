@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import atexit
 
 from app.database import connect_to_mongo, close_mongo_connection, get_database
-# 🔧 CORRIGIDO: Importa create_indexes de indexes.py (não mais de database.py)
 from app.indexes import create_indexes
 from app.routes import auth, transactions, bills, credit_cards, credit_card_purchases, ia, profile, score, goals, user, investments, notifications
 from app.routes import achievements, bill_installments
@@ -29,18 +28,32 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# ========== 🔧 NOVO: OpenTelemetry - Inicialização ==========
+OTEL_ENABLED = os.getenv("OTEL_ENABLED", "false").lower() == "true"
+
+if OTEL_ENABLED:
+    try:
+        from opentelemetry import trace
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        
+        # Instrumenta o FastAPI
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("✅ OpenTelemetry instrumentado no FastAPI")
+    except ImportError as e:
+        logger.warning(f"⚠️ OpenTelemetry FastAPI não disponível: {e}")
+    except Exception as e:
+        logger.error(f"❌ Erro ao instrumentar FastAPI: {e}", exc_info=True)
+
 # ========== INICIALIZA RATE LIMITER ==========
 init_rate_limiter(app)
 
-# ========== CONFIGURAÇÃO DO CORS (CORRIGIDA) ==========
+# ========== CONFIGURAÇÃO DO CORS ==========
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
 if ENVIRONMENT == "development":
-    # Apenas para testes locais
     ALLOWED_ORIGINS = ["*"]
     logger.warning("🔧 CORS: Desenvolvimento - permitindo todas as origens")
 else:
-    # Produção - lista explícita
     FRONTEND_URL = os.getenv("FRONTEND_URL", "https://seuapp.expo.app")
     ALLOWED_ORIGINS = [
         FRONTEND_URL,
@@ -71,12 +84,25 @@ async def startup():
     """Executado quando o servidor inicia"""
     logger.info("🚀 Iniciando Velorium API...")
     
-    # Conecta ao MongoDB
-    await connect_to_mongo()
-    
-    # 🔧 CORRIGIDO: Obtém a instância do banco e passa para create_indexes
-    db = get_database()
-    await create_indexes(db)  # ← AGORA PASSA db COMO PARÂMETRO
+    # 🔧 NOVO: Span para startup (OpenTelemetry)
+    if OTEL_ENABLED:
+        try:
+            from opentelemetry import trace
+            tracer = trace.get_tracer(__name__)
+            with tracer.start_as_current_span("startup") as span:
+                span.set_attribute("app.name", "velorium")
+                await connect_to_mongo()
+                db = get_database()
+                await create_indexes(db)
+        except Exception as e:
+            logger.error(f"❌ Erro no startup com OpenTelemetry: {e}", exc_info=True)
+            await connect_to_mongo()
+            db = get_database()
+            await create_indexes(db)
+    else:
+        await connect_to_mongo()
+        db = get_database()
+        await create_indexes(db)
     
     start_scheduler()
     logger.info("✅ Velorium API pronta para uso!")
