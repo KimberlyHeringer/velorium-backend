@@ -14,19 +14,25 @@ Arquivo: backend/app/database.py
 - 🔧 CORRIGIDO: init_telemetry() agora é chamada
 - 🔧 CORRIGIDO: DATABASE_NAME com fallback para string vazia
 - 🔧 MELHORADO: Health check com mais métricas
-- 🔧 MELHORADO: Fallback para certifi
-- 🔧 NOVO: Retry logic com backoff exponencial
-- 🔧 NOVO: Schema de amount aceita int ou double
-- 🔧 NOVO: Context manager para transações
+- 🔧 MELHORADO: Fallback para certifi com verificação
+- 🔧 NOVO: Retry logic com backoff exponencial configurável
+- 🔧 NOVO: Schema de amount aceita int ou double com mínimo 0.01
+- 🔧 NOVO: Context manager para transações com timeout configurável
 - 🔧 CORRIGIDO: OpenTelemetry com OTLP Exporter em produção
-- 🔧 CORRIGIDO: MAX_RETRIES configurável via .env
-- 🔧 NOVO: Timeout no context manager
+- 🔧 CORRIGIDO: MAX_RETRIES, RETRY_DELAY, DB_TIMEOUT configuráveis via .env
+- 🔧 CORRIGIDO: Pool size configurável via .env (otimizado para free tier)
+- 🔧 CORRIGIDO: Timeout com validação (mínimo 1 segundo)
+- 🔧 CORRIGIDO: additionalProperties: false nos schemas
+- 🔧 OTIMIZADO: apply_schemas() com list_collections() e comparação robusta
+- 🔧 CORRIGIDO: schemas_are_equal() para comparação ignorando ordem
+- 🔧 NOVO: FORCE_SCHEMA_UPDATE via .env para desenvolvimento
 """
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from typing import Optional, Dict, Any
 import os
 import asyncio
+import json
 from pathlib import Path
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -48,7 +54,10 @@ DATABASE_NAME = os.getenv("DATABASE_NAME") or "velorium_db"
 # ========== CONFIGURAÇÕES (configuráveis via .env) ==========
 MAX_RETRIES = int(os.getenv("MONGO_MAX_RETRIES", "3"))
 RETRY_DELAY = int(os.getenv("MONGO_RETRY_DELAY", "2"))
-DB_TIMEOUT = int(os.getenv("MONGO_TIMEOUT", "30"))
+DB_TIMEOUT = max(1, int(os.getenv("MONGO_TIMEOUT", "30")))  # Mínimo 1 segundo
+MAX_POOL_SIZE = int(os.getenv("MONGO_MAX_POOL_SIZE", "10"))  # Safe para free tier
+MIN_POOL_SIZE = int(os.getenv("MONGO_MIN_POOL_SIZE", "2"))
+FORCE_SCHEMA_UPDATE = os.getenv("FORCE_SCHEMA_UPDATE", "false").lower() == "true"
 
 # ========== VALIDAÇÃO DE MONGO_URI ==========
 if not MONGO_URI:
@@ -135,16 +144,23 @@ def init_telemetry():
 # ========== CONEXÃO COM MONGODB ==========
 
 def get_client_options() -> Dict[str, Any]:
-    """Retorna as opções de configuração do cliente MongoDB."""
+    """
+    Retorna as opções de configuração do cliente MongoDB.
+    🔧 CORRIGIDO: Pool size configurável via .env
+    🔧 CORRIGIDO: certifi com verificação de existência
+    """
+    # 🔧 CORRIGIDO: Verificação de certifi
     try:
         tls_ca = certifi.where()
+        if not os.path.exists(tls_ca):
+            raise FileNotFoundError(f"Arquivo certifi não encontrado: {tls_ca}")
     except Exception:
         tls_ca = None
         logger.warning("⚠️ certifi não disponível, usando certificados do sistema")
     
     return {
-        "maxPoolSize": 50,
-        "minPoolSize": 10,
+        "maxPoolSize": MAX_POOL_SIZE,
+        "minPoolSize": MIN_POOL_SIZE,
         "serverSelectionTimeoutMS": 5000,
         "connectTimeoutMS": 10000,
         "socketTimeoutMS": 20000,
@@ -180,6 +196,7 @@ async def connect_to_mongo():
             db = client[DATABASE_NAME]
             logger.info(f"✅ Conectado ao MongoDB: {DATABASE_NAME}")
             
+            # Aplica JSON Schema validation (otimizado)
             await apply_schemas()
             return
             
@@ -217,7 +234,7 @@ def get_database():
 async def get_db_context(timeout: int = DB_TIMEOUT):
     """
     Context manager para acesso ao banco.
-    🔧 NOVO: Timeout configurável.
+    🔧 NOVO: Timeout configurável com validação.
     """
     db_instance = get_database()
     try:
@@ -265,13 +282,17 @@ async def health_check() -> dict:
 
 # ========== JSON SCHEMA VALIDATION ==========
 
+# 🔧 REFATORADO: Schemas em dicionário (DRY)
+# 🔧 CORRIGIDO: amount com mínimo 0.01
+# 🔧 CORRIGIDO: additionalProperties: False
 SCHEMAS: Dict[str, Dict[str, Any]] = {
     "transactions": {
         "bsonType": "object",
+        "additionalProperties": False,
         "required": ["user_id", "amount", "type", "date", "description"],
         "properties": {
             "user_id": {"bsonType": "string"},
-            "amount": {"bsonType": ["int", "double"], "minimum": 0},
+            "amount": {"bsonType": ["int", "double"], "minimum": 0.01},
             "type": {"enum": ["income", "expense"]},
             "date": {"bsonType": "date"},
             "description": {"bsonType": "string", "maxLength": 200},
@@ -282,11 +303,12 @@ SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     "goals": {
         "bsonType": "object",
+        "additionalProperties": False,
         "required": ["user_id", "name", "target", "current"],
         "properties": {
             "user_id": {"bsonType": "string"},
             "name": {"bsonType": "string", "maxLength": 100},
-            "target": {"bsonType": ["int", "double"], "minimum": 1},
+            "target": {"bsonType": ["int", "double"], "minimum": 0.01},
             "current": {"bsonType": ["int", "double"], "minimum": 0},
             "category": {"bsonType": "string"},
             "completed": {"bsonType": "bool"},
@@ -295,11 +317,12 @@ SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     "bills": {
         "bsonType": "object",
+        "additionalProperties": False,
         "required": ["user_id", "description", "amount"],
         "properties": {
             "user_id": {"bsonType": "string"},
             "description": {"bsonType": "string", "maxLength": 200},
-            "amount": {"bsonType": ["int", "double"], "minimum": 1},
+            "amount": {"bsonType": ["int", "double"], "minimum": 0.01},
             "category": {"bsonType": "string"},
             "paid": {"bsonType": "bool"},
             "installments": {
@@ -313,6 +336,7 @@ SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     "credit_cards": {
         "bsonType": "object",
+        "additionalProperties": False,
         "required": ["user_id", "name", "closing_day", "due_day"],
         "properties": {
             "user_id": {"bsonType": "string"},
@@ -328,15 +352,64 @@ SCHEMAS: Dict[str, Dict[str, Any]] = {
 }
 
 
+def schemas_are_equal(schema1: Dict, schema2: Dict) -> bool:
+    """
+    Compara dois JSON Schemas ignorando ordem e campos irrelevantes.
+    🔧 CORRIGIDO: Comparação robusta para evitar falsos positivos.
+    """
+    # Campos que o MongoDB pode adicionar automaticamente (ignorar)
+    ignore_keys = {"title", "description", "$id", "$schema"}
+    
+    def clean_schema(schema):
+        """Remove campos irrelevantes e normaliza para comparação."""
+        if not isinstance(schema, dict):
+            return schema
+        
+        cleaned = {}
+        for key, value in schema.items():
+            if key in ignore_keys:
+                continue
+            if isinstance(value, dict):
+                cleaned[key] = clean_schema(value)
+            elif isinstance(value, list):
+                cleaned[key] = [
+                    clean_schema(item) if isinstance(item, dict) else item
+                    for item in value
+                ]
+            else:
+                cleaned[key] = value
+        return cleaned
+    
+    cleaned1 = clean_schema(schema1)
+    cleaned2 = clean_schema(schema2)
+    
+    # Comparação com sort_keys para ignorar ordem
+    try:
+        return json.dumps(cleaned1, sort_keys=True) == json.dumps(cleaned2, sort_keys=True)
+    except:
+        return cleaned1 == cleaned2
+
+
 async def apply_schemas():
-    """Aplica JSON Schema validation nas coleções do MongoDB."""
+    """
+    Aplica JSON Schema validation nas coleções do MongoDB.
+    🔧 CORRIGIDO: Usa list_collections() que é mais confiável.
+    🔧 CORRIGIDO: Comparação robusta com schemas_are_equal().
+    🔧 NOVO: FORCE_SCHEMA_UPDATE para forçar recriação em dev.
+    """
     if db is None:
         logger.error("❌ Banco não conectado, não é possível aplicar schemas")
         return
     
     logger.info("🔄 Aplicando JSON Schema validation...")
     
+    # Obtém informações das coleções
     collections = await db.list_collection_names()
+    collection_infos = await db.list_collections()
+    collection_validators = {
+        info["name"]: info.get("options", {}).get("validator", {}) 
+        for info in collection_infos
+    }
     
     for collection_name, schema in SCHEMAS.items():
         try:
@@ -346,11 +419,26 @@ async def apply_schemas():
                 })
                 logger.info(f"✅ Schema criado em '{collection_name}'")
             else:
-                await db.command({
-                    "collMod": collection_name,
-                    "validator": {"$jsonSchema": schema}
-                })
-                logger.info(f"✅ Schema atualizado em '{collection_name}'")
+                existing_validator = collection_validators.get(collection_name, {})
+                existing_schema = existing_validator.get("$jsonSchema", {})
+                
+                # 🔧 CORRIGIDO: FORCE_SCHEMA_UPDATE para desenvolvimento
+                if FORCE_SCHEMA_UPDATE:
+                    await db.command({
+                        "collMod": collection_name,
+                        "validator": {"$jsonSchema": schema}
+                    })
+                    logger.info(f"✅ Schema forçado em '{collection_name}' (FORCE_SCHEMA_UPDATE=true)")
+                # 🔧 CORRIGIDO: Comparação robusta
+                elif not existing_schema or not schemas_are_equal(existing_schema, schema):
+                    await db.command({
+                        "collMod": collection_name,
+                        "validator": {"$jsonSchema": schema}
+                    })
+                    logger.info(f"✅ Schema atualizado em '{collection_name}'")
+                else:
+                    logger.debug(f"ℹ️ Schema já existe em '{collection_name}'")
+                    
         except Exception as e:
             logger.warning(f"⚠️ Schema para '{collection_name}': {e}", exc_info=True)
     
@@ -374,11 +462,17 @@ if OTEL_ENABLED:
 # ✅ 🔧 CORRIGIDO: init_telemetry() chamada
 # ✅ 🔧 CORRIGIDO: DATABASE_NAME com fallback
 # ✅ 🔧 MELHORADO: Health check com métricas
-# ✅ 🔧 MELHORADO: Fallback para certifi
+# ✅ 🔧 MELHORADO: Fallback para certifi com verificação
 # ✅ 🔧 NOVO: Retry logic configurável
-# ✅ 🔧 NOVO: Schema de amount aceita int ou double
+# ✅ 🔧 NOVO: Schema de amount com mínimo 0.01
 # ✅ 🔧 NOVO: Context manager com timeout
 # ✅ 🔧 CORRIGIDO: OTLP Exporter em produção
 # ✅ 🔧 CORRIGIDO: MAX_RETRIES configurável via .env
+# ✅ 🔧 CORRIGIDO: Pool size configurável via .env
+# ✅ 🔧 CORRIGIDO: Timeout com validação (mínimo 1s)
+# ✅ 🔧 CORRIGIDO: additionalProperties: false nos schemas
+# ✅ 🔧 OTIMIZADO: apply_schemas() com list_collections()
+# ✅ 🔧 CORRIGIDO: schemas_are_equal() para comparação robusta
+# ✅ 🔧 NOVO: FORCE_SCHEMA_UPDATE via .env
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
