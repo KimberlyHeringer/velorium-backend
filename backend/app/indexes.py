@@ -3,11 +3,9 @@ Gerenciamento de Índices do MongoDB
 Arquivo: backend/app/indexes.py
 
 🔧 CORRIGIDO:
-- Removidos índices redundantes em transactions
-- Removidos índices redundantes em credit_card_purchases
-- Adicionados índices para user_profiles
-- Adicionado índice composto para achievements
-- Índice de email com collation case-insensitive
+- Removido índice financial_risk (não usado em queries)
+- Removido due_day do índice de bills
+- Usado hashed index para refresh_token_blacklist
 """
 
 from app.utils.logger import setup_logger
@@ -18,7 +16,7 @@ logger = setup_logger(__name__)
 async def create_indexes(db):
     """
     Cria índices essenciais para consultas rápidas.
-    🔧 OTIMIZADO: Sem redundâncias.
+    🔧 OTIMIZADO: Sem redundâncias e com índices otimizados.
     """
     if db is None:
         logger.error("❌ Banco não conectado, não é possível criar índices")
@@ -33,23 +31,19 @@ async def create_indexes(db):
         await db.users.create_index(
             [("email", 1)],
             unique=True,
-            collation={"locale": "en", "strength": 2}  # Case insensitive
+            collation={"locale": "en", "strength": 2}
         )
         logger.info("✅ Índice users.email (unique) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice users.email: {e}", exc_info=True)
     
     # ================================================================
-    # 2. TRANSAÇÕES (OTIMIZADO - sem redundâncias)
+    # 2. TRANSAÇÕES
     # ================================================================
     indexes = [
-        # Composto para dashboard (já cobre user_id + date)
         ("transactions", [("user_id", 1), ("context", 1), ("date", -1)]),
-        # Filtro por tipo
         ("transactions", [("user_id", 1), ("context", 1), ("type", 1)]),
-        # Filtro por categoria
         ("transactions", [("user_id", 1), ("context", 1), ("category", 1)]),
-        # Relatórios globais
         ("transactions", [("date", -1)]),
     ]
     
@@ -62,11 +56,12 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 3. CONTAS A PAGAR
+    # 3. CONTAS A PAGAR (BILLS)
+    # 🔧 CORRIGIDO: Removido due_day (não usado em queries)
     # ================================================================
     indexes = [
-        ("bills", [("user_id", 1), ("paid", 1), ("installments.start_date", 1)]),
-        ("bills", [("user_id", 1), ("paid", 1), ("installments.due_day", 1)]),
+        ("bills", [("user_id", 1), ("paid", 1)]),
+        ("bills", [("user_id", 1), ("installments.start_date", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -78,7 +73,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 4. METAS
+    # 4. METAS (GOALS)
     # ================================================================
     indexes = [
         ("goals", [("user_id", 1), ("completed", 1), ("created_at", -1)]),
@@ -94,19 +89,14 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 5. PERFIL DO USUÁRIO (NOVO)
+    # 5. PERFIL DO USUÁRIO
+    # 🔧 CORRIGIDO: Removido financial_risk (não usado em queries)
     # ================================================================
     try:
         await db.user_profiles.create_index([("user_id", 1)], unique=True)
         logger.info("✅ Índice user_profiles.user_id (unique) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles: {e}", exc_info=True)
-    
-    try:
-        await db.user_profiles.create_index([("user_id", 1), ("financial_risk", 1)])
-        logger.info("✅ Índice user_profiles.financial_risk criado")
-    except Exception as e:
-        logger.warning(f"⚠️ Índice user_profiles.financial_risk: {e}", exc_info=True)
     
     # ================================================================
     # 6. HISTÓRICO DE SCORE
@@ -134,7 +124,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 8. COMPRAS PARCELADAS (OTIMIZADO - sem redundâncias)
+    # 8. COMPRAS PARCELADAS
     # ================================================================
     indexes = [
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1)]),
@@ -151,12 +141,12 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 9. PARCELAS
+    # 9. PARCELAS (INSTALLMENTS)
     # ================================================================
     indexes = [
         ("credit_card_installments", [("user_id", 1), ("paid", 1), ("due_date", 1)]),
         ("credit_card_installments", [("card_id", 1), ("due_date", 1), ("paid", 1)]),
-        ("credit_card_installments", [("purchase_id", 1)]),  # Para joins
+        ("credit_card_installments", [("purchase_id", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -168,7 +158,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 10. CONQUISTAS (NOVO ÍNDICE COMPOSTO)
+    # 10. CONQUISTAS (ACHIEVEMENTS)
     # ================================================================
     try:
         await db.achievements.create_index(
@@ -180,6 +170,7 @@ async def create_indexes(db):
     
     # ================================================================
     # 11. BLACKLIST DE TOKENS (SEGURANÇA)
+    # 🔧 CORRIGIDO: Usa hashed index para tokens longos
     # ================================================================
     try:
         await db.refresh_token_blacklist.create_index(
@@ -187,10 +178,10 @@ async def create_indexes(db):
             expireAfterSeconds=0
         )
         await db.refresh_token_blacklist.create_index(
-            [("token", 1)],
+            [("token", "hashed")],
             unique=True
         )
-        logger.info("✅ Índices refresh_token_blacklist criados")
+        logger.info("✅ Índices refresh_token_blacklist criados (com hashed token)")
     except Exception as e:
         logger.warning(f"⚠️ Índices refresh_token_blacklist: {e}", exc_info=True)
     
@@ -200,10 +191,11 @@ async def create_indexes(db):
 # ========== DECISÕES DOCUMENTADAS ==========
 #
 # ✅ Índices organizados por coleção
+# ✅ 🔧 REMOVIDO: financial_risk (não usado em queries)
+# ✅ 🔧 REMOVIDO: due_day de bills (não usado em queries)
+# ✅ 🔧 CORRIGIDO: hashed index para refresh_token_blacklist
 # ✅ 🔧 REMOVIDOS: índices redundantes em transactions
 # ✅ 🔧 REMOVIDOS: índices redundantes em credit_card_purchases
-# ✅ 🔧 NOVOS: índices para user_profiles (financial_risk)
-# ✅ 🔧 NOVO: índice composto para achievements
 # ✅ 🔧 MELHORADO: índice de email com collation case-insensitive
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
