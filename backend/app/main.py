@@ -1,5 +1,5 @@
 """
-Arquivo principal do backend Velorium - Versão Estável
+Arquivo principal do backend Velorium - Versão Estável com i18n
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,9 @@ from app.database import connect_to_mongo, close_mongo_connection, get_database
 from app.indexes import create_indexes
 from app.utils.rate_limiter import init_rate_limiter
 from app.utils.logger import setup_logger
+
+# ========== 🔧 NOVO: Internacionalização ==========
+from app.middleware.language import LanguageMiddleware
 
 logger = setup_logger(__name__)
 
@@ -35,6 +38,10 @@ app = FastAPI(
     description="API do app de gestão financeira Velorium",
     version="1.0.0"
 )
+
+# ========== 🔧 NOVO: MIDDLEWARE DE IDIOMA ==========
+app.add_middleware(LanguageMiddleware)
+logger.info("✅ Middleware de idioma registrado")
 
 # ========== OPENTELEMETRY ==========
 if OTEL_ENABLED:
@@ -143,7 +150,6 @@ async def shutdown():
     logger.info("✅ Desligamento concluído")
 
 # ========== ROTAS (IMPORTS MANUAIS - MAIS CONFIÁVEL) ==========
-# 🔧 CORRIGIDO: Volta para imports manuais (funcionava antes)
 from app.routes import (
     auth, transactions, bills, credit_cards,
     credit_card_purchases, ia, profile, score,
