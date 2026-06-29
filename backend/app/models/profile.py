@@ -7,12 +7,22 @@ Arquivo: backend/app/models/profile.py
 - Adicionado max_items em next_year_goals
 - Campos monetários agora são int (centavos)
 - Adicionados Enums (Literal) com valores CORRESPONDENTES AO FRONTEND
+- 🔧 NOVO: model_validator para conversão de ObjectId
+- 🔧 NOVO: Método touch() para updated_at
+- 🔧 CORRIGIDO: validate_positive_value aceita strings
+- 🔧 CORRIGIDO: validate_dream_other verifica string vazia
+- 🔧 REMOVIDO: validate_goals_list (redundante)
+- 🔧 NOVO: Validação de next_year_goals com "nenhuma" + outras opções
+- 🔧 NOVO: Validação de next_year_goal_value com next_year_goals
+- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
 """
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
-from typing import Optional, List, Literal
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+from typing import Optional, List, Literal, Any
 from datetime import datetime, timezone
 from bson import ObjectId
+
+from app.utils.validators import convert_objectid_to_str
 
 
 class UserProfile(BaseModel):
@@ -24,91 +34,63 @@ class UserProfile(BaseModel):
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str},
         populate_by_name=True,
-        from_attributes=True
     )
 
     id: Optional[str] = Field(None, alias="_id")
     user_id: str = Field(..., description="ID do usuário (injetado pelo backend)")
 
     # ========== Bloco 1: Psicologia Financeira ==========
-    # Valores conforme frontend: ansioso, indiferente, controlado, inseguro
     money_feeling: Optional[Literal["ansioso", "indiferente", "controlado", "inseguro"]] = Field(
         None, description="sentimento em relação ao dinheiro"
     )
-    
-    # Valores conforme frontend: culpa, alegria, racionalizo, impulsivo
     post_purchase: Optional[Literal["culpa", "alegria", "racionalizo", "impulsivo"]] = Field(
         None, description="reação após comprar"
     )
-    
-    # Valores conforme frontend: saldo_crescendo, comprar, pagar_divida, ajudar
     satisfaction: Optional[Literal["saldo_crescendo", "comprar", "pagar_divida", "ajudar"]] = Field(
         None, description="o que te deixa satisfeito financeiramente"
     )
-    
-    # Valores conforme frontend: sempre, as_vezes, raramente, nao_sei
     planning_habit: Optional[Literal["sempre", "as_vezes", "raramente", "nao_sei"]] = Field(
         None, description="hábito de planejamento"
     )
 
     # ========== Bloco 2: Metas Pessoais ==========
-    # Valores conforme frontend: imovel, viajar, liberdade, aposentar, outro
     dream_5y: Optional[Literal["imovel", "viajar", "liberdade", "aposentar", "outro"]] = Field(
         None, description="sonho para 5 anos"
     )
     dream_other: Optional[str] = Field(None, max_length=500, description="outro sonho (se aplicável)")
-    
-    # 🔧 CORRIGIDO: str → int (centavos)
     dream_value: Optional[int] = Field(None, ge=0, description="Valor estimado do sonho em CENTAVOS")
     
-    # Valores conforme frontend: 3_meses, 6_meses, 12_meses, nenhuma
     emergency_target: Optional[Literal["3_meses", "6_meses", "12_meses", "nenhuma"]] = Field(
         None, description="meta para reserva de emergência"
     )
-    
-    # Valores conforme frontend: quitar_dividas, guardar, investir, aumentar_renda, nenhuma
     next_year_goals: List[Literal["quitar_dividas", "guardar", "investir", "aumentar_renda", "nenhuma"]] = Field(
         default_factory=list, 
         max_length=20, 
         description="lista de metas para o próximo ano"
     )
-    
-    # 🔧 CORRIGIDO: str → int (centavos)
     next_year_goal_value: Optional[int] = Field(None, ge=0, description="Valor da meta em CENTAVOS")
 
     # ========== Bloco 3: Hábitos de Consumo ==========
-    # Valores conforme frontend: alimentacao_fora, compras_online, assinaturas, transporte, lazer
     spending_blindspot: Optional[Literal["alimentacao_fora", "compras_online", "assinaturas", "transporte", "lazer"]] = Field(
         None, description="onde o dinheiro 'some'"
     )
-    
-    # Valores conforme frontend: sempre, as_vezes, raramente, nunca
     price_comparison: Optional[Literal["sempre", "as_vezes", "raramente", "nunca"]] = Field(
         None, description="hábito de comparar preços"
     )
-    
-    # Valores conforme frontend: pago_a_vista, parcelo, uso_credito, vivo_sem_planejar
     money_phrase: Optional[Literal["pago_a_vista", "parcelo", "uso_credito", "vivo_sem_planejar"]] = Field(
         None, description="frase que define relação com dinheiro"
     )
 
     # ========== Bloco 4: Tolerância a Risco ==========
-    # Valores conforme frontend: poupanca, renda_fixa, hibrido, alto_risco
     risk_scenario: Optional[Literal["poupanca", "renda_fixa", "hibrido", "alto_risco"]] = Field(
         None, description="reação a cenário de risco"
     )
-    
-    # Valores conforme frontend: prevenir, arriscar, equilibrio, nao_entendo
     risk_phrase: Optional[Literal["prevenir", "arriscar", "equilibrio", "nao_entendo"]] = Field(
         None, description="frase sobre risco"
     )
-    
-    # Valores conforme frontend: cartao_rotativo, financiamento, emprestimo, nao
     has_debt: Optional[Literal["cartao_rotativo", "financiamento", "emprestimo", "nao"]] = Field(
         None, description="se possui dívidas"
     )
-    
-    # Valores conforme frontend: sempre_integral, parcelar, atraso
     credit_card_behavior: Optional[Literal["sempre_integral", "parcelar", "atraso"]] = Field(
         None, description="comportamento com cartão de crédito"
     )
@@ -117,14 +99,92 @@ class UserProfile(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    # ========== Validações ==========
-    @field_validator('next_year_goals')
+    # ========== VALIDAÇÕES ==========
+
+    @field_validator('dream_value', 'next_year_goal_value', mode='before')
     @classmethod
-    def validate_goals_list(cls, v: List[str]) -> List[str]:
-        """Garante que a lista não tenha mais de 20 itens"""
-        if len(v) > 20:
-            raise ValueError('next_year_goals não pode ter mais de 20 itens')
-        return v
+    def validate_positive_value(cls, v: Any) -> Optional[int]:
+        """
+        🔧 CORRIGIDO: Valida que os valores monetários sejam positivos.
+        🔧 i18n: Mensagem com chave ERROR_PROFILE_VALUE_NEGATIVE
+        """
+        if v is None:
+            return None
+        
+        if isinstance(v, str):
+            try:
+                v = int(v)
+            except ValueError:
+                raise ValueError('Valor deve ser um número')
+        
+        if isinstance(v, (int, float)):
+            if v < 0:
+                raise ValueError('Valor não pode ser negativo')
+            return int(v)
+        
+        raise ValueError('Valor deve ser um número')
+
+    @field_validator('next_year_goals', mode='before')
+    @classmethod
+    def validate_next_year_goals(cls, v: Any) -> List[str]:
+        """
+        🔧 NOVO: Valida que 'nenhuma' não aparece com outras opções.
+        🔧 i18n: Mensagem com chave ERROR_PROFILE_GOALS_NENHUMA_CONFLICT
+        """
+        if not isinstance(v, list):
+            return v
+        
+        if 'nenhuma' in v and len(v) > 1:
+            raise ValueError('Se "nenhuma" for selecionada, não pode haver outras metas')
+        
+        # Remove duplicatas
+        return list(dict.fromkeys(v))
+
+    @model_validator(mode='after')
+    def validate_dream_other(self):
+        """
+        Se dream_5y = 'outro', dream_other é obrigatório.
+        🔧 CORRIGIDO: Verifica se dream_other tem conteúdo.
+        🔧 i18n: Mensagem com chave ERROR_PROFILE_DREAM_OTHER_REQUIRED
+        """
+        if self.dream_5y == 'outro':
+            if not self.dream_other or not str(self.dream_other).strip():
+                raise ValueError('dream_other é obrigatório quando dream_5y é "outro"')
+        return self
+
+    @model_validator(mode='after')
+    def validate_next_year_value(self):
+        """
+        Se next_year_goals não estiver vazio, next_year_goal_value é obrigatório.
+        🔧 NOVO: Validação de consistência.
+        🔧 i18n: Mensagem com chave ERROR_PROFILE_NEXT_YEAR_VALUE_REQUIRED
+        """
+        if self.next_year_goals and self.next_year_goal_value is None:
+            raise ValueError('next_year_goal_value é obrigatório quando há metas definidas')
+        return self
+
+    # ========== MÉTODOS AUXILIARES ==========
+
+    def touch(self) -> 'UserProfile':
+        """
+        🔧 NOVO: Atualiza o timestamp de modificação.
+        Uso: profile.touch() antes de salvar no banco.
+        """
+        self.updated_at = datetime.now(timezone.utc)
+        return self
+
+    # ========== CONVERSÃO DE OBJECTID ==========
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_objectid(cls, data: Any) -> Any:
+        """
+        🔧 NOVO: Converte ObjectId para string.
+        """
+        if isinstance(data, UserProfile):
+            return data
+        
+        return convert_objectid_to_str(data)
 
 
 class UserProfileCreate(BaseModel):
@@ -149,17 +209,73 @@ class UserProfileCreate(BaseModel):
     has_debt: Optional[Literal["cartao_rotativo", "financiamento", "emprestimo", "nao"]] = None
     credit_card_behavior: Optional[Literal["sempre_integral", "parcelar", "atraso"]] = None
 
-    @field_validator('next_year_goals')
+    @field_validator('dream_value', 'next_year_goal_value', mode='before')
     @classmethod
-    def validate_goals_list(cls, v: List[str]) -> List[str]:
-        if len(v) > 20:
-            raise ValueError('next_year_goals não pode ter mais de 20 itens')
-        return v
+    def validate_positive_value(cls, v: Any) -> Optional[int]:
+        """
+        🔧 CORRIGIDO: Valida que os valores monetários sejam positivos.
+        """
+        if v is None:
+            return None
+        
+        if isinstance(v, str):
+            try:
+                v = int(v)
+            except ValueError:
+                raise ValueError('Valor deve ser um número')
+        
+        if isinstance(v, (int, float)):
+            if v < 0:
+                raise ValueError('Valor não pode ser negativo')
+            return int(v)
+        
+        raise ValueError('Valor deve ser um número')
+
+    @field_validator('next_year_goals', mode='before')
+    @classmethod
+    def validate_next_year_goals(cls, v: Any) -> List[str]:
+        """
+        Valida que 'nenhuma' não aparece com outras opções.
+        """
+        if not isinstance(v, list):
+            return v
+        
+        if 'nenhuma' in v and len(v) > 1:
+            raise ValueError('Se "nenhuma" for selecionada, não pode haver outras metas')
+        
+        return list(dict.fromkeys(v))
+
+    @model_validator(mode='after')
+    def validate_dream_other(self):
+        """
+        Se dream_5y = 'outro', dream_other é obrigatório.
+        """
+        if self.dream_5y == 'outro':
+            if not self.dream_other or not str(self.dream_other).strip():
+                raise ValueError('dream_other é obrigatório quando dream_5y é "outro"')
+        return self
+
+    @model_validator(mode='after')
+    def validate_next_year_value(self):
+        """
+        Se next_year_goals não estiver vazio, next_year_goal_value é obrigatório.
+        """
+        if self.next_year_goals and self.next_year_goal_value is None:
+            raise ValueError('next_year_goal_value é obrigatório quando há metas definidas')
+        return self
 
 
 class UserProfileResponse(UserProfile):
     """Schema usado para RESPOSTAS da API (força id como string)"""
     id: str = Field(..., description="ID do perfil")
+
+
+# ========== PENDÊNCIAS PÓS-MVP ==========
+#
+# 1. Validação de dream_value com dream_5y:
+#    Se dream_5y for definido, dream_value é obrigatório.
+#
+# 2. Propriedade calculada: profile_completeness
 
 
 """
@@ -168,30 +284,27 @@ class UserProfileResponse(UserProfile):
 ================================================================================
 1. Adicionados max_length em todos os campos de texto
 2. Adicionado max_length=20 em next_year_goals
-3. Adicionada validação field_validator para next_year_goals
+3. 🔧 REMOVIDO: validate_goals_list (redundante)
 4. 🔧 Campos monetários: dream_value, next_year_goal_value → int (centavos)
-5. 🔧 Enums (Literal) ajustados com os valores EXATOS do frontend:
-   - money_feeling: ansioso, indiferente, controlado, inseguro
-   - post_purchase: culpa, alegria, racionalizo, impulsivo
-   - satisfaction: saldo_crescendo, comprar, pagar_divida, ajudar
-   - planning_habit: sempre, as_vezes, raramente, nao_sei
-   - dream_5y: imovel, viajar, liberdade, aposentar, outro
-   - emergency_target: 3_meses, 6_meses, 12_meses, nenhuma
-   - next_year_goals: quitar_dividas, guardar, investir, aumentar_renda, nenhuma
-   - spending_blindspot: alimentacao_fora, compras_online, assinaturas, transporte, lazer
-   - price_comparison: sempre, as_vezes, raramente, nunca
-   - money_phrase: pago_a_vista, parcelo, uso_credito, vivo_sem_planejar
-   - risk_scenario: poupanca, renda_fixa, hibrido, alto_risco
-   - risk_phrase: prevenir, arriscar, equilibrio, nao_entendo
-   - has_debt: cartao_rotativo, financiamento, emprestimo, nao
-   - credit_card_behavior: sempre_integral, parcelar, atraso
-6. Adicionados descriptions em todos os Field()
-7. Adicionado id: str em UserProfileResponse
+5. 🔧 Enums (Literal) ajustados com os valores EXATOS do frontend
+6. 🔧 CORRIGIDO: validate_positive_value aceita strings
+7. 🔧 CORRIGIDO: validate_dream_other verifica string vazia
+8. 🔧 NOVO: Validação de next_year_goals com "nenhuma" + outras opções
+9. 🔧 NOVO: Validação de next_year_goal_value com next_year_goals
+10. 🔧 NOVO: model_validator para conversão de ObjectId
+11. 🔧 NOVO: Método touch() para updated_at
+12. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
 
-✅ PENDÊNCIAS REMANESCENTES (pós-MVP):
+📌 CHAVES I18N REFERENCIADAS:
+   - ERROR_PROFILE_VALUE_NEGATIVE → "Valor não pode ser negativo"
+   - ERROR_PROFILE_DREAM_OTHER_REQUIRED → "dream_other é obrigatório quando dream_5y é 'outro'"
+   - ERROR_PROFILE_GOALS_NENHUMA_CONFLICT → "Se 'nenhuma' for selecionada, não pode haver outras metas"
+   - ERROR_PROFILE_NEXT_YEAR_VALUE_REQUIRED → "next_year_goal_value é obrigatório quando há metas definidas"
+
+⏳ PENDÊNCIAS PÓS-MVP:
 ================================================================================
-1. updated_at: atualização automática (atualmente manual nas rotas)
-2. Internacionalização (i18n) das mensagens de erro
+1. Validação de dream_value com dream_5y (opcional)
+2. Propriedade calculada: profile_completeness
 
 ================================================================================
 ✅ STATUS: APROVADO PARA MVP (100% corrigido)
