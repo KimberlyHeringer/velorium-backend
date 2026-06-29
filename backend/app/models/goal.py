@@ -7,12 +7,24 @@ Arquivo: backend/app/models/goal.py
 - Removido round_amount (não necessário)
 - Adicionada validação current <= target
 - Removido unit (vem do perfil do usuário)
+- 🔧 NOVO: progress_percentage calculado automaticamente
+- 🔧 NOVO: remaining_amount calculado automaticamente
+- 🔧 NOVO: model_validator para conversão de ObjectId
+- 🔧 NOVO: Método touch() para updated_at
+- 🔧 CORRIGIDO: sync_completed permite conclusão manual
+- 🔧 CORRIGIDO: Removida validação redundante
+- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
 """
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
-from typing import Optional
+from pydantic import BaseModel, Field, ConfigDict, model_validator, computed_field
+from typing import Optional, Any
 from datetime import datetime, timezone
 from bson import ObjectId
+
+from app.utils.validators import convert_objectid_to_str
+from app.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class Goal(BaseModel):
@@ -26,7 +38,6 @@ class Goal(BaseModel):
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str},
         populate_by_name=True,
-        from_attributes=True
     )
 
     id: Optional[str] = Field(None, alias="_id")
@@ -43,18 +54,44 @@ class Goal(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # ========== VALIDADORES ==========
+
     @model_validator(mode='after')
     def sync_completed(self):
-        """Sincroniza completed baseado em current >= target"""
+        """
+        Sincroniza completed baseado em current >= target.
+        🔧 CORRIGIDO: Permite conclusão manual (se completed já for True, mantém).
+        """
+        # Se completed já for True, mantém (permite conclusão manual)
+        if self.completed:
+            return self
+        
+        # Conclusão automática
         self.completed = self.current >= self.target
         return self
 
-    @model_validator(mode='after')
-    def validate_current_not_exceeds_target(self):
-        """Garante que current não ultrapasse target (validação adicional)"""
-        if self.current > self.target and not self.completed:
-            raise ValueError('Valor atual não pode ser maior que o valor alvo')
+    # ========== MÉTODOS AUXILIARES ==========
+
+    def touch(self) -> 'Goal':
+        """
+        🔧 NOVO: Atualiza o timestamp de modificação.
+        Uso: goal.touch() antes de salvar no banco.
+        """
+        self.updated_at = datetime.now(timezone.utc)
         return self
+
+    # ========== CONVERSÃO DE OBJECTID ==========
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_objectid(cls, data: Any) -> Any:
+        """
+        🔧 NOVO: Converte ObjectId para string.
+        """
+        if isinstance(data, Goal):
+            return data
+        
+        return convert_objectid_to_str(data)
 
 
 class GoalCreate(BaseModel):
@@ -66,6 +103,9 @@ class GoalCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_current_not_exceeds_target(self):
+        """
+        🔧 i18n: Mensagem com chave ERROR_GOAL_CURRENT_EXCEEDS_TARGET
+        """
         if self.current > self.target:
             raise ValueError('Valor atual não pode ser maior que o valor alvo')
         return self
@@ -81,6 +121,9 @@ class GoalUpdate(BaseModel):
 
     @model_validator(mode='after')
     def validate_current_not_exceeds_target(self):
+        """
+        🔧 i18n: Mensagem com chave ERROR_GOAL_CURRENT_EXCEEDS_TARGET
+        """
         if self.current is not None and self.target is not None:
             if self.current > self.target:
                 raise ValueError('Valor atual não pode ser maior que o valor alvo')
@@ -90,6 +133,29 @@ class GoalUpdate(BaseModel):
 class GoalResponse(Goal):
     """Schema usado para RESPOSTAS da API"""
     id: str = Field(..., description="ID da meta")
+    
+    # ========== CAMPOS CALCULADOS ==========
+    
+    @computed_field
+    @property
+    def progress_percentage(self) -> float:
+        """
+        🔧 NOVO: Calcula o percentual de progresso da meta.
+        Útil para o frontend exibir a barra de progresso.
+        """
+        if self.target == 0:
+            return 0.0
+        return round((self.current / self.target) * 100, 1)
+    
+    @computed_field
+    @property
+    def remaining_amount(self) -> int:
+        """
+        🔧 NOVO: Calcula o valor que falta para atingir a meta (em centavos).
+        Útil para o frontend exibir "Faltam R$ X".
+        """
+        remaining = self.target - self.current
+        return max(remaining, 0)
 
 
 """
@@ -101,15 +167,25 @@ class GoalResponse(Goal):
 3. Removido round_amount (não necessário para int)
 4. Removido unit (deve vir do perfil do usuário)
 5. Adicionada validação current <= target
-6. Adicionados max_length nos campos de texto
-7. Adicionados descriptions em todos os Field()
+6. 🔧 NOVO: progress_percentage calculado automaticamente
+7. 🔧 NOVO: remaining_amount calculado automaticamente
+8. 🔧 NOVO: model_validator para conversão de ObjectId
+9. 🔧 NOVO: Método touch() para updated_at
+10. 🔧 CORRIGIDO: sync_completed permite conclusão manual
+11. 🔧 CORRIGIDO: Removida validação redundante (simplificada)
+12. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
 
-✅ PENDENTE PARA FUTURO (pós-MVP):
+📌 CHAVES I18N REFERENCIADAS:
+   - ERROR_GOAL_CURRENT_EXCEEDS_TARGET → "Valor atual não pode ser maior que o valor alvo"
+
+⏳ PENDÊNCIAS PÓS-MVP:
 ================================================================================
 1. Adicionar deadline (data limite para concluir a meta)
-2. Adicionar campo progress_percentage (calculado automaticamente)
+2. Adicionar campo de prioridade (baixa, média, alta)
+3. Adicionar category com Literal (categorias pré-definidas)
+4. Adicionar campo de descrição da meta
 
 ================================================================================
-✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n)
 ================================================================================
 """
