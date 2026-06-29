@@ -7,14 +7,18 @@ Arquivo: backend/app/models/transaction.py
 - payment_method agora é Literal com valores padronizados
 - TransactionBalance com int (centavos)
 - Removido round_amount (não necessário)
+- 🔧 NOVO: Impede cartão de crédito em receitas
+- 🔧 NOVO: model_validator para conversão de ObjectId
+- 🔧 NOVO: Método touch() para updated_at
+- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
 """
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 from datetime import datetime, timezone
 from bson import ObjectId
 
-from app.utils.validators import validate_date_not_future
+from app.utils.validators import validate_date_not_future, convert_objectid_to_str
 
 
 class Transaction(BaseModel):
@@ -29,7 +33,7 @@ class Transaction(BaseModel):
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str},
         populate_by_name=True,
-        from_attributes=True
+        # from_attributes=True  # ← Removido (mais seguro)
     )
 
     id: Optional[str] = Field(None, alias="_id")
@@ -66,21 +70,37 @@ class Transaction(BaseModel):
 
     @model_validator(mode='after')
     def check_family_context(self):
-        """Valida que se context for 'familia', family_id é obrigatório"""
+        """
+        Valida que se context for 'familia', family_id é obrigatório.
+        🔧 i18n: Mensagem com chave ERROR_FAMILY_ID_REQUIRED
+        """
         if self.context == "familia" and not self.family_id:
             raise ValueError("family_id é obrigatório quando context é 'familia'")
         return self
 
     @model_validator(mode='after')
     def validate_date(self):
-        """Valida que a data não está no futuro"""
+        """Valida que a data não está no futuro."""
         if self.date:
             validate_date_not_future(self.date, "date")
         return self
 
     @model_validator(mode='after')
+    def validate_payment_method_for_income(self):
+        """
+        🔧 NOVO: Impede cartão de crédito em receitas.
+        🔧 i18n: Mensagem com chave ERROR_CARD_NOT_ALLOWED_FOR_INCOME
+        """
+        if self.payment_method == "cartao_credito" and self.type == "income":
+            raise ValueError("Cartão de crédito não é permitido para receitas")
+        return self
+
+    @model_validator(mode='after')
     def validate_credit_card_fields(self):
-        """Valida campos de cartão de crédito quando payment_method é cartao_credito"""
+        """
+        Valida campos de cartão de crédito quando payment_method é cartao_credito.
+        🔧 i18n: Mensagens com chaves ERROR_CARD_ID_REQUIRED, ERROR_INSTALLMENTS_INVALID, ERROR_FIRST_DUE_DATE_REQUIRED
+        """
         if self.payment_method == "cartao_credito" and self.type == "expense":
             if not self.card_id:
                 raise ValueError("card_id é obrigatório quando payment_method é cartao_credito")
@@ -89,6 +109,29 @@ class Transaction(BaseModel):
             if self.installments > 1 and not self.first_due_date:
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
+
+    # ========== MÉTODOS AUXILIARES ==========
+
+    def touch(self) -> 'Transaction':
+        """
+        🔧 NOVO: Atualiza o timestamp de modificação.
+        Uso: transaction.touch() antes de salvar no banco.
+        """
+        self.updated_at = datetime.now(timezone.utc)
+        return self
+
+    # ========== CONVERSÃO DE OBJECTID ==========
+
+    @model_validator(mode='before')
+    @classmethod
+    def convert_objectid(cls, data: Any) -> Any:
+        """
+        🔧 NOVO: Converte ObjectId para string.
+        """
+        if isinstance(data, Transaction):
+            return data
+        
+        return convert_objectid_to_str(data)
 
 
 class TransactionCreate(BaseModel):
@@ -115,6 +158,12 @@ class TransactionCreate(BaseModel):
     def validate_date(self):
         if self.date:
             validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def validate_payment_method_for_income(self):
+        if self.payment_method == "cartao_credito" and self.type == "income":
+            raise ValueError("Cartão de crédito não é permitido para receitas")
         return self
 
     @model_validator(mode='after')
@@ -153,6 +202,12 @@ class TransactionUpdate(BaseModel):
     def validate_date(self):
         if self.date:
             validate_date_not_future(self.date, "date")
+        return self
+
+    @model_validator(mode='after')
+    def validate_payment_method_for_income(self):
+        if self.payment_method == "cartao_credito" and self.type == "income":
+            raise ValueError("Cartão de crédito não é permitido para receitas")
         return self
 
     @model_validator(mode='after')
@@ -207,11 +262,22 @@ class TransactionBalance(BaseModel):
 ✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
 ================================================================================
 1. amount: float → int (centavos)
-2. payment_method: agora Literal com valores padronizados (dinheiro, cartao_credito, etc.)
+2. payment_method: agora Literal com valores padronizados
 3. TransactionBalance: income/expense/balance agora int (centavos)
 4. Removido round_amount (não necessário para int)
 5. Adicionados max_length em category e description
 6. Adicionados descriptions em todos os Field()
+7. 🔧 NOVO: Impede cartão de crédito em receitas
+8. 🔧 NOVO: model_validator para conversão de ObjectId
+9. 🔧 NOVO: Método touch() para updated_at
+10. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+
+📌 CHAVES I18N REFERENCIADAS:
+   - ERROR_FAMILY_ID_REQUIRED → "family_id é obrigatório quando context é 'familia'"
+   - ERROR_CARD_NOT_ALLOWED_FOR_INCOME → "Cartão de crédito não é permitido para receitas"
+   - ERROR_CARD_ID_REQUIRED → "card_id é obrigatório quando payment_method é cartao_credito"
+   - ERROR_INSTALLMENTS_INVALID → "installments deve ser maior que 0"
+   - ERROR_FIRST_DUE_DATE_REQUIRED → "first_due_date é obrigatório quando installments > 1"
 
 ⚠️ ATENÇÃO PARA O FRONTEND:
 ================================================================================
@@ -225,6 +291,6 @@ O frontend precisa enviar payment_method com os valores padronizados:
 - "outros" (antes "Outros")
 
 ================================================================================
-✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n)
 ================================================================================
 """
