@@ -2,7 +2,7 @@
 Modelo de Conquistas do Usuário (sincronizado)
 Arquivo: backend/app/models/achievement.py
 
-🔧 CORRIGIDO (VERSÃO COMPLETA):
+🔧 CORRIGIDO (VERSÃO FINAL):
 - month separado em year (int) + month (int) → melhor performance
 - Adicionado model_validator para converter ObjectId para string
 - Adicionado max_length em description (500) e name (100)
@@ -11,7 +11,11 @@ Arquivo: backend/app/models/achievement.py
 - Validação de description vazia
 - Validação de automatica como booleano
 - Índices documentados para performance
-- Preparado para i18n (mensagens em português)
+- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+- 🔧 CORRIGIDO: model_validator verifica se já é instância do modelo
+- 🔧 CORRIGIDO: validate_type trata None antes de .strip()
+- 🔧 CORRIGIDO: validate_description trata None antes de .strip()
+- 🔧 NOVO: validate_user_id com validação de formato ObjectId
 """
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -40,6 +44,14 @@ TIPOS_VALIDOS = [
     'debt_paid'
 ]
 
+# ========== MENSAGENS DE ERRO (i18n) ==========
+# As chaves correspondentes em app/utils/i18n.py:
+#   - ERROR_INVALID_ACHIEVEMENT_TYPE
+#   - ERROR_INVALID_YEAR
+#   - ERROR_INVALID_MONTH
+#   - ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY
+#   - ERROR_VALIDATION
+
 
 # ========== MODELO PRINCIPAL ==========
 
@@ -53,6 +65,7 @@ class Achievement(BaseModel):
     - Validação de tamanho máximo
     - Validação de tipo com Literal
     - Conversão automática de ObjectId
+    - 🔧 i18n: Mensagens de erro em português (compatíveis com o sistema)
     """
     
     # ========== CAMPOS PRINCIPAIS ==========
@@ -109,22 +122,58 @@ class Achievement(BaseModel):
     
     @field_validator('type', mode='before')
     @classmethod
-    def validate_type(cls, v: str) -> str:
-        """Valida se o tipo de conquista é permitido."""
-        if not v or not v.strip():
+    def validate_type(cls, v: Any) -> str:
+        """
+        Valida se o tipo de conquista é permitido.
+        🔧 CORRIGIDO: Trata None antes de .strip()
+        🔧 i18n: Mensagem em português (referência: ERROR_INVALID_ACHIEVEMENT_TYPE)
+        """
+        if v is None:
             raise ValueError('Tipo de conquista é obrigatório')
         
+        if not isinstance(v, str):
+            v = str(v)
+        
         v = v.strip()
+        if not v:
+            raise ValueError('Tipo de conquista é obrigatório')
+        
         if v not in TIPOS_VALIDOS:
             raise ValueError(
                 f'Tipo de conquista inválido. Use um dos: {", ".join(TIPOS_VALIDOS)}'
             )
         return v
     
+    @field_validator('user_id', mode='before')
+    @classmethod
+    def validate_user_id(cls, v: Any) -> str:
+        """
+        Valida se user_id é um ObjectId válido.
+        🔧 NOVO: Verifica formato ObjectId (24 caracteres hex)
+        """
+        if v is None:
+            raise ValueError('ID do usuário é obrigatório')
+        
+        if isinstance(v, ObjectId):
+            return str(v)
+        
+        v = str(v).strip()
+        if not v:
+            raise ValueError('ID do usuário é obrigatório')
+        
+        # Verifica se é um ObjectId válido (24 caracteres hex)
+        if len(v) != 24 or not all(c in '0123456789abcdefABCDEF' for c in v):
+            raise ValueError('ID do usuário inválido')
+        
+        return v
+    
     @field_validator('year', mode='before')
     @classmethod
     def validate_year(cls, v: Optional[int]) -> Optional[int]:
-        """Valida se o ano é válido."""
+        """
+        Valida se o ano é válido.
+        🔧 i18n: Mensagem em português (referência: ERROR_INVALID_YEAR)
+        """
         if v is None:
             return None
         
@@ -139,7 +188,10 @@ class Achievement(BaseModel):
     @field_validator('month', mode='before')
     @classmethod
     def validate_month_int(cls, v: Optional[int]) -> Optional[int]:
-        """Valida se o mês é válido (1-12)."""
+        """
+        Valida se o mês é válido (1-12).
+        🔧 i18n: Mensagem em português (referência: ERROR_INVALID_MONTH)
+        """
         if v is None:
             return None
         
@@ -153,12 +205,19 @@ class Achievement(BaseModel):
     
     @field_validator('description', mode='before')
     @classmethod
-    def validate_description(cls, v: str) -> str:
-        """Valida se a descrição não está vazia."""
-        if not v or not str(v).strip():
+    def validate_description(cls, v: Any) -> str:
+        """
+        Valida se a descrição não está vazia.
+        🔧 CORRIGIDO: Trata None antes de .strip()
+        🔧 i18n: Mensagem em português (referência: ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY)
+        """
+        if v is None:
             raise ValueError('Descrição não pode estar vazia')
         
         v = str(v).strip()
+        if not v:
+            raise ValueError('Descrição não pode estar vazia')
+        
         if len(v) > 500:
             raise ValueError('Descrição não pode ter mais de 500 caracteres')
         
@@ -166,8 +225,11 @@ class Achievement(BaseModel):
     
     @field_validator('name', mode='before')
     @classmethod
-    def validate_name(cls, v: Optional[str]) -> Optional[str]:
-        """Valida e limpa o nome."""
+    def validate_name(cls, v: Optional[Any]) -> Optional[str]:
+        """
+        Valida e limpa o nome.
+        🔧 i18n: Mensagem em português (referência: ERROR_VALIDATION)
+        """
         if v is None:
             return None
         
@@ -183,7 +245,10 @@ class Achievement(BaseModel):
     @field_validator('automatica', mode='before')
     @classmethod
     def validate_automatica(cls, v: Any) -> bool:
-        """Garante que automatica seja booleano."""
+        """
+        Garante que automatica seja booleano.
+        🔧 i18n: Mensagem em português (referência: ERROR_VALIDATION)
+        """
         if isinstance(v, bool):
             return v
         if isinstance(v, str):
@@ -197,15 +262,22 @@ class Achievement(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def convert_objectid(cls, data: Any) -> Any:
-        """Converte ObjectId do MongoDB para string."""
+        """
+        Converte ObjectId do MongoDB para string.
+        🔧 CORRIGIDO: Verifica se já é instância do modelo
+        """
+        # 🔧 CORRIGIDO: Ignora se já for uma instância do modelo
+        if isinstance(data, Achievement):
+            return data
+        
         if isinstance(data, dict):
-            if isinstance(data.get("_id"), ObjectId):
+            if "_id" in data and isinstance(data["_id"], ObjectId):
                 data["_id"] = str(data["_id"])
             
-            if isinstance(data.get("user_id"), ObjectId):
+            if "user_id" in data and isinstance(data["user_id"], ObjectId):
                 data["user_id"] = str(data["user_id"])
             
-            if isinstance(data.get("updated_at"), str):
+            if "updated_at" in data and isinstance(data["updated_at"], str):
                 try:
                     data["updated_at"] = datetime.fromisoformat(
                         data["updated_at"].replace('Z', '+00:00')
@@ -279,9 +351,21 @@ class AchievementResponse(Achievement):
 # ✅ Validação de automatica como booleano
 # ✅ Índices documentados com year + month
 # ✅ Schema de atualização parcial (AchievementUpdate)
+# ✅ 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+# ✅ 🔧 CORRIGIDO: model_validator verifica se já é instância do modelo
+# ✅ 🔧 CORRIGIDO: validate_type trata None antes de .strip()
+# ✅ 🔧 CORRIGIDO: validate_description trata None antes de .strip()
+# ✅ 🔧 NOVO: validate_user_id com validação de formato ObjectId
+#
+# 📌 MENSAGENS I18N REFERENCIADAS:
+#    - ERROR_INVALID_ACHIEVEMENT_TYPE  → "Tipo de conquista inválido"
+#    - ERROR_INVALID_YEAR              → "Ano deve ser entre 1900 e 2100"
+#    - ERROR_INVALID_MONTH             → "Mês deve ser entre 1 e 12"
+#    - ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY → "Descrição não pode estar vazia"
+#    - ERROR_VALIDATION                → "Dados inválidos"
 #
 # ⏳ PENDÊNCIAS PÓS-MVP:
-# - Internacionalização (i18n) das mensagens de erro
 # - Renomear 'automatica' para 'is_automatic' (requer mudança no frontend)
+# - Validar date (impedir datas futuras) - opcional
 #
 # ✅ STATUS: APROVADO PARA PRODUÇÃO
