@@ -6,6 +6,7 @@ Arquivo: backend/app/indexes.py
 - Removido índice financial_risk (não usado em queries)
 - Removido due_day do índice de bills
 - 🔧 CORRIGIDO: Usa índice regular (não hashed) para refresh_token_blacklist
+- 🔧 NOVO: Índice para credit_card_purchases com fully_paid
 """
 
 from app.utils.logger import setup_logger
@@ -122,12 +123,15 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 8. COMPRAS PARCELADAS
+    # 8. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES)
+    # 🔧 NOVO: Adicionado índice fully_paid para filtrar por status
     # ================================================================
     indexes = [
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1)]),
         ("credit_card_purchases", [("user_id", 1), ("created_at", -1)]),
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1), ("paid", 1)]),
+        # 🔧 NOVO: Índice para filtrar compras por status (fully_paid)
+        ("credit_card_purchases", [("user_id", 1), ("fully_paid", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -197,5 +201,6 @@ async def create_indexes(db):
 # ✅ 🔧 REMOVIDOS: índices redundantes em transactions
 # ✅ 🔧 REMOVIDOS: índices redundantes em credit_card_purchases
 # ✅ 🔧 MELHORADO: índice de email com collation case-insensitive
+# ✅ 🔧 NOVO: Índice credit_card_purchases com fully_paid para filtro por status
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
