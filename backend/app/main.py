@@ -5,9 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import asyncio
-import importlib
 from datetime import datetime, timezone
-from pathlib import Path
 from dotenv import load_dotenv
 
 from app.database import connect_to_mongo, close_mongo_connection, get_database
@@ -57,12 +55,10 @@ except Exception as e:
     logger.warning(f"⚠️ Rate limiter não inicializado: {e}")
 
 # ========== CORS ==========
-# 🔧 CORRIGIDO: CORS com lista específica em desenvolvimento
 if ENVIRONMENT == "development":
     ALLOWED_ORIGINS = [
         "http://localhost:8081",
         "http://localhost:8082",
-        "exp://",
         "http://localhost:19000",
         "http://localhost:19001",
         "http://localhost:19002",
@@ -72,9 +68,9 @@ if ENVIRONMENT == "development":
 else:
     if not FRONTEND_URL:
         logger.error("❌ FRONTEND_URL não configurado para produção!")
-        ALLOWED_ORIGINS = ["https://expo.dev", "exp://"]
+        ALLOWED_ORIGINS = ["https://expo.dev"]
     else:
-        ALLOWED_ORIGINS = [FRONTEND_URL, "https://expo.dev", "exp://"]
+        ALLOWED_ORIGINS = [FRONTEND_URL, "https://expo.dev"]
     logger.info(f"🔧 CORS: Produção - origens permitidas: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
@@ -109,7 +105,6 @@ async def startup():
     """Executado quando o servidor inicia."""
     logger.info("🚀 Iniciando Velorium API...")
     
-    # 🔧 CORRIGIDO: Timeout no startup
     async def initialize():
         await asyncio.wait_for(connect_to_mongo(), timeout=30.0)
         db = get_database()
@@ -147,35 +142,30 @@ async def shutdown():
     await close_mongo_connection()
     logger.info("✅ Desligamento concluído")
 
-# ========== ROTAS (CARREGAMENTO SEGURO) ==========
-# 🔧 CORRIGIDO: Verifica existência de arquivos antes de importar
+# ========== ROTAS (IMPORTS MANUAIS - MAIS CONFIÁVEL) ==========
+# 🔧 CORRIGIDO: Volta para imports manuais (funcionava antes)
+from app.routes import (
+    auth, transactions, bills, credit_cards,
+    credit_card_purchases, ia, profile, score,
+    goals, user, investments, notifications,
+    achievements, bill_installments
+)
 
-ROUTERS = [
-    "auth", "transactions", "bills", "credit_cards",
-    "credit_card_purchases", "ia", "profile", "score",
-    "goals", "user", "investments", "notifications",
-    "achievements", "bill_installments"
-]
-
-for router_name in ROUTERS:
-    try:
-        # 🔧 CORRIGIDO: Verifica se o arquivo existe
-        router_path = Path(__file__).parent / "app" / "routes" / f"{router_name}.py"
-        if not router_path.exists():
-            logger.warning(f"⚠️ Arquivo de rota {router_name}.py não encontrado, pulando...")
-            continue
-            
-        module = importlib.import_module(f"app.routes.{router_name}")
-        if hasattr(module, "router"):
-            app.include_router(module.router, prefix="/api/v1")
-            logger.info(f"✅ Rota /api/v1/{router_name} carregada")
-        else:
-            logger.warning(f"⚠️ Módulo {router_name} não possui 'router'")
-            
-    except ImportError as e:
-        logger.warning(f"⚠️ Rota {router_name} não encontrada: {e}")
-    except Exception as e:
-        logger.error(f"❌ Erro ao carregar rota {router_name}: {e}", exc_info=True)
+# Registrar rotas manualmente
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(transactions.router, prefix="/api/v1")
+app.include_router(bills.router, prefix="/api/v1")
+app.include_router(bill_installments.router, prefix="/api/v1")
+app.include_router(credit_cards.router, prefix="/api/v1")
+app.include_router(credit_card_purchases.router, prefix="/api/v1")
+app.include_router(ia.router, prefix="/api/v1")
+app.include_router(profile.router, prefix="/api/v1")
+app.include_router(score.router, prefix="/api/v1")
+app.include_router(goals.router, prefix="/api/v1")
+app.include_router(user.router, prefix="/api/v1")
+app.include_router(achievements.router, prefix="/api/v1")
+app.include_router(investments.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")
 
 # ========== ENDPOINTS PÚBLICOS ==========
 @app.get("/")
@@ -185,7 +175,6 @@ async def root():
         "version": "1.0.0",
         "status": "operational"
     }
-    # 🔧 CORRIGIDO: Só expõe environment em desenvolvimento
     if ENVIRONMENT == "development":
         response["environment"] = ENVIRONMENT
     return response
@@ -195,14 +184,12 @@ async def health():
     from app.database import health_check
     db_status = await health_check()
     
-    # 🔧 CORRIGIDO: Não expõe environment em produção
     response = {
         "status": "ok",
         "database": db_status,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     
-    # Apenas em desenvolvimento para debug
     if ENVIRONMENT == "development":
         response["environment"] = ENVIRONMENT
     

@@ -5,7 +5,7 @@ Arquivo: backend/app/indexes.py
 🔧 CORRIGIDO:
 - Removido índice financial_risk (não usado em queries)
 - Removido due_day do índice de bills
-- Usado hashed index para refresh_token_blacklist
+- 🔧 CORRIGIDO: Usa índice regular (não hashed) para refresh_token_blacklist
 """
 
 from app.utils.logger import setup_logger
@@ -57,7 +57,6 @@ async def create_indexes(db):
     
     # ================================================================
     # 3. CONTAS A PAGAR (BILLS)
-    # 🔧 CORRIGIDO: Removido due_day (não usado em queries)
     # ================================================================
     indexes = [
         ("bills", [("user_id", 1), ("paid", 1)]),
@@ -90,7 +89,6 @@ async def create_indexes(db):
     
     # ================================================================
     # 5. PERFIL DO USUÁRIO
-    # 🔧 CORRIGIDO: Removido financial_risk (não usado em queries)
     # ================================================================
     try:
         await db.user_profiles.create_index([("user_id", 1)], unique=True)
@@ -162,26 +160,27 @@ async def create_indexes(db):
     # ================================================================
     try:
         await db.achievements.create_index(
-            [("user_id", 1), ("type", 1), ("month", 1), ("date", -1)]
+            [("user_id", 1), ("type", 1), ("year", 1), ("month", 1), ("date", -1)]
         )
-        logger.info("✅ Índice achievements.user_id + type + month + date criado")
+        logger.info("✅ Índice achievements.user_id + type + year + month + date criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice achievements: {e}", exc_info=True)
     
     # ================================================================
     # 11. BLACKLIST DE TOKENS (SEGURANÇA)
-    # 🔧 CORRIGIDO: Usa hashed index para tokens longos
+    # 🔧 CORRIGIDO: Usa índice regular (não hashed) para garantir unicidade
     # ================================================================
     try:
         await db.refresh_token_blacklist.create_index(
             [("expires_at", 1)],
             expireAfterSeconds=0
         )
+        # 🔧 CORRIGIDO: Índice regular com unique (hashed não suporta unique)
         await db.refresh_token_blacklist.create_index(
-            [("token", "hashed")],
+            [("token", 1)],
             unique=True
         )
-        logger.info("✅ Índices refresh_token_blacklist criados (com hashed token)")
+        logger.info("✅ Índices refresh_token_blacklist criados")
     except Exception as e:
         logger.warning(f"⚠️ Índices refresh_token_blacklist: {e}", exc_info=True)
     
@@ -193,7 +192,8 @@ async def create_indexes(db):
 # ✅ Índices organizados por coleção
 # ✅ 🔧 REMOVIDO: financial_risk (não usado em queries)
 # ✅ 🔧 REMOVIDO: due_day de bills (não usado em queries)
-# ✅ 🔧 CORRIGIDO: hashed index para refresh_token_blacklist
+# ✅ 🔧 CORRIGIDO: índice regular (não hashed) para refresh_token_blacklist
+# ✅ 🔧 CORRIGIDO: achievements com year + month (int) em vez de month (string)
 # ✅ 🔧 REMOVIDOS: índices redundantes em transactions
 # ✅ 🔧 REMOVIDOS: índices redundantes em credit_card_purchases
 # ✅ 🔧 MELHORADO: índice de email com collation case-insensitive
