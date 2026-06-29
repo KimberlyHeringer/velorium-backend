@@ -4,6 +4,7 @@ Arquivo: backend/app/utils/validators.py
 
 🔧 MODIFICADO: Regra 2.8 - Adicionado logger
 🔧 CORRIGIDO: Regra 2.2 - format_mongo_doc mantém _id (não converte para id)
+🔧 NOVO: convert_objectid_to_str - Conversão genérica de ObjectId para string
 """
 
 from typing import Any, Dict, List, Optional, Union
@@ -255,3 +256,53 @@ def format_mongo_docs(docs: List[Dict]) -> List[Dict]:
     Alias para format_mongo_list (mantém compatibilidade com código que usa este nome)
     """
     return format_mongo_list(docs)
+
+
+# ========== CONVERSÃO GENÉRICA DE OBJECTID ==========
+
+def convert_objectid_to_str(data: Any) -> Any:
+    """
+    🔧 NOVO: Converte ObjectId do MongoDB para string (genérico).
+    Percorre todos os campos do dicionário, listas e objetos aninhados,
+    convertendo qualquer ObjectId para string.
+    
+    Args:
+        data: Dicionário, lista ou objeto a ser convertido
+    
+    Returns:
+        O mesmo objeto com ObjectIds convertidos para string
+    
+    Exemplo:
+        >>> from bson import ObjectId
+        >>> data = {"_id": ObjectId("507f1f77bcf86cd799439011"), "user_id": ObjectId("507f1f77bcf86cd799439012")}
+        >>> convert_objectid_to_str(data)
+        {"_id": "507f1f77bcf86cd799439011", "user_id": "507f1f77bcf86cd799439012"}
+        
+        >>> data = [{"_id": ObjectId("...")}, {"_id": ObjectId("...")}]
+        >>> convert_objectid_to_str(data)
+        [{"_id": "..."}, {"_id": "..."}]
+    """
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(value, ObjectId):
+                data[key] = str(value)
+            elif isinstance(value, dict):
+                data[key] = convert_objectid_to_str(value)
+            elif isinstance(value, list):
+                data[key] = [convert_objectid_to_str(item) for item in value]
+    elif isinstance(data, list):
+        data = [convert_objectid_to_str(item) for item in data]
+    elif isinstance(data, ObjectId):
+        data = str(data)
+    
+    return data
+
+
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ format_mongo_doc mantém "_id" (não cria "id") - Regra 2.2 e 2.3
+# ✅ Validadores centralizados e reutilizáveis
+# ✅ 🔧 NOVO: convert_objectid_to_str genérico para conversão de ObjectId
+# ✅ 🔧 NOVO: Suporte a dicionários aninhados e listas
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO
