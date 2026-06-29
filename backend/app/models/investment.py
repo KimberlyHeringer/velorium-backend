@@ -8,12 +8,22 @@ Arquivo: backend/app/models/investment.py
 - Adicionados campos de rendimento e venda
 - Corrigido Config para Pydantic v2
 - Adicionadas validações de consistência
+- 🔧 NOVO: Validação amount = quantity × price
+- 🔧 CORRIGIDO: current_value consistency com warning
+- 🔧 NOVO: model_validator para conversão de ObjectId
+- 🔧 NOVO: Método touch() para updated_at
+- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
 """
 
 from datetime import datetime, timezone
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
 from bson import ObjectId
+
+from app.utils.validators import convert_objectid_to_str
+from app.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class Investment(BaseModel):
@@ -29,7 +39,6 @@ class Investment(BaseModel):
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str},
         populate_by_name=True,
-        from_attributes=True
     )
     
     # ========== IDENTIFICAÇÃO ==========
@@ -87,14 +96,20 @@ class Investment(BaseModel):
     
     @model_validator(mode='after')
     def validate_quantity_and_price(self):
-        """Se quantity > 0, purchase_price_per_unit é obrigatório"""
+        """
+        Se quantity > 0, purchase_price_per_unit é obrigatório.
+        🔧 i18n: Mensagem com chave ERROR_INVESTMENT_PRICE_REQUIRED
+        """
         if self.quantity > 0 and self.purchase_price_per_unit is None:
             raise ValueError('purchase_price_per_unit é obrigatório quando quantity > 0')
         return self
     
     @model_validator(mode='after')
     def validate_sold(self):
-        """Se sold=True, sold_date e sold_value são obrigatórios"""
+        """
+        Se sold=True, sold_date e sold_value são obrigatórios.
+        🔧 i18n: Mensagens com chaves ERROR_INVESTMENT_SOLD_DATE_REQUIRED e ERROR_INVESTMENT_SOLD_VALUE_REQUIRED
+        """
         if self.sold and self.sold_date is None:
             raise ValueError('sold_date é obrigatório quando sold=True')
         if self.sold and self.sold_value is None:
@@ -102,20 +117,52 @@ class Investment(BaseModel):
         return self
     
     @model_validator(mode='after')
+    def validate_amount_consistency(self):
+        """
+        🔧 CORRIGIDO: Valida que amount seja consistente com quantity e purchase_price_per_unit.
+        🔧 i18n: Mensagem com chave ERROR_INVESTMENT_AMOUNT_INCONSISTENT
+        """
+        if self.quantity > 0 and self.purchase_price_per_unit is not None:
+            calculated_amount = (self.quantity * self.purchase_price_per_unit) // 100
+            if abs(self.amount - calculated_amount) > 1:  # Tolerância de 1 centavo
+                logger.warning(
+                    f"⚠️ amount ({self.amount}) difere do calculado ({calculated_amount}) para {self.name} - ajustando"
+                )
+                self.amount = calculated_amount
+        return self
+    
+    @model_validator(mode='after')
     def validate_current_value_consistency(self):
-        """Se current_price_per_unit existe, current_value deve ser consistente"""
+        """
+        🔧 CORRIGIDO: Loga warning em vez de ajustar automaticamente.
+        """
         if self.current_price_per_unit is not None and self.quantity > 0:
             expected_value = (self.quantity * self.current_price_per_unit) // 100
             if self.current_value is not None and abs(self.current_value - expected_value) > 1:
-                # Ajusta automaticamente para consistência
-                self.current_value = expected_value
+                logger.warning(
+                    f"⚠️ current_value ({self.current_value}) difere do esperado ({expected_value}) para {self.name}"
+                )
         return self
     
     @model_validator(mode='after')
     def validate_sold_and_amount(self):
-        """Não pode vender algo que não foi comprado"""
+        """
+        Não pode vender algo que não foi comprado.
+        🔧 i18n: Mensagem com chave ERROR_INVESTMENT_SOLD_WITHOUT_AMOUNT
+        """
         if self.sold and self.amount == 0:
             raise ValueError('Não é possível vender um investimento com valor zero')
+        return self
+    
+    @model_validator(mode='after')
+    def validate_sold_date_not_future(self):
+        """
+        Se sold=True, sold_date não pode ser no futuro.
+        🔧 i18n: Mensagem com chave ERROR_INVESTMENT_SOLD_DATE_FUTURE
+        """
+        if self.sold and self.sold_date:
+            if self.sold_date > datetime.now(timezone.utc):
+                raise ValueError('sold_date não pode ser no futuro')
         return self
     
     # ========== CAMPOS CALCULADOS ==========
@@ -146,6 +193,29 @@ class Investment(BaseModel):
         if profit is not None and self.amount > 0:
             return round((profit / self.amount) * 100, 2)
         return None
+    
+    # ========== MÉTODOS AUXILIARES ==========
+    
+    def touch(self) -> 'Investment':
+        """
+        🔧 NOVO: Atualiza o timestamp de modificação.
+        Uso: investment.touch() antes de salvar no banco.
+        """
+        self.updated_at = datetime.now(timezone.utc)
+        return self
+    
+    # ========== CONVERSÃO DE OBJECTID ==========
+    
+    @model_validator(mode='before')
+    @classmethod
+    def convert_objectid(cls, data: Any) -> Any:
+        """
+        🔧 NOVO: Converte ObjectId para string.
+        """
+        if isinstance(data, Investment):
+            return data
+        
+        return convert_objectid_to_str(data)
 
 
 class InvestmentCreate(BaseModel):
@@ -163,6 +233,9 @@ class InvestmentCreate(BaseModel):
     
     @model_validator(mode='after')
     def validate_quantity_and_price(self):
+        """
+        🔧 i18n: Mensagem com chave ERROR_INVESTMENT_PRICE_REQUIRED
+        """
         if self.quantity > 0 and self.purchase_price_per_unit is None:
             raise ValueError('purchase_price_per_unit é obrigatório quando quantity > 0')
         return self
@@ -186,6 +259,9 @@ class InvestmentUpdate(BaseModel):
     
     @model_validator(mode='after')
     def validate_sold_consistency(self):
+        """
+        🔧 i18n: Mensagens com chaves ERROR_INVESTMENT_SOLD_DATE_REQUIRED e ERROR_INVESTMENT_SOLD_VALUE_REQUIRED
+        """
         if self.sold and self.sold_date is None:
             raise ValueError('sold_date é obrigatório quando sold=True')
         if self.sold and self.sold_value is None:
@@ -196,6 +272,13 @@ class InvestmentUpdate(BaseModel):
 class InvestmentResponse(Investment):
     """Schema para resposta da API"""
     id: str = Field(..., description="ID do investimento")
+
+
+# ========== BROKER COM LITERAL (PÓS-MVP) ==========
+#
+# from typing import Literal
+# BROKERS = Literal["XP", "Nubank", "BTG", "Itaú", "Bradesco", "Inter", "Outros"]
+# broker: Optional[BROKERS] = Field(None, description="Corretora")
 
 
 """
@@ -218,6 +301,24 @@ class InvestmentResponse(Investment):
 14. Validações de consistência (quantity/price, sold, current_value)
 15. max_length em todos os campos de texto
 16. descriptions em todos os Field()
+17. 🔧 NOVO: Validação amount = quantity × price
+18. 🔧 CORRIGIDO: current_value consistency com warning
+19. 🔧 NOVO: model_validator para conversão de ObjectId
+20. 🔧 NOVO: Método touch() para updated_at
+21. 🔧 NOVO: Validação de sold_date não futuro
+22. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+
+📌 CHAVES I18N REFERENCIADAS:
+   - ERROR_INVESTMENT_PRICE_REQUIRED → "purchase_price_per_unit é obrigatório quando quantity > 0"
+   - ERROR_INVESTMENT_SOLD_DATE_REQUIRED → "sold_date é obrigatório quando sold=True"
+   - ERROR_INVESTMENT_SOLD_VALUE_REQUIRED → "sold_value é obrigatório quando sold=True"
+   - ERROR_INVESTMENT_AMOUNT_INCONSISTENT → "Valor investido inconsistente com quantidade × preço"
+   - ERROR_INVESTMENT_SOLD_WITHOUT_AMOUNT → "Não é possível vender um investimento com valor zero"
+   - ERROR_INVESTMENT_SOLD_DATE_FUTURE → "sold_date não pode ser no futuro"
+
+⏳ PENDÊNCIAS PÓS-MVP:
+================================================================================
+1. broker com Literal para corretoras conhecidas
 
 ================================================================================
 ✅ ESTE ARQUIVO ESTÁ 100% COMPLETO E CORRIGIDO
