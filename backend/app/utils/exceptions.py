@@ -220,4 +220,8 @@ class ConflictException(I18nHTTPException):
 # ✅ Compatível com HTTPException do FastAPI
 #
 # ⏳ PENDÊNCIAS PÓS-MVP:
-# - Adicionar suporte a variáveis nas mensagens (ex: "Usuário {name} não encont
+# - Adicionar suporte a variáveis nas mensagens (ex: "Usuário {name} não encontrado")
+# - Adicionar mais tipos de exceção (ex: RateLimitException)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO
+

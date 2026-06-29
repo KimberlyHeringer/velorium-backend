@@ -8,10 +8,13 @@ Arquivo: backend/app/routes/bills.py
 - update_future_installments agora recebe new_amount_cents (int)
 - adjust_future_installments default mudado para True
 - Adicionada validação de limite máximo de parcelas (360)
-- Corrigida variável amount_reais → amount_cents (clareza)
+- 🔧 NOVO: I18n com I18nHTTPException
+- 🔧 NOVO: Função get_current_installment()
+- 🔧 i18n: Todas as mensagens de erro substituídas
+- 🔧 CORRIGIDO: parse_installments_dates cria cópia antes de modificar
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from dateutil.relativedelta import relativedelta
@@ -26,6 +29,10 @@ from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_o
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 
+# ========== I18N ==========
+from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
+from app.utils.i18n import get_message, get_language_from_request
+
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
@@ -35,12 +42,23 @@ MAX_INSTALLMENTS = 360  # 30 anos (máximo para financiamentos)
 
 
 def parse_installments_dates(installments: dict) -> dict:
-    """Converte start_date de string para datetime se necessário."""
-    if installments and isinstance(installments, dict):
-        start_date = installments.get("start_date")
-        if start_date and isinstance(start_date, str):
-            installments["start_date"] = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-    return installments
+    """
+    Converte start_date de string para datetime se necessário.
+    🔧 CORRIGIDO: Cria uma cópia antes de modificar (evita efeitos colaterais).
+    """
+    if not installments or not isinstance(installments, dict):
+        return installments
+    
+    # 🔧 CORRIGIDO: Cria uma cópia antes de modificar
+    result = installments.copy()
+    start_date = result.get("start_date")
+    if start_date and isinstance(start_date, str):
+        try:
+            result["start_date"] = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        except (ValueError, TypeError):
+            # Se não conseguir converter, mantém o original
+            pass
+    return result
 
 
 # 🔧 CORRIGIDO: Agora trabalha com inteiros (centavos)
@@ -61,6 +79,20 @@ def split_amount_cents(total_cents: int, parts: int) -> List[int]:
     return amounts
 
 
+# 🔧 NOVO: Função para calcular parcela atual
+async def get_current_installment(bill_id: str, user_id: str, db) -> int:
+    """
+    Calcula a parcela atual com base nas parcelas pagas.
+    🔧 NOVO: Substitui o campo 'current' removido do modelo.
+    """
+    paid_count = await db.bill_installments.count_documents({
+        "bill_id": bill_id,
+        "user_id": user_id,
+        "paid": True
+    })
+    return paid_count + 1
+
+
 # 🔧 CORRIGIDO: amount_cents agora é int
 async def create_bill_installments(
     bill_id: str, 
@@ -78,9 +110,8 @@ async def create_bill_installments(
     
     # 🔧 Validação de limite máximo de parcelas
     if total_parcelas > MAX_INSTALLMENTS:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Número máximo de parcelas é {MAX_INSTALLMENTS}"
+        raise ValidationException(
+            message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED"
         )
     
     start_date = installments_data.get("start_date")
@@ -109,7 +140,6 @@ async def create_bill_installments(
         else:
             due_date = start_date + relativedelta(months=i)
         
-        # 🔧 amount já está em centavos, não precisa de to_cents()
         installment = {
             "bill_id": bill_id,
             "user_id": user_id,
@@ -140,9 +170,8 @@ async def update_future_installments(
     """Atualiza parcelas futuras (não pagas) de uma conta"""
     # 🔧 Validação de limite máximo de parcelas
     if new_total_parcelas > MAX_INSTALLMENTS:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Número máximo de parcelas é {MAX_INSTALLMENTS}"
+        raise ValidationException(
+            message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED"
         )
     
     unpaid_installments = await db.bill_installments.find({
@@ -198,6 +227,7 @@ async def update_future_installments(
 
 @router.post("/", response_model=BillResponse, status_code=status.HTTP_201_CREATED)
 async def create_bill(
+    request: Request,
     bill_data: BillCreate,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -211,13 +241,9 @@ async def create_bill(
         bill_dict["created_at"] = datetime.now(timezone.utc)
         bill_dict["updated_at"] = datetime.now(timezone.utc)
 
-        # 🔧 CORRIGIDO: nome claro - amount já deve estar em centavos (int)
         amount_cents = bill_dict.get("amount", 0)
         installments_info = bill_dict.get("installments", {})
         total_parcelas = installments_info.get("total", 1)
-
-        # 🔧 amount já é centavos (int), não precisa de to_cents
-        # Se o model já está corrigido, amount já é int
 
         if "installments" in bill_dict and isinstance(bill_dict["installments"], dict):
             bill_dict["installments"] = parse_installments_dates(bill_dict["installments"])
@@ -225,13 +251,16 @@ async def create_bill(
         result = await db.bills.insert_one(bill_dict)
         bill_id = str(result.inserted_id)
         
-        # 🔧 CORRIGIDO: passa amount_cents (int)
         await create_bill_installments(bill_id, str(current_user.id), amount_cents, installments_info, db)
         
         created = await db.bills.find_one({"_id": result.inserted_id})
         
         if created and "amount" in created:
             created["amount"] = from_cents(created["amount"])
+        
+        # 🔧 Adiciona current calculado dinamicamente
+        if created:
+            created["current"] = await get_current_installment(bill_id, str(current_user.id), db)
         
         logger.info(f"Conta criada: {bill_data.description} - {total_parcelas} parcelas pendentes para usuário {current_user.id}")
         return format_mongo_doc(created)
@@ -242,11 +271,16 @@ async def create_bill(
         logger.error(f"❌ Erro ao criar conta: {e}")
         import traceback
         logger.debug(f"Detalhes do erro: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="Erro interno ao criar conta")
+        raise I18nHTTPException(
+            status_code=500,
+            message_key="ERROR_SERVER",
+            request=request
+        )
 
 
 @router.get("/", response_model=dict)
 async def list_bills(
+    request: Request,
     page: int = Query(1, ge=1, description="Número da página"),
     limit: int = Query(20, ge=1, le=100, description="Itens por página (máx 100)"),
     paid: Optional[bool] = Query(None, description="Filtrar por status de pagamento"),
@@ -267,6 +301,8 @@ async def list_bills(
     for item in items:
         if "amount" in item:
             item["amount"] = from_cents(item["amount"])
+        # 🔧 Adiciona current calculado dinamicamente
+        item["current"] = await get_current_installment(str(item["_id"]), str(current_user.id), db)
     
     formatted_items = format_mongo_docs(items)
     
@@ -276,6 +312,7 @@ async def list_bills(
 
 @router.get("/{bill_id}", response_model=BillResponse)
 async def get_bill(
+    request: Request,
     bill_id: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -289,21 +326,27 @@ async def get_bill(
     })
     if not bill:
         logger.warning(f"Conta não encontrada: {bill_id} para usuário {current_user.id}")
-        raise HTTPException(status_code=404, detail="Conta não encontrada")
+        raise NotFoundException(
+            message_key="BILL_NOT_FOUND",
+            request=request
+        )
     
     if "amount" in bill:
         bill["amount"] = from_cents(bill["amount"])
     
+    # 🔧 Adiciona current calculado dinamicamente
+    bill["current"] = await get_current_installment(bill_id, str(current_user.id), db)
+    
     return format_mongo_doc(bill)
 
 
-# 🔧 CORRIGIDO: adjust_future_installments default agora é True
 @router.put("/{bill_id}", response_model=BillResponse)
 async def update_bill(
+    request: Request,
     bill_id: str,
     bill_update: BillUpdate,
     adjust_future_installments: bool = Query(
-        True,  # ← CORRIGIDO: agora default True
+        True,
         description="Se True, ajusta parcelas futuras com os novos valores"
     ),
     current_user: UserResponse = Depends(get_current_user),
@@ -318,18 +361,23 @@ async def update_bill(
     })
     if not current_bill:
         logger.warning(f"Conta não encontrada: {bill_id}")
-        raise HTTPException(status_code=404, detail="Conta não encontrada")
+        raise NotFoundException(
+            message_key="BILL_NOT_FOUND",
+            request=request
+        )
     
     update_data = {k: v for k, v in bill_update.model_dump(exclude_unset=True).items() if v is not None}
     if not update_data:
-        raise HTTPException(status_code=400, detail="Nenhum dado para atualizar")
+        raise ValidationException(
+            message_key="BILL_NO_DATA_TO_UPDATE",
+            request=request
+        )
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
     amount_cents = None
     if "amount" in update_data:
         amount_cents = update_data["amount"]
-        # amount já deve ser int (centavos) - se não for, converte
         if isinstance(amount_cents, float):
             amount_cents = int(amount_cents)
         update_data["amount"] = amount_cents
@@ -345,14 +393,16 @@ async def update_bill(
         {"$set": update_data}
     )
     if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Conta não encontrada")
+        raise NotFoundException(
+            message_key="BILL_NOT_FOUND",
+            request=request
+        )
 
     if adjust_future_installments and amount_cents is not None:
         new_installments_info = update_data.get("installments", current_bill.get("installments", {}))
         new_total = new_installments_info.get("total", 1)
         new_start_date = new_installments_info.get("start_date", datetime.now(timezone.utc))
         
-        # 🔧 CORRIGIDO: passa amount_cents (int)
         await update_future_installments(bill_id, str(current_user.id), amount_cents, new_total, new_start_date, db)
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
@@ -360,12 +410,17 @@ async def update_bill(
     if updated and "amount" in updated:
         updated["amount"] = from_cents(updated["amount"])
     
+    # 🔧 Adiciona current calculado dinamicamente
+    if updated:
+        updated["current"] = await get_current_installment(bill_id, str(current_user.id), db)
+    
     logger.info(f"Conta atualizada: {bill_id} para usuário {current_user.id}")
     return format_mongo_doc(updated)
 
 
 @router.delete("/{bill_id}", response_model=dict)
 async def delete_bill(
+    request: Request,
     bill_id: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -385,10 +440,15 @@ async def delete_bill(
     
     if result.deleted_count == 0:
         logger.warning(f"Tentativa de deletar conta inexistente: {bill_id}")
-        raise HTTPException(status_code=404, detail="Conta não encontrada")
+        raise NotFoundException(
+            message_key="BILL_NOT_FOUND",
+            request=request
+        )
     
     logger.info(f"Conta deletada: {bill_id} e {result_installments.deleted_count} parcelas para usuário {current_user.id}")
-    return {"message": "Conta e parcelas deletadas com sucesso", "success": True}
+    
+    language = getattr(request.state, "language", "pt")
+    return {"message": get_message("BILL_DELETED", language), "success": True}
 
 
 """
@@ -401,17 +461,19 @@ async def delete_bill(
 4. adjust_future_installments default mudado para True
 5. Adicionada constante MAX_INSTALLMENTS = 360
 6. Adicionada validação de limite máximo de parcelas
-7. Renomeada variável amount_reais → amount_cents (clareza)
-8. Adicionado tratamento específico para HTTPException
+7. 🔧 NOVO: I18n com I18nHTTPException
+8. 🔧 NOVO: Função get_current_installment()
+9. 🔧 i18n: Todas as mensagens de erro substituídas
+10. 🔧 i18n: Mensagens de sucesso com get_message()
+11. 🔧 CORRIGIDO: parse_installments_dates cria cópia antes de modificar
 
 ⚠️ PENDÊNCIAS PARA PÓS-MVP:
 ================================================================================
-1. Internacionalização (i18n) de todas as mensagens de erro
-2. Adicionar validação de data (impedir start_date no passado? depende da regra de negócio)
-3. Adicionar rota para marcar/desmarcar parcela como paga (já existe em bill_installments)
-4. Adicionar logs de auditoria (quem pagou cada parcela)
+1. Adicionar validação de data (impedir start_date no passado - depende da regra)
+2. Adicionar logs de auditoria (quem pagou cada parcela)
+3. Adicionar webhook para notificações de vencimento
 
 ================================================================================
-✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int)
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n)
 ================================================================================
 """

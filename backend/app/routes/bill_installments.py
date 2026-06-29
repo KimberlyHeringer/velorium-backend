@@ -2,11 +2,15 @@
 Rotas de Parcelas de Contas a Pagar (Bill Installments)
 Arquivo: backend/app/routes/bill_installments.py
 
-🔧 MODIFICADO: Regra 3.3 - Refatoração de Bills
+🔧 CORRIGIDO:
+- 🔧 i18n: Substituído HTTPException por I18nHTTPException
+- 🔧 i18n: Mensagens de erro com get_message()
+- 🔧 NOVO: request: Request em todos os endpoints
+- 🔧 MODIFICADO: Regra 3.3 - Refatoração de Bills
 - Suporte a due_day = null
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from typing import Optional, List
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -19,6 +23,10 @@ from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import format_mongo_doc, format_mongo_docs, validate_object_id
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
+
+# ========== 🔧 NOVO: I18N ==========
+from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
+from app.utils.i18n import get_message
 
 logger = setup_logger(__name__)
 
@@ -45,6 +53,7 @@ async def check_and_update_bill_status(bill_id: str, user_id: str, db):
 
 @router.get("/", response_model=dict)
 async def list_installments(
+    request: Request,
     bill_id: Optional[str] = Query(None, description="Filtrar por conta específica"),
     page: int = Query(1, ge=1, description="Número da página"),
     limit: int = Query(100, ge=1, le=1000, description="Itens por página"),
@@ -75,6 +84,7 @@ async def list_installments(
 
 @router.get("/{installment_id}", response_model=BillInstallmentResponse)
 async def get_installment(
+    request: Request,
     installment_id: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -88,7 +98,10 @@ async def get_installment(
     })
     if not installment:
         logger.warning(f"Parcela não encontrada: {installment_id}")
-        raise HTTPException(status_code=404, detail="Parcela não encontrada")
+        raise NotFoundException(
+            message_key="INSTALLMENT_NOT_FOUND",
+            request=request
+        )
     
     if "amount" in installment:
         installment["amount"] = from_cents(installment["amount"])
@@ -98,6 +111,7 @@ async def get_installment(
 
 @router.put("/{installment_id}/pay", response_model=dict)
 async def pay_installment(
+    request: Request,
     installment_id: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -111,10 +125,16 @@ async def pay_installment(
     })
     if not installment:
         logger.warning(f"Parcela não encontrada para pagamento: {installment_id}")
-        raise HTTPException(status_code=404, detail="Parcela não encontrada")
+        raise NotFoundException(
+            message_key="INSTALLMENT_NOT_FOUND",
+            request=request
+        )
     
     if installment.get("paid", False):
-        raise HTTPException(status_code=400, detail="Parcela já está paga")
+        raise ValidationException(
+            message_key="INSTALLMENT_ALREADY_PAID",
+            request=request
+        )
     
     now = datetime.now(timezone.utc)
     await db.bill_installments.update_one(
@@ -126,11 +146,13 @@ async def pay_installment(
     
     await check_and_update_bill_status(installment["bill_id"], str(current_user.id), db)
     
-    return {"message": "Parcela marcada como paga com sucesso", "success": True}
+    language = getattr(request.state, "language", "pt")
+    return {"message": get_message("INSTALLMENT_PAID_SUCCESS", language), "success": True}
 
 
 @router.put("/bills/{bill_id}/pay-all", response_model=dict)
 async def pay_all_installments(
+    request: Request,
     bill_id: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -143,7 +165,10 @@ async def pay_all_installments(
         "user_id": str(current_user.id)
     })
     if not bill:
-        raise HTTPException(status_code=404, detail="Conta não encontrada")
+        raise NotFoundException(
+            message_key="BILL_NOT_FOUND",
+            request=request
+        )
     
     now = datetime.now(timezone.utc)
     result = await db.bill_installments.update_many(
@@ -157,8 +182,10 @@ async def pay_all_installments(
     )
     
     logger.info(f"Todas as parcelas da conta {bill_id} pagas. {result.modified_count} parcelas atualizadas.")
+    
+    language = getattr(request.state, "language", "pt")
     return {
-        "message": "Todas as parcelas foram pagas com sucesso",
+        "message": get_message("INSTALLMENTS_ALL_PAID", language),
         "success": True,
         "installments_paid": result.modified_count
     }
@@ -175,3 +202,28 @@ async def pay_all_installments(
 # ✅ Conversão de moeda (to_cents/from_cents)
 # ✅ Validação de IDs com validate_object_id
 # ✅ Logs detalhados
+# ✅ 🔧 i18n: Todas as mensagens substituídas
+# ✅ 🔧 i18n: request: Request em todos os endpoints
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO
+
+
+"""
+================================================================================
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+================================================================================
+1. 🔧 i18n: Substituído HTTPException por I18nHTTPException
+2. 🔧 i18n: Mensagens de erro com get_message()
+3. 🔧 NOVO: request: Request em todos os endpoints
+4. 🔧 i18n: Mensagens de sucesso com get_message()
+
+📌 CHAVES I18N REFERENCIADAS:
+   - INSTALLMENT_NOT_FOUND → "Parcela não encontrada"
+   - INSTALLMENT_ALREADY_PAID → "Parcela já está paga"
+   - INSTALLMENT_PAID_SUCCESS → "Parcela paga com sucesso"
+   - INSTALLMENTS_ALL_PAID → "Todas as parcelas foram pagas"
+   - BILL_NOT_FOUND → "Conta não encontrada"
+
+✅ STATUS: CONSISTENTE COM AS ROTAS E BANCO DE DADOS
+================================================================================
+"""
