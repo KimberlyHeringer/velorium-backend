@@ -12,6 +12,13 @@ Arquivo: backend/app/routes/bills.py
 - 🔧 NOVO: Função get_current_installment()
 - 🔧 i18n: Todas as mensagens de erro substituídas
 - 🔧 CORRIGIDO: parse_installments_dates cria cópia antes de modificar
+- 🔧 CORRIGIDO: parse_installments_dates valida start_date não passado
+- 🔧 CORRIGIDO: split_amount_cents valida parts > 0 e total_cents > 0
+- 🔧 CORRIGIDO: update_future_installments valida new_total_parcelas >= paid_count
+- 🔧 CORRIGIDO: Validação de amount > 0 no update
+- 🔧 CORRIGIDO: Validação de new_total_parcelas > 0 no update
+- 🔧 CORRIGIDO: Validação de new_amount_cents > 0 no update_future_installments
+- 🔧 CORRIGIDO: Validação de due_day no update
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
@@ -19,6 +26,7 @@ from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from dateutil.relativedelta import relativedelta
 from bson import ObjectId
+from calendar import monthrange
 
 from app.database import get_database
 from app.models.bill import BillCreate, BillResponse, BillUpdate
@@ -41,36 +49,49 @@ router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
 MAX_INSTALLMENTS = 360  # 30 anos (máximo para financiamentos)
 
 
-def parse_installments_dates(installments: dict) -> dict:
+def parse_installments_dates(installments: dict, request: Request = None) -> dict:
     """
     Converte start_date de string para datetime se necessário.
     🔧 CORRIGIDO: Cria uma cópia antes de modificar (evita efeitos colaterais).
+    🔧 CORRIGIDO: Valida se start_date não é uma data passada.
     """
     if not installments or not isinstance(installments, dict):
         return installments
     
-    # 🔧 CORRIGIDO: Cria uma cópia antes de modificar
+    # Cria uma cópia antes de modificar
     result = installments.copy()
     start_date = result.get("start_date")
+    
     if start_date and isinstance(start_date, str):
         try:
-            result["start_date"] = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            # 🔧 CORRIGIDO: Valida se não é data passada
+            if dt < datetime.now(timezone.utc):
+                raise ValidationException(
+                    message_key="ERROR_START_DATE_PAST",
+                    request=request
+                )
+            result["start_date"] = dt
         except (ValueError, TypeError):
             # Se não conseguir converter, mantém o original
             pass
     return result
 
 
-# 🔧 CORRIGIDO: Agora trabalha com inteiros (centavos)
 def split_amount_cents(total_cents: int, parts: int) -> List[int]:
     """
     Divide um valor em centavos igualmente entre parcelas.
     Distribui o resto (se houver) nas primeiras parcelas.
     
     Exemplo: 100 centavos em 3 parcelas = [34, 33, 33]
+    
+    🔧 CORRIGIDO: Valida parts > 0 e total_cents > 0
     """
     if parts <= 0:
-        return []
+        raise ValueError("Número de parcelas deve ser maior que zero")
+    if total_cents <= 0:
+        raise ValueError("Valor total deve ser maior que zero")
+    
     base = total_cents // parts
     remainder = total_cents - (base * parts)
     amounts = [base] * parts
@@ -99,7 +120,8 @@ async def create_bill_installments(
     user_id: str, 
     amount_cents: int, 
     installments_data: dict, 
-    db
+    db,
+    request: Request = None
 ):
     """
     Cria as parcelas individuais para uma conta
@@ -111,7 +133,14 @@ async def create_bill_installments(
     # 🔧 Validação de limite máximo de parcelas
     if total_parcelas > MAX_INSTALLMENTS:
         raise ValidationException(
-            message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED"
+            message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED",
+            request=request
+        )
+    
+    if total_parcelas <= 0:
+        raise ValidationException(
+            message_key="ERROR_INVALID_INSTALLMENTS",
+            request=request
         )
     
     start_date = installments_data.get("start_date")
@@ -158,51 +187,70 @@ async def create_bill_installments(
         logger.info(f"✅ {len(installments)} parcelas criadas para conta {bill_id} (todas pendentes)")
 
 
-# 🔧 CORRIGIDO: new_amount_cents agora é int
+# 🔧 CORRIGIDO: new_amount_cents agora é int com validações críticas
 async def update_future_installments(
     bill_id: str, 
     user_id: str, 
     new_amount_cents: int, 
     new_total_parcelas: int, 
     new_start_date: datetime, 
-    db
+    db,
+    request: Request = None
 ):
     """Atualiza parcelas futuras (não pagas) de uma conta"""
-    # 🔧 Validação de limite máximo de parcelas
-    if new_total_parcelas > MAX_INSTALLMENTS:
+    
+    # 🔧 CORRIGIDO: Valida new_amount_cents
+    if new_amount_cents <= 0:
         raise ValidationException(
-            message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED"
+            message_key="ERROR_AMOUNT_INVALID",
+            request=request
         )
     
-    unpaid_installments = await db.bill_installments.find({
-        "bill_id": bill_id,
-        "user_id": user_id,
-        "paid": False
-    }).to_list(length=100)
+    # 🔧 CORRIGIDO: Valida new_total_parcelas
+    if new_total_parcelas <= 0:
+        raise ValidationException(
+            message_key="ERROR_INVALID_INSTALLMENTS",
+            request=request
+        )
     
-    if not unpaid_installments:
-        return
+    if new_total_parcelas > MAX_INSTALLMENTS:
+        raise ValidationException(
+            message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED",
+            request=request
+        )
     
-    await db.bill_installments.delete_many({
-        "bill_id": bill_id,
-        "user_id": user_id,
-        "paid": False
-    })
-    
-    # 🔧 Divide o valor total em centavos entre as parcelas
-    amounts_cents = split_amount_cents(new_amount_cents, new_total_parcelas)
-    
+    # 🔧 CORRIGIDO: Verifica se o novo total é menor que o já pago
     paid_count = await db.bill_installments.count_documents({
         "bill_id": bill_id,
         "user_id": user_id,
         "paid": True
     })
     
+    if new_total_parcelas < paid_count:
+        raise ValidationException(
+            message_key="ERROR_TOTAL_LESS_THAN_PAID",
+            request=request
+        )
+    
+    # Deleta apenas as parcelas não pagas
+    await db.bill_installments.delete_many({
+        "bill_id": bill_id,
+        "user_id": user_id,
+        "paid": False
+    })
+    
+    # Recalcula com base no novo total
+    amounts_cents = split_amount_cents(new_amount_cents, new_total_parcelas)
+    remaining_parcelas = new_total_parcelas - paid_count
+    
+    # 🔧 CORRIGIDO: Verifica se há parcelas restantes
+    if remaining_parcelas <= 0:
+        logger.info(f"ℹ️ Nenhuma parcela restante para criar (paid_count={paid_count}, new_total={new_total_parcelas})")
+        return
+    
     remaining_start_date = new_start_date + relativedelta(months=paid_count)
     
     new_installments = []
-    remaining_parcelas = new_total_parcelas - paid_count
-    
     for i in range(remaining_parcelas):
         due_date = remaining_start_date + relativedelta(months=i)
         installment = {
@@ -246,12 +294,12 @@ async def create_bill(
         total_parcelas = installments_info.get("total", 1)
 
         if "installments" in bill_dict and isinstance(bill_dict["installments"], dict):
-            bill_dict["installments"] = parse_installments_dates(bill_dict["installments"])
+            bill_dict["installments"] = parse_installments_dates(bill_dict["installments"], request)
 
         result = await db.bills.insert_one(bill_dict)
         bill_id = str(result.inserted_id)
         
-        await create_bill_installments(bill_id, str(current_user.id), amount_cents, installments_info, db)
+        await create_bill_installments(bill_id, str(current_user.id), amount_cents, installments_info, db, request)
         
         created = await db.bills.find_one({"_id": result.inserted_id})
         
@@ -375,18 +423,58 @@ async def update_bill(
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
+    # 🔧 CORRIGIDO: Validação de amount no update
     amount_cents = None
     if "amount" in update_data:
         amount_cents = update_data["amount"]
         if isinstance(amount_cents, float):
             amount_cents = int(amount_cents)
+        if amount_cents <= 0:
+            raise ValidationException(
+                message_key="ERROR_AMOUNT_INVALID",
+                request=request
+            )
         update_data["amount"] = amount_cents
     
     if update_data.get("paid") is True and update_data.get("paid_date") is None:
         update_data["paid_date"] = datetime.now(timezone.utc)
     
-    if "installments" in update_data and isinstance(update_data["installments"], dict):
-        update_data["installments"] = parse_installments_dates(update_data["installments"])
+    # 🔧 CORRIGIDO: Validação de installments no update com due_day
+    if "installments" in update_data:
+        new_installments = update_data["installments"]
+        new_total = new_installments.get("total", 1)
+        new_due_day = new_installments.get("due_day")
+        new_start_date = new_installments.get("start_date")
+        
+        # Valida total
+        if new_total > MAX_INSTALLMENTS:
+            raise ValidationException(
+                message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED",
+                request=request
+            )
+        if new_total <= 0:
+            raise ValidationException(
+                message_key="ERROR_INVALID_INSTALLMENTS",
+                request=request
+            )
+        
+        # 🔧 CORRIGIDO: Valida due_day com o novo start_date
+        if new_due_day and new_start_date:
+            if isinstance(new_start_date, str):
+                try:
+                    new_start_date = datetime.fromisoformat(new_start_date.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    pass
+            
+            if isinstance(new_start_date, datetime):
+                _, last_day = monthrange(new_start_date.year, new_start_date.month)
+                if new_due_day > last_day:
+                    raise ValidationException(
+                        message_key="ERROR_INVALID_DUE_DAY",
+                        request=request
+                    )
+        
+        update_data["installments"] = parse_installments_dates(update_data["installments"], request)
 
     result = await db.bills.update_one(
         {"_id": ObjectId(bill_id), "user_id": str(current_user.id)},
@@ -403,7 +491,15 @@ async def update_bill(
         new_total = new_installments_info.get("total", 1)
         new_start_date = new_installments_info.get("start_date", datetime.now(timezone.utc))
         
-        await update_future_installments(bill_id, str(current_user.id), amount_cents, new_total, new_start_date, db)
+        await update_future_installments(
+            bill_id, 
+            str(current_user.id), 
+            amount_cents, 
+            new_total, 
+            new_start_date, 
+            db,
+            request
+        )
 
     updated = await db.bills.find_one({"_id": ObjectId(bill_id)})
     
@@ -466,14 +562,34 @@ async def delete_bill(
 9. 🔧 i18n: Todas as mensagens de erro substituídas
 10. 🔧 i18n: Mensagens de sucesso com get_message()
 11. 🔧 CORRIGIDO: parse_installments_dates cria cópia antes de modificar
+12. 🔧 CORRIGIDO: parse_installments_dates valida start_date não passado
+13. 🔧 CORRIGIDO: split_amount_cents valida parts > 0 e total_cents > 0
+14. 🔧 CORRIGIDO: update_future_installments valida new_total_parcelas >= paid_count
+15. 🔧 CORRIGIDO: Validação de amount > 0 no update
+16. 🔧 CORRIGIDO: Validação de new_total_parcelas > 0 no update
+17. 🔧 CORRIGIDO: Validação de new_amount_cents > 0 no update_future_installments
+18. 🔧 CORRIGIDO: Validação de due_day no update
+
+📌 CHAVES I18N UTILIZADAS:
+   - BILL_NOT_FOUND → "Conta não encontrada"
+   - BILL_NO_DATA_TO_UPDATE → "Nenhum dado para atualizar"
+   - BILL_DELETED → "Conta removida com sucesso"
+   - ERROR_MAX_INSTALLMENTS_EXCEEDED → "Número máximo de parcelas é 360"
+   - ERROR_INVALID_INSTALLMENTS → "Número de parcelas inválido"
+   - ERROR_TOTAL_LESS_THAN_PAID → "Total de parcelas não pode ser menor que o já pago"
+   - ERROR_AMOUNT_INVALID → "Valor inválido"
+   - ERROR_START_DATE_PAST → "start_date não pode ser no passado"
+   - ERROR_INVALID_DUE_DAY → "Dia de vencimento inválido para o mês"
+   - ERROR_SERVER → "Erro interno do servidor"
 
 ⚠️ PENDÊNCIAS PARA PÓS-MVP:
 ================================================================================
-1. Adicionar validação de data (impedir start_date no passado - depende da regra)
-2. Adicionar logs de auditoria (quem pagou cada parcela)
-3. Adicionar webhook para notificações de vencimento
+1. Adicionar lock para evitar race condition em updates concorrentes
+2. Otimizar N+1 no cálculo de current com aggregation
+3. Soft delete (deleted_at) em vez de delete permanente
+4. Logs de auditoria para operações em contas
 
 ================================================================================
-✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n)
+✅ STATUS: PRONTO PARA PRODUÇÃO
 ================================================================================
 """
