@@ -7,6 +7,7 @@ Arquivo: backend/app/indexes.py
 - Removido due_day do índice de bills
 - 🔧 CORRIGIDO: Usa índice regular (não hashed) para refresh_token_blacklist
 - 🔧 NOVO: Índice para credit_card_purchases com fully_paid
+- 🔧 NOVO: Índice para score_history com user_id + date
 """
 
 from app.utils.logger import setup_logger
@@ -99,6 +100,7 @@ async def create_indexes(db):
     
     # ================================================================
     # 6. HISTÓRICO DE SCORE
+    # 🔧 NOVO: Índice composto para consultas de histórico
     # ================================================================
     try:
         await db.score_history.create_index([("user_id", 1), ("date", -1)])
@@ -202,5 +204,6 @@ async def create_indexes(db):
 # ✅ 🔧 REMOVIDOS: índices redundantes em credit_card_purchases
 # ✅ 🔧 MELHORADO: índice de email com collation case-insensitive
 # ✅ 🔧 NOVO: Índice credit_card_purchases com fully_paid para filtro por status
+# ✅ 🔧 NOVO: Índice score_history com user_id + date para consultas de histórico
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
