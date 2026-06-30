@@ -2,7 +2,7 @@
 Modelo de Compra Parcelada no Cartão de Crédito
 Arquivo: backend/app/models/credit_card_purchase.py
 
-🔧 CORRIGIDO: 
+🔧 CORRIGIDO (v3 - FINAL):
 - total_amount agora é int (centavos)
 - Adicionado committed_amount (controle de limite)
 - Adicionado remaining_installments
@@ -14,14 +14,27 @@ Arquivo: backend/app/models/credit_card_purchase.py
 - 🔧 NOVO: Método touch() para updated_at
 - 🔧 NOVO: Método to_purchase_data() para sincronizar remaining_installments
 - 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+
+🆕 NOVOS CAMPOS (v3):
+- 🆕 interest_rate: Taxa de juros mensal (%) - 0 a 100
+- 🆕 total_with_interest: Valor total com juros (em centavos)
+- 🆕 paid_by: Quem pagou a compra (auditoria)
+- 🆕 history: Logs de auditoria
+- 🆕 paid_installments_count: Contador de parcelas pagas
+
+📌 CHAVES I18N REFERENCIADAS:
+   - ERROR_INVALID_REMAINING_INSTALLMENTS
+   - ERROR_FULLY_PAID_DATE_REQUIRED
+   - ERROR_FULLY_PAID_DATE_FUTURE
+   - ERROR_INVALID_DUE_DATE
+   - ERROR_INVALID_INTEREST_RATE
 """
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
-from typing import Optional, Any
+from typing import Optional, Any, List
 from datetime import datetime, timezone
 from bson import ObjectId
 
-# 🔧 CORRIGIDO: Usa a função importada
 from app.utils.validators import convert_objectid_to_str
 from app.utils.logger import setup_logger
 
@@ -40,7 +53,6 @@ class CreditCardPurchase(BaseModel):
         arbitrary_types_allowed=True,
         json_encoders={ObjectId: str},
         populate_by_name=True,
-        # from_attributes=True  # ← Removido (mais seguro)
     )
 
     id: Optional[str] = Field(None, alias="_id")
@@ -54,9 +66,27 @@ class CreditCardPurchase(BaseModel):
     # 🔧 NOVO: Controle de limite do cartão
     committed_amount: int = Field(..., ge=0, description="Valor comprometido do limite em CENTAVOS")
     
+    # 🆕 NOVO: Suporte a juros
+    interest_rate: float = Field(
+        default=0.0,
+        ge=0,
+        le=100,
+        description="Taxa de juros mensal (%) - 0 a 100"
+    )
+    total_with_interest: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Valor total com juros em CENTAVOS. Calculado automaticamente se não informado."
+    )
+    
     # Parcelamento
     installments: int = Field(..., ge=1, le=360, description="Número total de parcelas (máx 360 = 30 anos)")
     remaining_installments: int = Field(..., ge=0, description="Parcelas restantes a pagar")
+    paid_installments_count: int = Field(
+        default=0,
+        ge=0,
+        description="🆕 Contador de parcelas já pagas"
+    )
     
     # Datas
     first_due_date: datetime = Field(..., description="Data da primeira parcela")
@@ -70,6 +100,13 @@ class CreditCardPurchase(BaseModel):
     # Status
     fully_paid: bool = Field(default=False, description="Compra totalmente quitada?")
     fully_paid_date: Optional[datetime] = Field(None, description="Data da última parcela paga")
+    
+    # 🆕 Auditoria
+    paid_by: Optional[str] = Field(None, description="🆕 ID do usuário que pagou a compra")
+    history: List[dict] = Field(
+        default_factory=list,
+        description="🆕 Logs de auditoria da compra"
+    )
 
     # ========== VALIDADORES ==========
 
@@ -103,7 +140,6 @@ class CreditCardPurchase(BaseModel):
         """
         if self.committed_amount < self.total_amount:
             # committed_amount pode ser menor se o limite não cobre todo o valor
-            # Ajuste conforme regra de negócio
             logger.warning(f"committed_amount ({self.committed_amount}) < total_amount ({self.total_amount})")
         return self
     
@@ -128,6 +164,25 @@ class CreditCardPurchase(BaseModel):
                 raise ValueError('fully_paid_date não pode ser no futuro')
         return self
 
+    @model_validator(mode='after')
+    def validate_paid_installments_count(self):
+        """
+        🆕 Valida que paid_installments_count não pode ser maior que installments.
+        """
+        if self.paid_installments_count > self.installments:
+            raise ValueError('paid_installments_count não pode ser maior que installments')
+        return self
+
+    @model_validator(mode='after')
+    def validate_total_with_interest(self):
+        """
+        🆕 Valida que total_with_interest seja >= total_amount quando há juros.
+        """
+        if self.interest_rate > 0 and self.total_with_interest is not None:
+            if self.total_with_interest < self.total_amount:
+                raise ValueError('total_with_interest deve ser >= total_amount quando há juros')
+        return self
+
     # ========== VALIDAÇÃO DE CAMPOS ==========
 
     @field_validator('first_due_date', mode='before')
@@ -140,12 +195,22 @@ class CreditCardPurchase(BaseModel):
         if isinstance(v, str):
             try:
                 dt = datetime.fromisoformat(v.replace('Z', '+00:00'))
-                # Valida se o ano é razoável
                 if dt.year < 1900:
                     raise ValueError('first_due_date inválida (ano anterior a 1900)')
                 return dt
             except (ValueError, TypeError):
                 raise ValueError('first_due_date inválida')
+        return v
+
+    @field_validator('interest_rate')
+    @classmethod
+    def validate_interest_rate(cls, v: float) -> float:
+        """
+        🆕 Valida que interest_rate esteja entre 0 e 100.
+        🔧 i18n: Mensagem com chave ERROR_INVALID_INTEREST_RATE
+        """
+        if v < 0 or v > 100:
+            raise ValueError('interest_rate deve estar entre 0 e 100')
         return v
 
     # ========== MÉTODOS AUXILIARES ==========
@@ -158,6 +223,25 @@ class CreditCardPurchase(BaseModel):
         self.updated_at = datetime.now(timezone.utc)
         return self
 
+    def calculate_total_with_interest(self) -> int:
+        """
+        🆕 Calcula o valor total com juros baseado na taxa atual.
+        Se não houver juros, retorna o total_amount.
+        """
+        if self.interest_rate == 0:
+            return self.total_amount
+        
+        # Importa a função de cálculo de parcelas com juros
+        # (evita import circular)
+        from app.routes.credit_card_purchases import calculate_installments_with_interest
+        
+        amounts = calculate_installments_with_interest(
+            self.total_amount,
+            self.installments,
+            self.interest_rate
+        )
+        return sum(amounts)
+
     # ========== CONVERSÃO DE OBJECTID ==========
 
     @model_validator(mode='before')
@@ -169,7 +253,6 @@ class CreditCardPurchase(BaseModel):
         if isinstance(data, CreditCardPurchase):
             return data
         
-        # 🔧 CORRIGIDO: Usa a função importada
         return convert_objectid_to_str(data)
 
 
@@ -183,20 +266,88 @@ class CreditCardPurchaseCreate(BaseModel):
     category: Optional[str] = Field(None, max_length=50, description="Categoria da compra")
     notes: Optional[str] = Field(None, max_length=500, description="Observações")
     
+    # 🆕 NOVO: Suporte a juros
+    interest_rate: float = Field(
+        default=0.0,
+        ge=0,
+        le=100,
+        description="Taxa de juros mensal (%) - 0 a 100"
+    )
+    total_with_interest: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Valor total com juros em CENTAVOS. Calculado automaticamente se não informado."
+    )
+    
+    # ========== VALIDADORES ==========
+
+    @field_validator('interest_rate')
+    @classmethod
+    def validate_interest_rate(cls, v: float) -> float:
+        """🆕 Valida que interest_rate esteja entre 0 e 100."""
+        if v < 0 or v > 100:
+            raise ValueError('interest_rate deve estar entre 0 e 100')
+        return v
+
+    @field_validator('total_amount')
+    @classmethod
+    def validate_total_amount(cls, v: int) -> int:
+        """Valida que total_amount seja maior que zero."""
+        if v <= 0:
+            raise ValueError('total_amount deve ser maior que zero')
+        return v
+
+    @field_validator('installments')
+    @classmethod
+    def validate_installments(cls, v: int) -> int:
+        """Valida que installments esteja entre 1 e 360."""
+        if v < 1 or v > 360:
+            raise ValueError('installments deve estar entre 1 e 360')
+        return v
+
     # ========== MÉTODOS ==========
     
     def to_purchase_data(self) -> dict:
         """
         🔧 NOVO: Converte para dict com remaining_installments sincronizado.
         Garante que remaining_installments seja sempre igual a installments na criação.
+        🆕 Calcula total_with_interest se não informado.
         """
         data = self.model_dump()
         data["remaining_installments"] = data["installments"]
+        data["paid_installments_count"] = 0
         data["fully_paid"] = False
-        data["committed_amount"] = data["total_amount"]  # Compromete todo o valor
+        data["committed_amount"] = data["total_amount"]
         data["created_at"] = datetime.now(timezone.utc)
         data["updated_at"] = datetime.now(timezone.utc)
+        
+        # 🆕 Calcula total_with_interest se não informado
+        if data.get("interest_rate", 0) > 0 and data.get("total_with_interest") is None:
+            from app.routes.credit_card_purchases import calculate_installments_with_interest
+            amounts = calculate_installments_with_interest(
+                data["total_amount"],
+                data["installments"],
+                data["interest_rate"]
+            )
+            data["total_with_interest"] = sum(amounts)
+            data["committed_amount"] = data["total_with_interest"]
+        
         return data
+
+
+class CreditCardPurchaseUpdate(BaseModel):
+    """Schema usado para ATUALIZAR uma compra parcelada"""
+    card_id: Optional[str] = Field(None, description="ID do cartão de crédito")
+    description: Optional[str] = Field(None, max_length=200, description="Descrição da compra")
+    total_amount: Optional[int] = Field(None, gt=0, description="Valor total em CENTAVOS")
+    installments: Optional[int] = Field(None, ge=1, le=360, description="Número de parcelas")
+    first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
+    category: Optional[str] = Field(None, max_length=50, description="Categoria da compra")
+    notes: Optional[str] = Field(None, max_length=500, description="Observações")
+    
+    # 🆕 NOVO: Suporte a juros
+    interest_rate: Optional[float] = Field(None, ge=0, le=100, description="Taxa de juros mensal (%)")
+    total_with_interest: Optional[int] = Field(None, ge=0, description="Valor total com juros em CENTAVOS")
 
 
 class CreditCardPurchaseResponse(CreditCardPurchase):
@@ -211,7 +362,6 @@ class CreditCardPurchaseResponse(CreditCardPurchase):
 #     """Valor total já pago em centavos."""
 #     if self.fully_paid:
 #         return self.total_amount
-#     # Calcula baseado nas parcelas pagas (pós-MVP)
 #     return 0
 #
 # @property
@@ -226,46 +376,7 @@ class CreditCardPurchaseResponse(CreditCardPurchase):
 #     """Verifica se a compra tem parcelas vencidas."""
 #     if self.fully_paid:
 #         return False
-#     # Verifica se há parcelas com due_date < hoje (pós-MVP)
 #     return False
-
-
-# ========== CATEGORIAS (PÓS-MVP) ==========
-#
-# CATEGORIAS_COMPRAS = [
-#     "alimentacao", "transporte", "educacao", "saude", "lazer",
-#     "vestuario", "eletronicos", "casa", "beleza", "outros"
-# ]
-#
-# @field_validator('category', mode='before')
-# @classmethod
-# def validate_category(cls, v: Optional[str]) -> Optional[str]:
-#     if v is None:
-#         return None
-#     v = v.strip()
-#     if v and v not in CATEGORIAS_COMPRAS:
-#         raise ValueError(f'Categoria inválida. Use uma de: {", ".join(CATEGORIAS_COMPRAS)}')
-#     return v
-
-
-# ========== PÓS-MVP: ATUALIZAR REMAINING_INSTALLMENTS ==========
-#
-# async def update_remaining_installments(purchase_id: str, db):
-#     """Recalcula remaining_installments baseado nas parcelas pagas."""
-#     paid_count = await db.credit_card_installments.count_documents({
-#         "purchase_id": purchase_id,
-#         "paid": True
-#     })
-#     total = await db.credit_card_purchases.find_one(
-#         {"_id": ObjectId(purchase_id)},
-#         {"installments": 1}
-#     )
-#     if total:
-#         remaining = total["installments"] - paid_count
-#         await db.credit_card_purchases.update_one(
-#             {"_id": ObjectId(purchase_id)},
-#             {"$set": {"remaining_installments": remaining}}
-#         )
 
 
 """
@@ -283,23 +394,22 @@ class CreditCardPurchaseResponse(CreditCardPurchase):
 9. 🔧 NOVO: Método touch() para updated_at
 10. 🔧 NOVO: Método to_purchase_data() para sincronizar remaining_installments
 11. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+12. 🆕 NOVO: interest_rate (taxa de juros mensal)
+13. 🆕 NOVO: total_with_interest (valor total com juros)
+14. 🆕 NOVO: paid_by (auditoria - quem pagou)
+15. 🆕 NOVO: history (logs de auditoria)
+16. 🆕 NOVO: paid_installments_count (contador de parcelas pagas)
+17. 🆕 NOVO: Validação de interest_rate (0-100%)
+18. 🆕 NOVO: Validação de total_with_interest
+19. 🆕 NOVO: Validação de paid_installments_count
 
 📌 CHAVES I18N REFERENCIADAS:
-   - ERROR_INVALID_REMAINING_INSTALLMENTS → "remaining_installments não pode ser maior que installments"
-   - ERROR_FULLY_PAID_DATE_REQUIRED → "fully_paid_date é obrigatório quando fully_paid=True"
-   - ERROR_FULLY_PAID_DATE_FUTURE → "fully_paid_date não pode ser no futuro"
-   - ERROR_INVALID_DUE_DATE → "first_due_date inválida"
+   - ERROR_INVALID_REMAINING_INSTALLMENTS
+   - ERROR_FULLY_PAID_DATE_REQUIRED
+   - ERROR_FULLY_PAID_DATE_FUTURE
+   - ERROR_INVALID_DUE_DATE
+   - ERROR_INVALID_INTEREST_RATE
 
-⏳ PENDÊNCIAS PÓS-MVP:
-================================================================================
-1. Validação de committed_amount com limite do cartão (requer rota)
-2. Validação de category com lista de categorias permitidas
-3. Propriedades calculadas: total_paid, progress_percentage, is_overdue
-4. Função update_remaining_installments() para recalcular automaticamente
-5. Adicionar campo interest_rate (para compras com juros)
-6. Adicionar campo discount (para descontos à vista)
-
-================================================================================
-✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n)
+✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n + juros)
 ================================================================================
 """

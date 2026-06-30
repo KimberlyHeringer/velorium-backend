@@ -13,6 +13,7 @@ Arquivo: backend/app/indexes.py
 - 🔧 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
 - 🔧 NOVO: partialFilterExpression no TTL para otimização
 - 🔧 NOVO: Índices para bills (category e paid+due_date)
+- 🆕 NOVO: Índice para credit_card_purchases (interest_rate)
 """
 
 from app.utils.logger import setup_logger
@@ -63,7 +64,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 3. CONTAS A PAGAR (BILLS) - ATUALIZADO 🆕
+    # 3. CONTAS A PAGAR (BILLS) - ATUALIZADO
     # ================================================================
     indexes = [
         # Índice existente: filtrar por status
@@ -135,13 +136,19 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 8. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES)
+    # 8. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES) - ATUALIZADO
     # ================================================================
     indexes = [
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1)]),
         ("credit_card_purchases", [("user_id", 1), ("created_at", -1)]),
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1), ("paid", 1)]),
         ("credit_card_purchases", [("user_id", 1), ("fully_paid", 1)]),
+        # 🆕 NOVO: Índice para interest_rate (consultas por taxa de juros)
+        ("credit_card_purchases", [("interest_rate", 1)]),
+        # 🆕 NOVO: Índice para remaining_installments (consultas por parcelas restantes)
+        ("credit_card_purchases", [("user_id", 1), ("remaining_installments", 1)]),
+        # 🆕 NOVO: Índice composto para status + user
+        ("credit_card_purchases", [("user_id", 1), ("fully_paid", 1), ("created_at", -1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -159,6 +166,10 @@ async def create_indexes(db):
         ("credit_card_installments", [("user_id", 1), ("paid", 1), ("due_date", 1)]),
         ("credit_card_installments", [("card_id", 1), ("due_date", 1), ("paid", 1)]),
         ("credit_card_installments", [("purchase_id", 1)]),
+        # 🆕 NOVO: Índice para buscar parcelas de uma compra específica com status
+        ("credit_card_installments", [("purchase_id", 1), ("paid", 1)]),
+        # 🆕 NOVO: Índice para buscar parcelas por data de vencimento
+        ("credit_card_installments", [("user_id", 1), ("due_date", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -170,7 +181,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 10. PARCELAS DE CONTAS A PAGAR (BILL_INSTALLMENTS) 🆕
+    # 10. PARCELAS DE CONTAS A PAGAR (BILL_INSTALLMENTS)
     # ================================================================
     indexes = [
         # Índice principal para listagem por usuário + data de vencimento
@@ -196,7 +207,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS) 🆕
+    # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS)
     # 🔧 CORRIGIDO: Adicionado partialFilterExpression para otimização
     # ================================================================
     try:
@@ -277,5 +288,12 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices bills atualizados
 #   - (user_id, category) - Filtro por categoria
 #   - (user_id, paid, due_date) - Filtros combinados (status + data)
+# ✅ 🆕 NOVO: Índices credit_card_purchases atualizados
+#   - (interest_rate) - Filtro por taxa de juros
+#   - (user_id, remaining_installments) - Filtro por parcelas restantes
+#   - (user_id, fully_paid, created_at) - Filtros combinados
+# ✅ 🆕 NOVO: Índices credit_card_installments atualizados
+#   - (purchase_id, paid) - Buscar parcelas por compra + status
+#   - (user_id, due_date) - Buscar parcelas por data de vencimento
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
