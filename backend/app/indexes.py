@@ -8,6 +8,7 @@ Arquivo: backend/app/indexes.py
 - 🔧 CORRIGIDO: Usa índice regular (não hashed) para refresh_token_blacklist
 - 🔧 NOVO: Índice para credit_card_purchases com fully_paid
 - 🔧 NOVO: Índice para score_history com user_id + date
+- 🔧 NOVO: Índice TTL para reset_token_expires (expiração automática)
 """
 
 from app.utils.logger import setup_logger
@@ -100,7 +101,6 @@ async def create_indexes(db):
     
     # ================================================================
     # 6. HISTÓRICO DE SCORE
-    # 🔧 NOVO: Índice composto para consultas de histórico
     # ================================================================
     try:
         await db.score_history.create_index([("user_id", 1), ("date", -1)])
@@ -126,13 +126,11 @@ async def create_indexes(db):
     
     # ================================================================
     # 8. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES)
-    # 🔧 NOVO: Adicionado índice fully_paid para filtrar por status
     # ================================================================
     indexes = [
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1)]),
         ("credit_card_purchases", [("user_id", 1), ("created_at", -1)]),
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1), ("paid", 1)]),
-        # 🔧 NOVO: Índice para filtrar compras por status (fully_paid)
         ("credit_card_purchases", [("user_id", 1), ("fully_paid", 1)]),
     ]
     
@@ -174,14 +172,12 @@ async def create_indexes(db):
     
     # ================================================================
     # 11. BLACKLIST DE TOKENS (SEGURANÇA)
-    # 🔧 CORRIGIDO: Usa índice regular (não hashed) para garantir unicidade
     # ================================================================
     try:
         await db.refresh_token_blacklist.create_index(
             [("expires_at", 1)],
             expireAfterSeconds=0
         )
-        # 🔧 CORRIGIDO: Índice regular com unique (hashed não suporta unique)
         await db.refresh_token_blacklist.create_index(
             [("token", 1)],
             unique=True
@@ -189,6 +185,19 @@ async def create_indexes(db):
         logger.info("✅ Índices refresh_token_blacklist criados")
     except Exception as e:
         logger.warning(f"⚠️ Índices refresh_token_blacklist: {e}", exc_info=True)
+    
+    # ================================================================
+    # 12. RESET TOKEN (TTL para expiração automática)
+    # 🔧 NOVO: Remove tokens de redefinição de senha expirados automaticamente
+    # ================================================================
+    try:
+        await db.users.create_index(
+            [("reset_token_expires", 1)],
+            expireAfterSeconds=0
+        )
+        logger.info("✅ Índice reset_token_expires (TTL) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice reset_token_expires: {e}", exc_info=True)
     
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
@@ -205,5 +214,6 @@ async def create_indexes(db):
 # ✅ 🔧 MELHORADO: índice de email com collation case-insensitive
 # ✅ 🔧 NOVO: Índice credit_card_purchases com fully_paid para filtro por status
 # ✅ 🔧 NOVO: Índice score_history com user_id + date para consultas de histórico
+# ✅ 🔧 NOVO: Índice TTL para reset_token_expires (expiração automática)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

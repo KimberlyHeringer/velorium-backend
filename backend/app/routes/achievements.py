@@ -7,6 +7,11 @@ Arquivo: backend/app/routes/achievements.py
 - Adicionado suporte a internacionalização
 - Usa get_message() para mensagens de sucesso
 - Adicionado request: Request nos endpoints
+- 🔧 CORRIGIDO: Usa convert_objectid_to_str em vez de format_mongo_doc
+- 🔧 CORRIGIDO: Query de duplicação no create com year/month None
+- 🔧 CORRIGIDO: Query de duplicação no sync com year/month None
+- 🔧 CORRIGIDO: Mensagens de sync com pluralização
+- 🔧 CORRIGIDO: Removido try/except desnecessário no delete
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -19,10 +24,10 @@ from app.models.achievement import AchievementCreate, AchievementResponse
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
-from app.utils.validators import format_mongo_doc, validate_object_id
+from app.utils.validators import validate_object_id, convert_objectid_to_str
 from app.utils.logger import setup_logger
 
-# ========== 🔧 NOVO: Internacionalização ==========
+# ========== I18N ==========
 from app.utils.i18n import get_message
 from app.utils.exceptions import (
     I18nHTTPException,
@@ -54,7 +59,7 @@ async def get_achievements(
         db.achievements, query, params, sort=[("date", -1)]
     )
     
-    formatted_items = [format_mongo_doc(item) for item in items]
+    formatted_items = [convert_objectid_to_str(item) for item in items]
     
     return paginate(formatted_items, total, params).model_dump()
 
@@ -71,13 +76,14 @@ async def create_achievement(
     ach_dict["user_id"] = str(current_user.id)
     ach_dict["date"] = datetime.now(timezone.utc)
     
-    # 🔧 VERIFICA SE JÁ EXISTE (evita duplicação)
-    existing = await db.achievements.find_one({
-        "user_id": str(current_user.id),
-        "type": ach_data.type,
-        "year": ach_data.year,
-        "month": ach_data.month
-    })
+    # 🔧 CORRIGIDO: Query com condições (year/month podem ser None)
+    query = {"user_id": str(current_user.id), "type": ach_data.type}
+    if ach_data.year is not None:
+        query["year"] = ach_data.year
+    if ach_data.month is not None:
+        query["month"] = ach_data.month
+    
+    existing = await db.achievements.find_one(query)
     
     if existing:
         raise ConflictException(
@@ -90,7 +96,7 @@ async def create_achievement(
     
     logger.info(f"✅ Conquista criada para usuário {current_user.id}: {ach_data.type}")
     
-    return format_mongo_doc(created)
+    return convert_objectid_to_str(created)
 
 
 @router.post("/sync", response_model=dict)
@@ -105,7 +111,7 @@ async def sync_achievements(
     inserted = 0
     
     for ach in achievements:
-        # 🔧 CORRIGIDO: Usa year + month em vez de month string
+        # 🔧 CORRIGIDO: Query com condições (year/month podem ser None)
         query = {"user_id": user_id, "type": ach.type}
         if ach.year is not None:
             query["year"] = ach.year
@@ -123,17 +129,21 @@ async def sync_achievements(
             await db.achievements.insert_one(ach_dict)
             inserted += 1
     
-    # 🔧 CORRIGIDO: Usa get_message() para mensagem traduzida
-    message = get_message(
-        "SUCCESS_CREATED", 
-        getattr(request.state, "language", "pt")
-    )
+    language = getattr(request.state, "language", "pt")
+    
+    # 🔧 CORRIGIDO: Mensagem com pluralização
+    if inserted == 0:
+        message = get_message("ACHIEVEMENT_SYNC_NONE", language)
+    elif inserted == 1:
+        message = get_message("ACHIEVEMENT_SYNC_ONE", language)
+    else:
+        message = get_message("ACHIEVEMENT_SYNC_MULTIPLE", language).format(count=inserted)
     
     logger.info(f"✅ {inserted} conquistas sincronizadas para usuário {user_id}")
     
     return {
         "synced": inserted,
-        "message": f"{inserted} {get_message('ACHIEVEMENT_CREATED', getattr(request.state, 'language', 'pt'))}"
+        "message": message
     }
 
 
@@ -145,15 +155,9 @@ async def delete_achievement(
     db=Depends(get_database)
 ):
     """Remove uma conquista"""
-    # 🔧 REGRA 2.10: validar ID antes de usar
-    try:
-        validate_object_id(achievement_id, "achievement_id")
-        obj_id = ObjectId(achievement_id)
-    except Exception:
-        raise ValidationException(
-            message_key="ERROR_VALIDATION",
-            request=request
-        )
+    # 🔧 CORRIGIDO: Simplificado (validate_object_id já levanta exceção)
+    validate_object_id(achievement_id, "achievement_id")
+    obj_id = ObjectId(achievement_id)
     
     result = await db.achievements.delete_one({
         "_id": obj_id,
@@ -166,11 +170,8 @@ async def delete_achievement(
             request=request
         )
     
-    # 🔧 CORRIGIDO: Usa get_message() para mensagem traduzida
-    message = get_message(
-        "ACHIEVEMENT_DELETED", 
-        getattr(request.state, "language", "pt")
-    )
+    language = getattr(request.state, "language", "pt")
+    message = get_message("ACHIEVEMENT_DELETED", language)
     
     logger.info(f"🗑️ Conquista removida: {achievement_id}")
     
@@ -185,14 +186,8 @@ async def get_achievement(
     db=Depends(get_database)
 ):
     """Busca uma conquista específica"""
-    try:
-        validate_object_id(achievement_id, "achievement_id")
-        obj_id = ObjectId(achievement_id)
-    except Exception:
-        raise ValidationException(
-            message_key="ERROR_VALIDATION",
-            request=request
-        )
+    validate_object_id(achievement_id, "achievement_id")
+    obj_id = ObjectId(achievement_id)
     
     achievement = await db.achievements.find_one({
         "_id": obj_id,
@@ -205,7 +200,7 @@ async def get_achievement(
             request=request
         )
     
-    return format_mongo_doc(achievement)
+    return convert_objectid_to_str(achievement)
 
 
 # ========== DECISÕES DOCUMENTADAS ==========
@@ -218,5 +213,10 @@ async def get_achievement(
 # ✅ Suporte a i18n via request.state.language
 # ✅ Verificação de duplicação antes de criar conquista
 # ✅ Sync com year + month (int) em vez de month (string)
+# ✅ 🔧 Usa convert_objectid_to_str em vez de format_mongo_doc
+# ✅ 🔧 Query de duplicação com condições para year/month None
+# ✅ 🔧 Mensagens de sync com pluralização
+# ✅ 🔧 Delete simplificado (sem try/except redundante)
+# ✅ 🔧 Get simplificado (sem try/except redundante)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
