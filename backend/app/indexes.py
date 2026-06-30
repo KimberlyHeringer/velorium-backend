@@ -9,6 +9,9 @@ Arquivo: backend/app/indexes.py
 - 🔧 NOVO: Índice para credit_card_purchases com fully_paid
 - 🔧 NOVO: Índice para score_history com user_id + date
 - 🔧 NOVO: Índice TTL para reset_token_expires (expiração automática)
+- 🔧 NOVO: Índices para bill_installments (otimização de consultas)
+- 🔧 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
+- 🔧 NOVO: partialFilterExpression no TTL para otimização
 """
 
 from app.utils.logger import setup_logger
@@ -143,7 +146,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 9. PARCELAS (INSTALLMENTS)
+    # 9. PARCELAS DE CARTÃO DE CRÉDITO (CREDIT_CARD_INSTALLMENTS)
     # ================================================================
     indexes = [
         ("credit_card_installments", [("user_id", 1), ("paid", 1), ("due_date", 1)]),
@@ -160,7 +163,47 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 10. CONQUISTAS (ACHIEVEMENTS)
+    # 10. PARCELAS DE CONTAS A PAGAR (BILL_INSTALLMENTS) 🆕
+    # ================================================================
+    indexes = [
+        # Índice principal para listagem por usuário + data de vencimento
+        ("bill_installments", [("user_id", 1), ("due_date", -1)]),
+        # Índice para buscar parcelas de uma conta específica
+        ("bill_installments", [("bill_id", 1), ("user_id", 1)]),
+        # Índice para filtrar por status (pagas/não pagas)
+        ("bill_installments", [("user_id", 1), ("paid", 1)]),
+        # Índice composto para filtros combinados (status + data)
+        ("bill_installments", [("user_id", 1), ("due_date", 1), ("paid", 1)]),
+        # Índice para auditoria (quem pagou)
+        ("bill_installments", [("user_id", 1), ("paid_by", 1)]),
+        # Índice para histórico (buscar por ação)
+        ("bill_installments", [("history.action", 1), ("history.timestamp", -1)]),
+    ]
+    
+    for collection_name, keys in indexes:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
+    
+    # ================================================================
+    # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS) 🆕
+    # 🔧 CORRIGIDO: Adicionado partialFilterExpression para otimização
+    # ================================================================
+    try:
+        await db.bill_installments.create_index(
+            [("history.expires_at", 1)],
+            expireAfterSeconds=0,
+            partialFilterExpression={"history": {"$exists": True, "$ne": []}}
+        )
+        logger.info("✅ Índice TTL para history.expires_at criado (com partialFilterExpression)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice TTL para history.expires_at: {e}", exc_info=True)
+    
+    # ================================================================
+    # 12. CONQUISTAS (ACHIEVEMENTS)
     # ================================================================
     try:
         await db.achievements.create_index(
@@ -171,7 +214,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice achievements: {e}", exc_info=True)
     
     # ================================================================
-    # 11. BLACKLIST DE TOKENS (SEGURANÇA)
+    # 13. BLACKLIST DE TOKENS (SEGURANÇA)
     # ================================================================
     try:
         await db.refresh_token_blacklist.create_index(
@@ -187,7 +230,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índices refresh_token_blacklist: {e}", exc_info=True)
     
     # ================================================================
-    # 12. RESET TOKEN (TTL para expiração automática)
+    # 14. RESET TOKEN (TTL para expiração automática)
     # 🔧 NOVO: Remove tokens de redefinição de senha expirados automaticamente
     # ================================================================
     try:
@@ -215,5 +258,14 @@ async def create_indexes(db):
 # ✅ 🔧 NOVO: Índice credit_card_purchases com fully_paid para filtro por status
 # ✅ 🔧 NOVO: Índice score_history com user_id + date para consultas de histórico
 # ✅ 🔧 NOVO: Índice TTL para reset_token_expires (expiração automática)
+# ✅ 🆕 NOVO: Índices bill_installments para otimização de consultas
+#   - (user_id, due_date) - Listagem principal
+#   - (bill_id, user_id) - Busca por conta específica
+#   - (user_id, paid) - Filtro por status
+#   - (user_id, due_date, paid) - Filtros combinados
+#   - (user_id, paid_by) - Auditoria
+#   - (history.action, history.timestamp) - Histórico
+# ✅ 🆕 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
+# ✅ 🆕 NOVO: partialFilterExpression no TTL para otimização
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
