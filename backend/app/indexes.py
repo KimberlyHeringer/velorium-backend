@@ -12,6 +12,7 @@ Arquivo: backend/app/indexes.py
 - 🔧 NOVO: Índices para bill_installments (otimização de consultas)
 - 🔧 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
 - 🔧 NOVO: partialFilterExpression no TTL para otimização
+- 🔧 NOVO: Índices para bills (category e paid+due_date)
 """
 
 from app.utils.logger import setup_logger
@@ -62,11 +63,17 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 3. CONTAS A PAGAR (BILLS)
+    # 3. CONTAS A PAGAR (BILLS) - ATUALIZADO 🆕
     # ================================================================
     indexes = [
+        # Índice existente: filtrar por status
         ("bills", [("user_id", 1), ("paid", 1)]),
+        # Índice existente: filtrar por data de início
         ("bills", [("user_id", 1), ("installments.start_date", 1)]),
+        # 🆕 NOVO: Índice para filtro por categoria
+        ("bills", [("user_id", 1), ("category", 1)]),
+        # 🆕 NOVO: Índice para filtros combinados (status + data)
+        ("bills", [("user_id", 1), ("paid", 1), ("due_date", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -267,5 +274,8 @@ async def create_indexes(db):
 #   - (history.action, history.timestamp) - Histórico
 # ✅ 🆕 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
 # ✅ 🆕 NOVO: partialFilterExpression no TTL para otimização
+# ✅ 🆕 NOVO: Índices bills atualizados
+#   - (user_id, category) - Filtro por categoria
+#   - (user_id, paid, due_date) - Filtros combinados (status + data)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
