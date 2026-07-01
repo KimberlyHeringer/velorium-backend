@@ -755,7 +755,7 @@ def get_supported_languages() -> list:
 #   - bill_installments.py ✅
 #   - credit_card_purchases.py ✅
 #   - credit_cards.py ✅
-#   - goals.py ✅ (preventivo)
+#   - goals.py ✅
 #   - ia.py ✅ (preventivo)
 #   - investments.py ✅ (preventivo)
 #   - notifications.py ✅ (preventivo)
