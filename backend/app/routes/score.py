@@ -260,7 +260,7 @@ async def get_score_with_cache(user_id: str, db) -> Dict:
     
     score_data = {
         "score": result.get("score", 0),
-        "details": result.get("details),
+        "details": result.get("details"),
         "created_at": datetime.now(timezone.utc),
         "from_cache": False
     }

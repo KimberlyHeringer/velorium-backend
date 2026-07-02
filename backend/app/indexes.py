@@ -18,6 +18,8 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para ia_feedback (audit_id, feedback)
 - 🆕 NOVO: Índices para investments (user_id + category, user_id + sold, user_id + created_at)
 - 🆕 NOVO: Índices para notification_logs (user_id + sent_at, type + sent_at)
+- 🆕 NOVO: Índice composto para transactions (user_id + context + date)
+- 🆕 NOVO: Índices para transactions (user_id + date + type, user_id + category)
 """
 
 from app.utils.logger import setup_logger
@@ -57,6 +59,10 @@ async def create_indexes(db):
         ("transactions", [("user_id", 1), ("context", 1), ("type", 1)]),
         ("transactions", [("user_id", 1), ("context", 1), ("category", 1)]),
         ("transactions", [("date", -1)]),
+        # 🆕 NOVO: Índice para filtros combinados (data + tipo)
+        ("transactions", [("user_id", 1), ("date", -1), ("type", 1)]),
+        # 🆕 NOVO: Índice para filtro por categoria
+        ("transactions", [("user_id", 1), ("category", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -363,5 +369,11 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para IA (ia_audit_logs, ia_feedback, chat_history)
 # ✅ 🆕 NOVO: Índices para investments
 # ✅ 🆕 NOVO: Índices para notification_logs
+# ✅ 🆕 NOVO: Índices para transactions
+#   - (user_id, context, date) - Filtros combinados
+#   - (user_id, context, type) - Filtro por tipo
+#   - (user_id, context, category) - Filtro por categoria
+#   - (user_id, date, type) - Filtros combinados (data + tipo)
+#   - (user_id, category) - Filtro por categoria
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

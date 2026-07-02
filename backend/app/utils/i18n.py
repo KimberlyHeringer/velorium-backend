@@ -33,7 +33,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_CREATED": "Criado com sucesso",
         "SUCCESS_UPDATED": "Atualizado com sucesso",
         "SUCCESS_DELETED": "Removido com sucesso",
-
+        
         # ---------- Erros Comuns ----------
         "ERROR_NOT_FOUND": "Não encontrado",
         "ERROR_UNAUTHORIZED": "Não autorizado",
@@ -43,14 +43,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "Conflito - recurso já existe",
         "ERROR_NO_DATA_TO_UPDATE": "Nenhum dado para atualizar",
         "ERROR_INVALID_DATE_RANGE": "A data inicial não pode ser maior que a data final",
-
+        
         # ---------- Autenticação ----------
         "AUTH_INVALID_CREDENTIALS": "E-mail ou senha inválidos",
         "AUTH_EMAIL_ALREADY_EXISTS": "E-mail já cadastrado",
         "AUTH_WEAK_PASSWORD": "Senha muito fraca",
         "AUTH_INVALID_TOKEN": "Token inválido ou expirado",
         "AUTH_TOKEN_REFRESHED": "Token atualizado com sucesso",
-
+        
         # ---------- Conquistas (Achievements) ----------
         "ACHIEVEMENT_NOT_FOUND": "Conquista não encontrada",
         "ACHIEVEMENT_CREATED": "Conquista criada com sucesso",
@@ -65,7 +65,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_MONTH": "Mês deve ser entre 1 e 12",
         "ERROR_INVALID_YEAR": "Ano deve ser entre 1900 e 2100",
         "ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY": "Descrição não pode estar vazia",
-
+        
         # ---------- Contas a Pagar (Bills) ----------
         "BILL_NOT_FOUND": "Conta não encontrada",
         "BILL_NO_DATA_TO_UPDATE": "Nenhum dado para atualizar",
@@ -81,7 +81,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_START_DATE_PAST": "Data de início não pode ser no passado",
         "ERROR_INVALID_DUE_DAY": "Dia de vencimento inválido para o mês",
         "ERROR_CREATE_BILL_FAILED": "Erro interno ao criar conta",
-
+        
         # ---------- Parcelas de Contas (Bill Installments) ----------
         "INSTALLMENT_NOT_FOUND": "Parcela não encontrada",
         "INSTALLMENT_ALREADY_PAID": "Esta parcela já está paga",
@@ -93,7 +93,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "INSTALLMENT_UNPAY_SUCCESS": "Pagamento desmarcado com sucesso",
         "INSTALLMENT_UNPAY_WINDOW_EXPIRED": "Não é possível desmarcar pagamentos com mais de 30 dias",
         "INSTALLMENT_UNPAY_SUCCESS_BUT_BILL_PAID": "Pagamento desmarcado com sucesso, mas a conta mestra permanece como paga. Verifique a consistência.",
-
+        
         # ---------- Cartões de Crédito ----------
         "ERROR_CARD_NOT_FOUND": "Cartão não encontrado",
         "ERROR_CARD_HAS_PURCHASES": "Cartão possui compras associadas. Remova as compras primeiro.",
@@ -105,7 +105,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CARD_INVALID_DUE_DAY": "Dia de vencimento inválido",
         "CARD_CREATED": "Cartão criado com sucesso",
         "CARD_UPDATED": "Cartão atualizado com sucesso",
-
+        
         # ---------- Compras Parceladas (Credit Card Purchases) ----------
         "ERROR_PURCHASE_NOT_FOUND": "Compra não encontrada",
         "ERROR_INSUFFICIENT_LIMIT": "Limite insuficiente. Disponível: R$ {available:.2f}, Necessário: R$ {required:.2f}",
@@ -115,7 +115,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INSTALLMENT_UNPAY": "Pagamento desmarcado com sucesso",
         "ERROR_FIRST_DUE_DATE_PAST": "A data da primeira parcela não pode ser no passado",
         "ERROR_INVALID_INTEREST_RATE": "Taxa de juros inválida. Deve ser entre 0% e 100%",
-
+        
         # ---------- Metas (Goals) ----------
         "ERROR_GOAL_NOT_FOUND": "Meta não encontrada",
         "SUCCESS_GOAL_DELETED": "Meta deletada com sucesso",
@@ -123,7 +123,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_UPDATED": "Meta atualizada com sucesso",
         "GOAL_COMPLETED": "Meta concluída! Parabéns!",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "Valor atual não pode ser maior que o valor alvo",
-
+        
         # ---------- IA ----------
         "ERROR_USER_NOT_FOUND": "Usuário não encontrado.",
         "ERROR_TERMS_NOT_ACCEPTED": "Para usar o assistente, você precisa aceitar os Termos de Uso. Acesse Configurações > Consentimento.",
@@ -132,21 +132,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_AUDIT_NOT_FOUND": "Interação não encontrada.",
         "IA_TIMEOUT": "IA demorou muito para responder",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar feedback, você precisa aceitar o consentimento de pesquisa. Acesse Configurações > Consentimento.",
-
+        
         # ---------- Transações ----------
-        "ERROR_TRANSACTION_NOT_FOUND": "Transação não encontrada",
-        "ERROR_CREATE_TRANSACTION_FAILED": "Erro interno ao criar transação",
-        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "Não é possível deletar despesa com parcelas pagas no cartão",
-        "SUCCESS_TRANSACTION_DELETED": "Transação deletada com sucesso",
-        "TRANSACTION_CREATED": "Transação criada com sucesso",
-        "TRANSACTION_UPDATED": "Transação atualizada com sucesso",
-
+        "ERROR_INSUFFICIENT_LIMIT": "Limite insuficiente. Disponível: R$ {available:.2f}",
+        "ERROR_TRANSACTION_NOT_FOUND": "Transação não encontrada.",
+        "ERROR_NO_DATA_TO_UPDATE": "Nenhum dado para atualizar.",
+        "ERROR_CREATE_TRANSACTION_FAILED": "Erro interno ao criar transação.",
+        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "Não é possível deletar despesa com parcelas pagas no cartão.",
+        "SUCCESS_TRANSACTION_DELETED": "Transação deletada com sucesso.",
+        "SUCCESS_BULK_CATEGORIZED": "{count} transações recategorizadas com sucesso.",
+        "SUCCESS_BALANCE_RECALCULATED": "Saldo recalculado com sucesso.",
+        "ERROR_BULK_LIMIT_EXCEEDED": "Limite de 100 transações por requisição excedido.",
+        "ERROR_INVALID_CATEGORY": "Categoria inválida. Use: {categories}",
+        
         # ---------- Score ----------
         "ERROR_SCORE_CALCULATION_FAILED": "Erro ao calcular score financeiro. Tente novamente mais tarde",
         "ERROR_SCORE_HISTORY_FAILED": "Erro ao buscar histórico de score",
         "SCORE_CALCULATED": "Score calculado com sucesso",
         "SCORE_HISTORY_NOT_FOUND": "Histórico de score não encontrado",
-
+        
         # ---------- Notificações ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registrado com sucesso",
         "SUCCESS_NOTIFICATIONS_ENABLED": "Notificações ativadas",
@@ -158,15 +162,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - Atualização Diária",
         "NOTIFICATION_SENT": "Notificação enviada com sucesso",
         "NOTIFICATION_FAILED": "Falha ao enviar notificação",
-
+        
         # ---------- Rate Limiting ----------
         "RATE_LIMIT_EXCEEDED": "Muitas requisições. Tente novamente mais tarde",
-
+        
         # ---------- Perfil ----------
         "ERROR_PROFILE_NOT_FOUND": "Perfil não encontrado",
         "SUCCESS_PROFILE_UPDATED": "Perfil atualizado com sucesso",
         "ERROR_INVALID_PROFILE_DATA": "Dados do perfil inválidos",
-
+        
         # ---------- Investimentos ----------
         "ERROR_INVESTMENT_NOT_FOUND": "Investimento não encontrado",
         "ERROR_INVALID_CATEGORY": "Categoria inválida. Use: {categories}",
@@ -177,7 +181,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INVESTMENT_DELETED": "Investimento removido com sucesso",
         "INVESTMENT_CREATED": "Investimento criado com sucesso",
         "INVESTMENT_UPDATED": "Investimento atualizado com sucesso",
-
+        
         # ---------- Usuário ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "Senha atual incorreta",
         "SUCCESS_PASSWORD_CHANGED": "Senha alterada com sucesso",
@@ -200,7 +204,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_CREATED": "Successfully created",
         "SUCCESS_UPDATED": "Successfully updated",
         "SUCCESS_DELETED": "Successfully deleted",
-
+        
         # ---------- Common Errors ----------
         "ERROR_NOT_FOUND": "Not found",
         "ERROR_UNAUTHORIZED": "Unauthorized",
@@ -210,14 +214,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "Conflict - resource already exists",
         "ERROR_NO_DATA_TO_UPDATE": "No data to update",
         "ERROR_INVALID_DATE_RANGE": "Start date cannot be greater than end date",
-
+        
         # ---------- Authentication ----------
         "AUTH_INVALID_CREDENTIALS": "Invalid email or password",
         "AUTH_EMAIL_ALREADY_EXISTS": "Email already registered",
         "AUTH_WEAK_PASSWORD": "Password is too weak",
         "AUTH_INVALID_TOKEN": "Invalid or expired token",
         "AUTH_TOKEN_REFRESHED": "Token refreshed successfully",
-
+        
         # ---------- Achievements ----------
         "ACHIEVEMENT_NOT_FOUND": "Achievement not found",
         "ACHIEVEMENT_CREATED": "Achievement created successfully",
@@ -232,7 +236,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_MONTH": "Month must be between 1 and 12",
         "ERROR_INVALID_YEAR": "Year must be between 1900 and 2100",
         "ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY": "Description cannot be empty",
-
+        
         # ---------- Bills ----------
         "BILL_NOT_FOUND": "Bill not found",
         "BILL_NO_DATA_TO_UPDATE": "No data to update",
@@ -248,7 +252,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_START_DATE_PAST": "Start date cannot be in the past",
         "ERROR_INVALID_DUE_DAY": "Invalid due day for the month",
         "ERROR_CREATE_BILL_FAILED": "Internal error creating bill",
-
+        
         # ---------- Bill Installments ----------
         "INSTALLMENT_NOT_FOUND": "Installment not found",
         "INSTALLMENT_ALREADY_PAID": "This installment is already paid",
@@ -260,7 +264,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "INSTALLMENT_UNPAY_SUCCESS": "Payment successfully undone",
         "INSTALLMENT_UNPAY_WINDOW_EXPIRED": "Cannot unpay payments older than 30 days",
         "INSTALLMENT_UNPAY_SUCCESS_BUT_BILL_PAID": "Payment undone successfully, but the main bill remains as paid. Please check consistency.",
-
+        
         # ---------- Credit Cards ----------
         "ERROR_CARD_NOT_FOUND": "Card not found",
         "ERROR_CARD_HAS_PURCHASES": "Card has associated purchases. Please remove purchases first.",
@@ -272,7 +276,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CARD_INVALID_DUE_DAY": "Invalid due day",
         "CARD_CREATED": "Card created successfully",
         "CARD_UPDATED": "Card updated successfully",
-
+        
         # ---------- Credit Card Purchases ----------
         "ERROR_PURCHASE_NOT_FOUND": "Purchase not found",
         "ERROR_INSUFFICIENT_LIMIT": "Insufficient limit. Available: R$ {available:.2f}, Required: R$ {required:.2f}",
@@ -282,7 +286,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INSTALLMENT_UNPAY": "Payment successfully undone",
         "ERROR_FIRST_DUE_DATE_PAST": "First due date cannot be in the past",
         "ERROR_INVALID_INTEREST_RATE": "Invalid interest rate. Must be between 0% and 100%",
-
+        
         # ---------- Goals ----------
         "ERROR_GOAL_NOT_FOUND": "Goal not found",
         "SUCCESS_GOAL_DELETED": "Goal deleted successfully",
@@ -290,7 +294,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_UPDATED": "Goal updated successfully",
         "GOAL_COMPLETED": "Goal completed! Congratulations!",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "Current value cannot exceed target value",
-
+        
         # ---------- IA ----------
         "ERROR_USER_NOT_FOUND": "User not found.",
         "ERROR_TERMS_NOT_ACCEPTED": "To use the assistant, you need to accept the Terms of Use. Go to Settings > Consent.",
@@ -299,21 +303,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_AUDIT_NOT_FOUND": "Interaction not found.",
         "IA_TIMEOUT": "AI took too long to respond",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "To send feedback, you need to accept the research consent. Go to Settings > Consent.",
-
+        
         # ---------- Transactions ----------
-        "ERROR_TRANSACTION_NOT_FOUND": "Transaction not found",
-        "ERROR_CREATE_TRANSACTION_FAILED": "Internal error creating transaction",
-        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "Cannot delete expense with paid installments",
-        "SUCCESS_TRANSACTION_DELETED": "Transaction deleted successfully",
-        "TRANSACTION_CREATED": "Transaction created successfully",
-        "TRANSACTION_UPDATED": "Transaction updated successfully",
-
+        "ERROR_INSUFFICIENT_LIMIT": "Insufficient limit. Available: R$ {available:.2f}",
+        "ERROR_TRANSACTION_NOT_FOUND": "Transaction not found.",
+        "ERROR_NO_DATA_TO_UPDATE": "No data to update.",
+        "ERROR_CREATE_TRANSACTION_FAILED": "Internal error creating transaction.",
+        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "Cannot delete expense with paid installments.",
+        "SUCCESS_TRANSACTION_DELETED": "Transaction deleted successfully.",
+        "SUCCESS_BULK_CATEGORIZED": "{count} transactions recategorized successfully.",
+        "SUCCESS_BALANCE_RECALCULATED": "Balance recalculated successfully.",
+        "ERROR_BULK_LIMIT_EXCEEDED": "Limit of 100 transactions per request exceeded.",
+        "ERROR_INVALID_CATEGORY": "Invalid category. Use: {categories}",
+        
         # ---------- Score ----------
         "ERROR_SCORE_CALCULATION_FAILED": "Error calculating financial score. Please try again later",
         "ERROR_SCORE_HISTORY_FAILED": "Error fetching score history",
         "SCORE_CALCULATED": "Score calculated successfully",
         "SCORE_HISTORY_NOT_FOUND": "Score history not found",
-
+        
         # ---------- Notifications ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registered successfully",
         "SUCCESS_NOTIFICATIONS_ENABLED": "Notifications enabled",
@@ -325,15 +333,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - Daily Update",
         "NOTIFICATION_SENT": "Notification sent successfully",
         "NOTIFICATION_FAILED": "Failed to send notification",
-
+        
         # ---------- Rate Limiting ----------
         "RATE_LIMIT_EXCEEDED": "Too many requests. Please try again later",
-
+        
         # ---------- Profile ----------
         "ERROR_PROFILE_NOT_FOUND": "Profile not found",
         "SUCCESS_PROFILE_UPDATED": "Profile updated successfully",
         "ERROR_INVALID_PROFILE_DATA": "Invalid profile data",
-
+        
         # ---------- Investments ----------
         "ERROR_INVESTMENT_NOT_FOUND": "Investment not found",
         "ERROR_INVALID_CATEGORY": "Invalid category. Use: {categories}",
@@ -344,7 +352,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INVESTMENT_DELETED": "Investment removed successfully",
         "INVESTMENT_CREATED": "Investment created successfully",
         "INVESTMENT_UPDATED": "Investment updated successfully",
-
+        
         # ---------- User ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "Current password is incorrect",
         "SUCCESS_PASSWORD_CHANGED": "Password changed successfully",
@@ -367,7 +375,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_CREATED": "Creado con éxito",
         "SUCCESS_UPDATED": "Actualizado con éxito",
         "SUCCESS_DELETED": "Eliminado con éxito",
-
+        
         # ---------- Errores Comunes ----------
         "ERROR_NOT_FOUND": "No encontrado",
         "ERROR_UNAUTHORIZED": "No autorizado",
@@ -377,14 +385,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "Conflicto - el recurso ya existe",
         "ERROR_NO_DATA_TO_UPDATE": "No hay datos para actualizar",
         "ERROR_INVALID_DATE_RANGE": "La fecha inicial no puede ser mayor que la fecha final",
-
+        
         # ---------- Autenticación ----------
         "AUTH_INVALID_CREDENTIALS": "Correo o contraseña inválidos",
         "AUTH_EMAIL_ALREADY_EXISTS": "El correo ya está registrado",
         "AUTH_WEAK_PASSWORD": "La contraseña es demasiado débil",
         "AUTH_INVALID_TOKEN": "Token inválido o expirado",
         "AUTH_TOKEN_REFRESHED": "Token actualizado con éxito",
-
+        
         # ---------- Logros ----------
         "ACHIEVEMENT_NOT_FOUND": "Logro no encontrado",
         "ACHIEVEMENT_CREATED": "Logro creado con éxito",
@@ -399,7 +407,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_MONTH": "El mes debe estar entre 1 y 12",
         "ERROR_INVALID_YEAR": "El año debe estar entre 1900 y 2100",
         "ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY": "La descripción no puede estar vacía",
-
+        
         # ---------- Cuentas ----------
         "BILL_NOT_FOUND": "Cuenta no encontrada",
         "BILL_NO_DATA_TO_UPDATE": "No hay datos para actualizar",
@@ -415,7 +423,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_START_DATE_PAST": "La fecha de inicio no puede ser en el pasado",
         "ERROR_INVALID_DUE_DAY": "Día de vencimiento inválido para el mes",
         "ERROR_CREATE_BILL_FAILED": "Error interno al crear la cuenta",
-
+        
         # ---------- Cuotas ----------
         "INSTALLMENT_NOT_FOUND": "Cuota no encontrada",
         "INSTALLMENT_ALREADY_PAID": "Esta cuota ya está pagada",
@@ -427,7 +435,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "INSTALLMENT_UNPAY_SUCCESS": "Pago desmarcado con éxito",
         "INSTALLMENT_UNPAY_WINDOW_EXPIRED": "No se pueden desmarcar pagos con más de 30 días",
         "INSTALLMENT_UNPAY_SUCCESS_BUT_BILL_PAID": "Pago desmarcado con éxito, pero la cuenta principal permanece como pagada. Verifique la consistencia.",
-
+        
         # ---------- Tarjetas ----------
         "ERROR_CARD_NOT_FOUND": "Tarjeta no encontrada",
         "ERROR_CARD_HAS_PURCHASES": "La tarjeta tiene compras asociadas. Elimine las compras primero.",
@@ -439,7 +447,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CARD_INVALID_DUE_DAY": "Día de vencimiento inválido",
         "CARD_CREATED": "Tarjeta creada con éxito",
         "CARD_UPDATED": "Tarjeta actualizada con éxito",
-
+        
         # ---------- Compras ----------
         "ERROR_PURCHASE_NOT_FOUND": "Compra no encontrada",
         "ERROR_INSUFFICIENT_LIMIT": "Límite insuficiente. Disponible: R$ {available:.2f}, Necesario: R$ {required:.2f}",
@@ -449,7 +457,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INSTALLMENT_UNPAY": "Pago desmarcado con éxito",
         "ERROR_FIRST_DUE_DATE_PAST": "La fecha de la primera cuota no puede ser en el pasado",
         "ERROR_INVALID_INTEREST_RATE": "Tasa de interés inválida. Debe ser entre 0% y 100%",
-
+        
         # ---------- Metas ----------
         "ERROR_GOAL_NOT_FOUND": "Meta no encontrada",
         "SUCCESS_GOAL_DELETED": "Meta eliminada con éxito",
@@ -457,7 +465,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_UPDATED": "Meta actualizada con éxito",
         "GOAL_COMPLETED": "Meta completada! Felicitaciones",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "El valor actual no puede exceder el valor objetivo",
-
+        
         # ---------- IA ----------
         "ERROR_USER_NOT_FOUND": "Usuario no encontrado.",
         "ERROR_TERMS_NOT_ACCEPTED": "Para usar el asistente, debe aceptar los Términos de Uso. Vaya a Configuración > Consentimiento.",
@@ -466,21 +474,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_AUDIT_NOT_FOUND": "Interacción no encontrada.",
         "IA_TIMEOUT": "La IA tardó demasiado en responder",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar comentarios, debe aceptar el consentimiento de investigación. Vaya a Configuración > Consentimiento.",
-
+        
         # ---------- Transacciones ----------
-        "ERROR_TRANSACTION_NOT_FOUND": "Transacción no encontrada",
-        "ERROR_CREATE_TRANSACTION_FAILED": "Error interno al crear la transacción",
-        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "No se puede eliminar un gasto con cuotas pagadas",
-        "SUCCESS_TRANSACTION_DELETED": "Transacción eliminada con éxito",
-        "TRANSACTION_CREATED": "Transacción creada con éxito",
-        "TRANSACTION_UPDATED": "Transacción actualizada con éxito",
-
+        "ERROR_INSUFFICIENT_LIMIT": "Límite insuficiente. Disponible: R$ {available:.2f}",
+        "ERROR_TRANSACTION_NOT_FOUND": "Transacción no encontrada.",
+        "ERROR_NO_DATA_TO_UPDATE": "No hay datos para actualizar.",
+        "ERROR_CREATE_TRANSACTION_FAILED": "Error interno al crear la transacción.",
+        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "No se puede eliminar un gasto con cuotas pagadas.",
+        "SUCCESS_TRANSACTION_DELETED": "Transacción eliminada con éxito.",
+        "SUCCESS_BULK_CATEGORIZED": "{count} transacciones recategorizadas con éxito.",
+        "SUCCESS_BALANCE_RECALCULATED": "Saldo recalculado con éxito.",
+        "ERROR_BULK_LIMIT_EXCEEDED": "Límite de 100 transacciones por solicitud excedido.",
+        "ERROR_INVALID_CATEGORY": "Categoría inválida. Use: {categories}",
+        
         # ---------- Puntuación ----------
         "ERROR_SCORE_CALCULATION_FAILED": "Error al calcular la puntuación financiera. Intente más tarde",
         "ERROR_SCORE_HISTORY_FAILED": "Error al obtener el historial de puntuación",
         "SCORE_CALCULATED": "Puntuación calculada con éxito",
         "SCORE_HISTORY_NOT_FOUND": "Historial de puntuación no encontrado",
-
+        
         # ---------- Notificaciones ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registrado con éxito",
         "SUCCESS_NOTIFICATIONS_ENABLED": "Notificaciones activadas",
@@ -492,15 +504,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - Actualización Diaria",
         "NOTIFICATION_SENT": "Notificación enviada con éxito",
         "NOTIFICATION_FAILED": "Error al enviar la notificación",
-
+        
         # ---------- Rate Limiting ----------
         "RATE_LIMIT_EXCEEDED": "Demasiadas solicitudes. Intente más tarde",
-
+        
         # ---------- Perfil ----------
         "ERROR_PROFILE_NOT_FOUND": "Perfil no encontrado",
         "SUCCESS_PROFILE_UPDATED": "Perfil actualizado con éxito",
         "ERROR_INVALID_PROFILE_DATA": "Datos de perfil inválidos",
-
+        
         # ---------- Inversiones ----------
         "ERROR_INVESTMENT_NOT_FOUND": "Inversión no encontrada",
         "ERROR_INVALID_CATEGORY": "Categoría inválida. Use: {categories}",
@@ -511,7 +523,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INVESTMENT_DELETED": "Inversión eliminada con éxito",
         "INVESTMENT_CREATED": "Inversión creada con éxito",
         "INVESTMENT_UPDATED": "Inversión actualizada con éxito",
-
+        
         # ---------- Usuario ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "Contraseña actual incorrecta",
         "SUCCESS_PASSWORD_CHANGED": "Contraseña cambiada con éxito",
@@ -534,7 +546,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_CREATED": "创建成功",
         "SUCCESS_UPDATED": "更新成功",
         "SUCCESS_DELETED": "删除成功",
-
+        
         # ---------- 常见错误 ----------
         "ERROR_NOT_FOUND": "未找到",
         "ERROR_UNAUTHORIZED": "未授权",
@@ -544,14 +556,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "冲突 - 资源已存在",
         "ERROR_NO_DATA_TO_UPDATE": "没有数据可更新",
         "ERROR_INVALID_DATE_RANGE": "开始日期不能大于结束日期",
-
+        
         # ---------- 认证 ----------
         "AUTH_INVALID_CREDENTIALS": "邮箱或密码无效",
         "AUTH_EMAIL_ALREADY_EXISTS": "邮箱已注册",
         "AUTH_WEAK_PASSWORD": "密码太弱",
         "AUTH_INVALID_TOKEN": "令牌无效或已过期",
         "AUTH_TOKEN_REFRESHED": "令牌更新成功",
-
+        
         # ---------- 成就 ----------
         "ACHIEVEMENT_NOT_FOUND": "未找到成就",
         "ACHIEVEMENT_CREATED": "成就创建成功",
@@ -566,7 +578,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_MONTH": "月份必须在1到12之间",
         "ERROR_INVALID_YEAR": "年份必须在1900到2100之间",
         "ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY": "描述不能为空",
-
+        
         # ---------- 账单 ----------
         "BILL_NOT_FOUND": "未找到账单",
         "BILL_NO_DATA_TO_UPDATE": "没有数据可更新",
@@ -582,7 +594,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_START_DATE_PAST": "开始日期不能是过去日期",
         "ERROR_INVALID_DUE_DAY": "该月份无效的到期日",
         "ERROR_CREATE_BILL_FAILED": "创建账单时内部错误",
-
+        
         # ---------- 分期 ----------
         "INSTALLMENT_NOT_FOUND": "未找到分期",
         "INSTALLMENT_ALREADY_PAID": "此分期已支付",
@@ -594,7 +606,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "INSTALLMENT_UNPAY_SUCCESS": "支付已成功撤销",
         "INSTALLMENT_UNPAY_WINDOW_EXPIRED": "无法撤销超过30天的付款",
         "INSTALLMENT_UNPAY_SUCCESS_BUT_BILL_PAID": "支付撤销成功，但主账单仍显示为已支付。请检查一致性。",
-
+        
         # ---------- 信用卡 ----------
         "ERROR_CARD_NOT_FOUND": "未找到卡片",
         "ERROR_CARD_HAS_PURCHASES": "卡片有关联的购买记录。请先删除购买记录。",
@@ -606,7 +618,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CARD_INVALID_DUE_DAY": "无效的还款日",
         "CARD_CREATED": "卡片创建成功",
         "CARD_UPDATED": "卡片更新成功",
-
+        
         # ---------- 购买 ----------
         "ERROR_PURCHASE_NOT_FOUND": "未找到购买记录",
         "ERROR_INSUFFICIENT_LIMIT": "额度不足。可用：R$ {available:.2f}，需要：R$ {required:.2f}",
@@ -616,7 +628,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INSTALLMENT_UNPAY": "付款已成功撤销",
         "ERROR_FIRST_DUE_DATE_PAST": "首期到期日不能是过去日期",
         "ERROR_INVALID_INTEREST_RATE": "利率无效。必须在0%到100%之间",
-
+        
         # ---------- 目标 ----------
         "ERROR_GOAL_NOT_FOUND": "未找到目标",
         "SUCCESS_GOAL_DELETED": "目标删除成功",
@@ -624,7 +636,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_UPDATED": "目标更新成功",
         "GOAL_COMPLETED": "目标完成！恭喜！",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "当前值不能超过目标值",
-
+        
         # ---------- IA ----------
         "ERROR_USER_NOT_FOUND": "未找到用户。",
         "ERROR_TERMS_NOT_ACCEPTED": "要使用助手，您需要接受使用条款。前往设置 > 同意。",
@@ -633,21 +645,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_AUDIT_NOT_FOUND": "未找到交互记录。",
         "IA_TIMEOUT": "AI响应超时",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "要发送反馈，您需要接受研究同意。前往设置 > 同意。",
-
+        
         # ---------- 交易 ----------
-        "ERROR_TRANSACTION_NOT_FOUND": "未找到交易",
-        "ERROR_CREATE_TRANSACTION_FAILED": "创建交易时内部错误",
-        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "无法删除已有已付分期的支出",
-        "SUCCESS_TRANSACTION_DELETED": "交易删除成功",
-        "TRANSACTION_CREATED": "交易创建成功",
-        "TRANSACTION_UPDATED": "交易更新成功",
-
+        "ERROR_INSUFFICIENT_LIMIT": "额度不足。可用：R$ {available:.2f}",
+        "ERROR_TRANSACTION_NOT_FOUND": "未找到交易。",
+        "ERROR_NO_DATA_TO_UPDATE": "没有数据可更新。",
+        "ERROR_CREATE_TRANSACTION_FAILED": "创建交易时内部错误。",
+        "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "无法删除已有已付分期的支出。",
+        "SUCCESS_TRANSACTION_DELETED": "交易删除成功。",
+        "SUCCESS_BULK_CATEGORIZED": "{count}笔交易重新分类成功。",
+        "SUCCESS_BALANCE_RECALCULATED": "余额重新计算成功。",
+        "ERROR_BULK_LIMIT_EXCEEDED": "超出每请求100笔交易的限制。",
+        "ERROR_INVALID_CATEGORY": "无效的分类。使用：{categories}",
+        
         # ---------- 评分 ----------
         "ERROR_SCORE_CALCULATION_FAILED": "计算财务评分时出错。请稍后再试",
         "ERROR_SCORE_HISTORY_FAILED": "获取评分历史时出错",
         "SCORE_CALCULATED": "评分计算成功",
         "SCORE_HISTORY_NOT_FOUND": "未找到评分历史",
-
+        
         # ---------- 通知 ----------
         "SUCCESS_TOKEN_REGISTERED": "令牌注册成功",
         "SUCCESS_NOTIFICATIONS_ENABLED": "通知已启用",
@@ -659,15 +675,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - 每日更新",
         "NOTIFICATION_SENT": "通知发送成功",
         "NOTIFICATION_FAILED": "发送通知失败",
-
+        
         # ---------- 限流 ----------
         "RATE_LIMIT_EXCEEDED": "请求过多，请稍后再试",
-
+        
         # ---------- 个人资料 ----------
         "ERROR_PROFILE_NOT_FOUND": "未找到个人资料",
         "SUCCESS_PROFILE_UPDATED": "个人资料更新成功",
         "ERROR_INVALID_PROFILE_DATA": "个人资料数据无效",
-
+        
         # ---------- 投资 ----------
         "ERROR_INVESTMENT_NOT_FOUND": "未找到投资",
         "ERROR_INVALID_CATEGORY": "无效的分类。使用：{categories}",
@@ -678,7 +694,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_INVESTMENT_DELETED": "投资删除成功",
         "INVESTMENT_CREATED": "投资创建成功",
         "INVESTMENT_UPDATED": "投资更新成功",
-
+        
         # ---------- 用户 ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "当前密码不正确",
         "SUCCESS_PASSWORD_CHANGED": "密码更改成功",
@@ -700,18 +716,18 @@ MESSAGES: Dict[str, Dict[str, str]] = {
 def get_message(key: str, language: str = "pt") -> str:
     """
     Retorna a mensagem traduzida para o idioma solicitado.
-
+    
     Args:
         key (str): Chave da mensagem (ex: "ACHIEVEMENT_NOT_FOUND")
         language (str): Código do idioma (pt, en, es, zh)
-
+    
     Returns:
         str: Mensagem traduzida ou a própria chave se não encontrada
-
+    
     Exemplo:
         >>> get_message("ACHIEVEMENT_NOT_FOUND", "pt")
         "Conquista não encontrada"
-
+        
         >>> get_message("ACHIEVEMENT_NOT_FOUND", "en")
         "Achievement not found"
     """
@@ -722,23 +738,23 @@ def get_message(key: str, language: str = "pt") -> str:
 def get_language_from_request(request: Request) -> str:
     """
     Extrai o idioma do header Accept-Language da requisição.
-
+    
     Args:
         request (Request): Objeto da requisição FastAPI
-
+    
     Returns:
         str: Código do idioma (pt, en, es, zh) ou "pt" como fallback
     """
     accept_language = request.headers.get("Accept-Language", "pt")
-
+    
     if accept_language:
         lang = accept_language.split(",")[0].split("-")[0].strip().lower()
     else:
         lang = "pt"
-
+    
     if lang in ["pt", "en", "es", "zh"]:
         return lang
-
+    
     return "pt"
 
 
@@ -769,11 +785,11 @@ def get_supported_languages() -> list:
 #   - credit_cards.py ✅
 #   - goals.py ✅
 #   - ia.py ✅
-#   - investments.py ✅ (preventivo)
-#   - notifications.py ✅ (preventivo)
-#   - profile.py ✅ (preventivo)
-#   - score.py ✅ (preventivo)
-#   - transactions.py ✅ (preventivo)
+#   - investments.py ✅
+#   - notifications.py ✅
+#   - profile.py ✅
+#   - score.py ✅
+#   - transactions.py ✅
 #   - user.py ✅ (preventivo)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
