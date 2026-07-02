@@ -158,6 +158,8 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - Atualização Diária",
         "NOTIFICATION_SENT": "Notificação enviada com sucesso",
         "NOTIFICATION_FAILED": "Falha ao enviar notificação",
+        "SUCCESS_PREFERENCES_UPDATED": "Preferências atualizadas com sucesso",
+        "SUCCESS_NOTIFICATIONS_TRIGGERED": "Notificações diárias acionadas",
         
         # ---------- Rate Limiting ----------
         "RATE_LIMIT_EXCEEDED": "Muitas requisições. Tente novamente mais tarde",
@@ -327,6 +329,8 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - Daily Update",
         "NOTIFICATION_SENT": "Notification sent successfully",
         "NOTIFICATION_FAILED": "Failed to send notification",
+        "SUCCESS_PREFERENCES_UPDATED": "Preferences updated successfully",
+        "SUCCESS_NOTIFICATIONS_TRIGGERED": "Daily notifications triggered",
         
         # ---------- Rate Limiting ----------
         "RATE_LIMIT_EXCEEDED": "Too many requests. Please try again later",
@@ -496,6 +500,8 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - Actualización Diaria",
         "NOTIFICATION_SENT": "Notificación enviada con éxito",
         "NOTIFICATION_FAILED": "Error al enviar la notificación",
+        "SUCCESS_PREFERENCES_UPDATED": "Preferencias actualizadas con éxito",
+        "SUCCESS_NOTIFICATIONS_TRIGGERED": "Notificaciones diarias activadas",
         
         # ---------- Rate Limiting ----------
         "RATE_LIMIT_EXCEEDED": "Demasiadas solicitudes. Intente más tarde",
@@ -665,6 +671,8 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_DAILY_REMINDER_TITLE": "💜 Veloria - 每日更新",
         "NOTIFICATION_SENT": "通知发送成功",
         "NOTIFICATION_FAILED": "发送通知失败",
+        "SUCCESS_PREFERENCES_UPDATED": "偏好设置更新成功",
+        "SUCCESS_NOTIFICATIONS_TRIGGERED": "每日通知已触发",
         
         # ---------- 限流 ----------
         "RATE_LIMIT_EXCEEDED": "请求过多，请稍后再试",
@@ -777,9 +785,9 @@ def get_supported_languages() -> list:
 #   - credit_cards.py ✅
 #   - goals.py ✅
 #   - ia.py ✅
-#   - investments.py ✅ (preventivo)
-#   - notifications.py ✅ (preventivo)
-#   - profile.py ✅ (preventivo)
+#   - investments.py ✅
+#   - notifications.py ✅
+#   - profile.py ✅
 #   - score.py ✅ (preventivo)
 #   - transactions.py ✅ (preventivo)
 #   - user.py ✅ (preventivo)

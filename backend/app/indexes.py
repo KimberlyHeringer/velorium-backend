@@ -362,11 +362,6 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices credit_card_installments atualizados
 # ✅ 🆕 NOVO: Índices para IA (ia_audit_logs, ia_feedback, chat_history)
 # ✅ 🆕 NOVO: Índices para investments
-#   - (user_id, category) - Filtro por categoria
-#   - (user_id, sold) - Filtro por status de venda
-#   - (user_id, created_at) - Ordenação por data
 # ✅ 🆕 NOVO: Índices para notification_logs
-#   - (user_id, sent_at) - Buscar logs por usuário e data
-#   - (type, sent_at) - Buscar logs por tipo e data
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
