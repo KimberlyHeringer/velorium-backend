@@ -124,6 +124,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_COMPLETED": "Meta concluída! Parabéns!",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "Valor atual não pode ser maior que o valor alvo",
         
+        # ---------- IA ----------
+        "ERROR_USER_NOT_FOUND": "Usuário não encontrado.",
+        "ERROR_TERMS_NOT_ACCEPTED": "Para usar o assistente, você precisa aceitar os Termos de Uso. Acesse Configurações > Consentimento.",
+        "ERROR_IA_REQUEST_FAILED": "Não foi possível processar sua solicitação. Tente novamente mais tarde.",
+        "SUCCESS_FEEDBACK_RECEIVED": "Feedback recebido com sucesso!",
+        "ERROR_AUDIT_NOT_FOUND": "Interação não encontrada.",
+        "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar feedback, você precisa aceitar o consentimento de pesquisa. Acesse Configurações > Consentimento.",
+        "IA_TIMEOUT": "IA demorou muito para responder",
+        
         # ---------- Transações ----------
         "ERROR_TRANSACTION_NOT_FOUND": "Transação não encontrada",
         "ERROR_CREATE_TRANSACTION_FAILED": "Erro interno ao criar transação",
@@ -137,12 +146,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_SCORE_HISTORY_FAILED": "Erro ao buscar histórico de score",
         "SCORE_CALCULATED": "Score calculado com sucesso",
         "SCORE_HISTORY_NOT_FOUND": "Histórico de score não encontrado",
-        
-        # ---------- IA ----------
-        "ERROR_USER_NOT_FOUND": "Usuário não encontrado",
-        "ERROR_TERMS_NOT_ACCEPTED": "Para usar o assistente, você precisa aceitar os Termos de Uso. Acesse Configurações > Consentimento",
-        "ERROR_IA_REQUEST_FAILED": "Não foi possível processar sua solicitação. Tente novamente mais tarde",
-        "IA_TIMEOUT": "IA demorou muito para responder",
         
         # ---------- Notificações ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registrado com sucesso",
@@ -165,15 +168,17 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_PROFILE_DATA": "Dados do perfil inválidos",
         
         # ---------- Investimentos ----------
-        "ERROR_INVESTMENT_NOT_FOUND": "Investimento não encontrado",
+        "ERROR_INVESTMENT_NOT_FOUND": "Investimento não encontrado.",
         "ERROR_INVALID_CATEGORY": "Categoria inválida. Use: {categories}",
-        "ERROR_SOLD_VALUE_REQUIRED": "Valor de venda é obrigatório ao marcar como vendido",
-        "ERROR_INVESTMENT_ALREADY_SOLD": "Investimento já foi vendido",
-        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "Não é possível atualizar preço de investimento vendido",
-        "ERROR_QUANTITY_NOT_DEFINED": "Investimento sem quantidade definida",
-        "SUCCESS_INVESTMENT_DELETED": "Investimento removido com sucesso",
-        "INVESTMENT_CREATED": "Investimento criado com sucesso",
-        "INVESTMENT_UPDATED": "Investimento atualizado com sucesso",
+        "ERROR_INVALID_QUANTITY": "Quantidade inválida. Deve ser maior que zero.",
+        "ERROR_INVALID_PRICE": "Preço inválido. Deve ser maior que zero.",
+        "ERROR_SOLD_VALUE_REQUIRED": "Valor de venda é obrigatório ao marcar como vendido.",
+        "ERROR_INVESTMENT_ALREADY_SOLD": "Investimento já foi vendido.",
+        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "Não é possível atualizar preço de investimento vendido.",
+        "ERROR_QUANTITY_NOT_DEFINED": "Investimento sem quantidade definida.",
+        "SUCCESS_INVESTMENT_DELETED": "Investimento removido com sucesso.",
+        "INVESTMENT_CREATED": "Investimento criado com sucesso.",
+        "INVESTMENT_UPDATED": "Investimento atualizado com sucesso.",
         
         # ---------- Usuário ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "Senha atual incorreta",
@@ -288,6 +293,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_COMPLETED": "Goal completed! Congratulations!",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "Current value cannot exceed target value",
         
+        # ---------- IA ----------
+        "ERROR_USER_NOT_FOUND": "User not found.",
+        "ERROR_TERMS_NOT_ACCEPTED": "To use the assistant, you need to accept the Terms of Use. Go to Settings > Consent.",
+        "ERROR_IA_REQUEST_FAILED": "Unable to process your request. Please try again later.",
+        "SUCCESS_FEEDBACK_RECEIVED": "Feedback received successfully!",
+        "ERROR_AUDIT_NOT_FOUND": "Interaction not found.",
+        "ERROR_RESEARCH_CONSENT_REQUIRED": "To send feedback, you need to accept the research consent. Go to Settings > Consent.",
+        "IA_TIMEOUT": "AI took too long to respond",
+        
         # ---------- Transactions ----------
         "ERROR_TRANSACTION_NOT_FOUND": "Transaction not found",
         "ERROR_CREATE_TRANSACTION_FAILED": "Internal error creating transaction",
@@ -301,12 +315,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_SCORE_HISTORY_FAILED": "Error fetching score history",
         "SCORE_CALCULATED": "Score calculated successfully",
         "SCORE_HISTORY_NOT_FOUND": "Score history not found",
-        
-        # ---------- IA ----------
-        "ERROR_USER_NOT_FOUND": "User not found",
-        "ERROR_TERMS_NOT_ACCEPTED": "To use the assistant, you need to accept the Terms of Use. Go to Settings > Consent",
-        "ERROR_IA_REQUEST_FAILED": "Unable to process your request. Please try again later",
-        "IA_TIMEOUT": "AI took too long to respond",
         
         # ---------- Notifications ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registered successfully",
@@ -329,15 +337,17 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_PROFILE_DATA": "Invalid profile data",
         
         # ---------- Investments ----------
-        "ERROR_INVESTMENT_NOT_FOUND": "Investment not found",
+        "ERROR_INVESTMENT_NOT_FOUND": "Investment not found.",
         "ERROR_INVALID_CATEGORY": "Invalid category. Use: {categories}",
-        "ERROR_SOLD_VALUE_REQUIRED": "Sold value is required when marking as sold",
-        "ERROR_INVESTMENT_ALREADY_SOLD": "Investment has already been sold",
-        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "Cannot update price of sold investment",
-        "ERROR_QUANTITY_NOT_DEFINED": "Investment without quantity defined",
-        "SUCCESS_INVESTMENT_DELETED": "Investment removed successfully",
-        "INVESTMENT_CREATED": "Investment created successfully",
-        "INVESTMENT_UPDATED": "Investment updated successfully",
+        "ERROR_INVALID_QUANTITY": "Invalid quantity. Must be greater than zero.",
+        "ERROR_INVALID_PRICE": "Invalid price. Must be greater than zero.",
+        "ERROR_SOLD_VALUE_REQUIRED": "Sold value is required when marking as sold.",
+        "ERROR_INVESTMENT_ALREADY_SOLD": "Investment has already been sold.",
+        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "Cannot update price of sold investment.",
+        "ERROR_QUANTITY_NOT_DEFINED": "Investment without quantity defined.",
+        "SUCCESS_INVESTMENT_DELETED": "Investment removed successfully.",
+        "INVESTMENT_CREATED": "Investment created successfully.",
+        "INVESTMENT_UPDATED": "Investment updated successfully.",
         
         # ---------- User ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "Current password is incorrect",
@@ -452,6 +462,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_COMPLETED": "Meta completada! Felicitaciones",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "El valor actual no puede exceder el valor objetivo",
         
+        # ---------- IA ----------
+        "ERROR_USER_NOT_FOUND": "Usuario no encontrado.",
+        "ERROR_TERMS_NOT_ACCEPTED": "Para usar el asistente, debe aceptar los Términos de Uso. Vaya a Configuración > Consentimiento.",
+        "ERROR_IA_REQUEST_FAILED": "No se pudo procesar su solicitud. Intente más tarde.",
+        "SUCCESS_FEEDBACK_RECEIVED": "¡Comentarios recibidos con éxito!",
+        "ERROR_AUDIT_NOT_FOUND": "Interacción no encontrada.",
+        "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar comentarios, debe aceptar el consentimiento de investigación. Vaya a Configuración > Consentimiento.",
+        "IA_TIMEOUT": "La IA tardó demasiado en responder",
+        
         # ---------- Transacciones ----------
         "ERROR_TRANSACTION_NOT_FOUND": "Transacción no encontrada",
         "ERROR_CREATE_TRANSACTION_FAILED": "Error interno al crear la transacción",
@@ -465,12 +484,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_SCORE_HISTORY_FAILED": "Error al obtener el historial de puntuación",
         "SCORE_CALCULATED": "Puntuación calculada con éxito",
         "SCORE_HISTORY_NOT_FOUND": "Historial de puntuación no encontrado",
-        
-        # ---------- IA ----------
-        "ERROR_USER_NOT_FOUND": "Usuario no encontrado",
-        "ERROR_TERMS_NOT_ACCEPTED": "Para usar el asistente, debe aceptar los Términos de Uso. Vaya a Configuración > Consentimiento",
-        "ERROR_IA_REQUEST_FAILED": "No se pudo procesar su solicitud. Intente más tarde",
-        "IA_TIMEOUT": "La IA tardó demasiado en responder",
         
         # ---------- Notificaciones ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registrado con éxito",
@@ -493,15 +506,17 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_PROFILE_DATA": "Datos de perfil inválidos",
         
         # ---------- Inversiones ----------
-        "ERROR_INVESTMENT_NOT_FOUND": "Inversión no encontrada",
+        "ERROR_INVESTMENT_NOT_FOUND": "Inversión no encontrada.",
         "ERROR_INVALID_CATEGORY": "Categoría inválida. Use: {categories}",
-        "ERROR_SOLD_VALUE_REQUIRED": "El valor de venta es obligatorio al marcar como vendido",
-        "ERROR_INVESTMENT_ALREADY_SOLD": "La inversión ya ha sido vendida",
-        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "No se puede actualizar el precio de una inversión vendida",
-        "ERROR_QUANTITY_NOT_DEFINED": "Inversión sin cantidad definida",
-        "SUCCESS_INVESTMENT_DELETED": "Inversión eliminada con éxito",
-        "INVESTMENT_CREATED": "Inversión creada con éxito",
-        "INVESTMENT_UPDATED": "Inversión actualizada con éxito",
+        "ERROR_INVALID_QUANTITY": "Cantidad inválida. Debe ser mayor que cero.",
+        "ERROR_INVALID_PRICE": "Precio inválido. Debe ser mayor que cero.",
+        "ERROR_SOLD_VALUE_REQUIRED": "El valor de venta es obligatorio al marcar como vendido.",
+        "ERROR_INVESTMENT_ALREADY_SOLD": "La inversión ya ha sido vendida.",
+        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "No se puede actualizar el precio de una inversión vendida.",
+        "ERROR_QUANTITY_NOT_DEFINED": "Inversión sin cantidad definida.",
+        "SUCCESS_INVESTMENT_DELETED": "Inversión eliminada con éxito.",
+        "INVESTMENT_CREATED": "Inversión creada con éxito.",
+        "INVESTMENT_UPDATED": "Inversión actualizada con éxito.",
         
         # ---------- Usuario ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "Contraseña actual incorrecta",
@@ -616,6 +631,15 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "GOAL_COMPLETED": "目标完成！恭喜！",
         "ERROR_GOAL_CURRENT_EXCEEDS_TARGET": "当前值不能超过目标值",
         
+        # ---------- IA ----------
+        "ERROR_USER_NOT_FOUND": "未找到用户。",
+        "ERROR_TERMS_NOT_ACCEPTED": "要使用助手，您需要接受使用条款。前往设置 > 同意。",
+        "ERROR_IA_REQUEST_FAILED": "无法处理您的请求。请稍后再试。",
+        "SUCCESS_FEEDBACK_RECEIVED": "反馈接收成功！",
+        "ERROR_AUDIT_NOT_FOUND": "未找到交互记录。",
+        "ERROR_RESEARCH_CONSENT_REQUIRED": "要发送反馈，您需要接受研究同意。前往设置 > 同意。",
+        "IA_TIMEOUT": "AI响应超时",
+        
         # ---------- 交易 ----------
         "ERROR_TRANSACTION_NOT_FOUND": "未找到交易",
         "ERROR_CREATE_TRANSACTION_FAILED": "创建交易时内部错误",
@@ -629,12 +653,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_SCORE_HISTORY_FAILED": "获取评分历史时出错",
         "SCORE_CALCULATED": "评分计算成功",
         "SCORE_HISTORY_NOT_FOUND": "未找到评分历史",
-        
-        # ---------- AI ----------
-        "ERROR_USER_NOT_FOUND": "未找到用户",
-        "ERROR_TERMS_NOT_ACCEPTED": "要使用助手，您需要接受使用条款。前往设置>同意",
-        "ERROR_IA_REQUEST_FAILED": "无法处理您的请求。请稍后再试",
-        "IA_TIMEOUT": "AI响应超时",
         
         # ---------- 通知 ----------
         "SUCCESS_TOKEN_REGISTERED": "令牌注册成功",
@@ -657,15 +675,17 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_INVALID_PROFILE_DATA": "个人资料数据无效",
         
         # ---------- 投资 ----------
-        "ERROR_INVESTMENT_NOT_FOUND": "未找到投资",
+        "ERROR_INVESTMENT_NOT_FOUND": "未找到投资。",
         "ERROR_INVALID_CATEGORY": "无效的分类。使用：{categories}",
-        "ERROR_SOLD_VALUE_REQUIRED": "标记为已售时需要出售价值",
-        "ERROR_INVESTMENT_ALREADY_SOLD": "投资已售出",
-        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "无法更新已售投资的价格",
-        "ERROR_QUANTITY_NOT_DEFINED": "未定义数量的投资",
-        "SUCCESS_INVESTMENT_DELETED": "投资删除成功",
-        "INVESTMENT_CREATED": "投资创建成功",
-        "INVESTMENT_UPDATED": "投资更新成功",
+        "ERROR_INVALID_QUANTITY": "数量无效。必须大于零。",
+        "ERROR_INVALID_PRICE": "价格无效。必须大于零。",
+        "ERROR_SOLD_VALUE_REQUIRED": "标记为已售时需要出售价值。",
+        "ERROR_INVESTMENT_ALREADY_SOLD": "投资已售出。",
+        "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "无法更新已售投资的价格。",
+        "ERROR_QUANTITY_NOT_DEFINED": "未定义数量的投资。",
+        "SUCCESS_INVESTMENT_DELETED": "投资删除成功。",
+        "INVESTMENT_CREATED": "投资创建成功。",
+        "INVESTMENT_UPDATED": "投资更新成功。",
         
         # ---------- 用户 ----------
         "ERROR_INVALID_CURRENT_PASSWORD": "当前密码不正确",
@@ -756,7 +776,7 @@ def get_supported_languages() -> list:
 #   - credit_card_purchases.py ✅
 #   - credit_cards.py ✅
 #   - goals.py ✅
-#   - ia.py ✅ (preventivo)
+#   - ia.py ✅
 #   - investments.py ✅ (preventivo)
 #   - notifications.py ✅ (preventivo)
 #   - profile.py ✅ (preventivo)

@@ -14,6 +14,9 @@ Arquivo: backend/app/indexes.py
 - 🔧 NOVO: partialFilterExpression no TTL para otimização
 - 🔧 NOVO: Índices para bills (category e paid+due_date)
 - 🆕 NOVO: Índice para credit_card_purchases (interest_rate)
+- 🆕 NOVO: Índices para ia_audit_logs (user_id + created_at)
+- 🆕 NOVO: Índices para ia_feedback (audit_id, feedback)
+- 🆕 NOVO: Índices para investments (user_id + category, user_id + sold, user_id + created_at)
 """
 
 from app.utils.logger import setup_logger
@@ -67,13 +70,9 @@ async def create_indexes(db):
     # 3. CONTAS A PAGAR (BILLS) - ATUALIZADO
     # ================================================================
     indexes = [
-        # Índice existente: filtrar por status
         ("bills", [("user_id", 1), ("paid", 1)]),
-        # Índice existente: filtrar por data de início
         ("bills", [("user_id", 1), ("installments.start_date", 1)]),
-        # 🆕 NOVO: Índice para filtro por categoria
         ("bills", [("user_id", 1), ("category", 1)]),
-        # 🆕 NOVO: Índice para filtros combinados (status + data)
         ("bills", [("user_id", 1), ("paid", 1), ("due_date", 1)]),
     ]
     
@@ -143,11 +142,8 @@ async def create_indexes(db):
         ("credit_card_purchases", [("user_id", 1), ("created_at", -1)]),
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1), ("paid", 1)]),
         ("credit_card_purchases", [("user_id", 1), ("fully_paid", 1)]),
-        # 🆕 NOVO: Índice para interest_rate (consultas por taxa de juros)
         ("credit_card_purchases", [("interest_rate", 1)]),
-        # 🆕 NOVO: Índice para remaining_installments (consultas por parcelas restantes)
         ("credit_card_purchases", [("user_id", 1), ("remaining_installments", 1)]),
-        # 🆕 NOVO: Índice composto para status + user
         ("credit_card_purchases", [("user_id", 1), ("fully_paid", 1), ("created_at", -1)]),
     ]
     
@@ -166,9 +162,7 @@ async def create_indexes(db):
         ("credit_card_installments", [("user_id", 1), ("paid", 1), ("due_date", 1)]),
         ("credit_card_installments", [("card_id", 1), ("due_date", 1), ("paid", 1)]),
         ("credit_card_installments", [("purchase_id", 1)]),
-        # 🆕 NOVO: Índice para buscar parcelas de uma compra específica com status
         ("credit_card_installments", [("purchase_id", 1), ("paid", 1)]),
-        # 🆕 NOVO: Índice para buscar parcelas por data de vencimento
         ("credit_card_installments", [("user_id", 1), ("due_date", 1)]),
     ]
     
@@ -184,17 +178,11 @@ async def create_indexes(db):
     # 10. PARCELAS DE CONTAS A PAGAR (BILL_INSTALLMENTS)
     # ================================================================
     indexes = [
-        # Índice principal para listagem por usuário + data de vencimento
         ("bill_installments", [("user_id", 1), ("due_date", -1)]),
-        # Índice para buscar parcelas de uma conta específica
         ("bill_installments", [("bill_id", 1), ("user_id", 1)]),
-        # Índice para filtrar por status (pagas/não pagas)
         ("bill_installments", [("user_id", 1), ("paid", 1)]),
-        # Índice composto para filtros combinados (status + data)
         ("bill_installments", [("user_id", 1), ("due_date", 1), ("paid", 1)]),
-        # Índice para auditoria (quem pagou)
         ("bill_installments", [("user_id", 1), ("paid_by", 1)]),
-        # Índice para histórico (buscar por ação)
         ("bill_installments", [("history.action", 1), ("history.timestamp", -1)]),
     ]
     
@@ -208,7 +196,6 @@ async def create_indexes(db):
     
     # ================================================================
     # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS)
-    # 🔧 CORRIGIDO: Adicionado partialFilterExpression para otimização
     # ================================================================
     try:
         await db.bill_installments.create_index(
@@ -249,7 +236,6 @@ async def create_indexes(db):
     
     # ================================================================
     # 14. RESET TOKEN (TTL para expiração automática)
-    # 🔧 NOVO: Remove tokens de redefinição de senha expirados automaticamente
     # ================================================================
     try:
         await db.users.create_index(
@@ -259,6 +245,76 @@ async def create_indexes(db):
         logger.info("✅ Índice reset_token_expires (TTL) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice reset_token_expires: {e}", exc_info=True)
+    
+    # ================================================================
+    # 15. LOGS DE AUDITORIA DA IA (IA_AUDIT_LOGS) 🆕
+    # ================================================================
+    try:
+        await db.ia_audit_logs.create_index(
+            [("user_id", 1), ("created_at", -1)]
+        )
+        logger.info("✅ Índice ia_audit_logs.user_id + created_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice ia_audit_logs: {e}", exc_info=True)
+    
+    # ================================================================
+    # 16. FEEDBACK DA IA (IA_FEEDBACK) 🆕
+    # ================================================================
+    try:
+        await db.ia_feedback.create_index([("audit_id", 1)])
+        logger.info("✅ Índice ia_feedback.audit_id criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice ia_feedback.audit_id: {e}", exc_info=True)
+    
+    try:
+        await db.ia_feedback.create_index([("feedback", 1)])
+        logger.info("✅ Índice ia_feedback.feedback criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice ia_feedback.feedback: {e}", exc_info=True)
+    
+    try:
+        await db.ia_feedback.create_index([("created_at", -1)])
+        logger.info("✅ Índice ia_feedback.created_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice ia_feedback.created_at: {e}", exc_info=True)
+    
+    # ================================================================
+    # 17. HISTÓRICO DE CHAT DA IA (CHAT_HISTORY) 🆕
+    # ================================================================
+    try:
+        await db.chat_history.create_index(
+            [("user_id", 1), ("created_at", -1)]
+        )
+        logger.info("✅ Índice chat_history.user_id + created_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice chat_history: {e}", exc_info=True)
+    
+    # ================================================================
+    # 18. INVESTIMENTOS (INVESTMENTS) 🆕
+    # ================================================================
+    try:
+        await db.investments.create_index(
+            [("user_id", 1), ("category", 1)]
+        )
+        logger.info("✅ Índice investments.user_id + category criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice investments.user_id + category: {e}", exc_info=True)
+    
+    try:
+        await db.investments.create_index(
+            [("user_id", 1), ("sold", 1)]
+        )
+        logger.info("✅ Índice investments.user_id + sold criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice investments.user_id + sold: {e}", exc_info=True)
+    
+    try:
+        await db.investments.create_index(
+            [("user_id", 1), ("created_at", -1)]
+        )
+        logger.info("✅ Índice investments.user_id + created_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice investments.user_id + created_at: {e}", exc_info=True)
     
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
@@ -277,23 +333,15 @@ async def create_indexes(db):
 # ✅ 🔧 NOVO: Índice score_history com user_id + date para consultas de histórico
 # ✅ 🔧 NOVO: Índice TTL para reset_token_expires (expiração automática)
 # ✅ 🆕 NOVO: Índices bill_installments para otimização de consultas
-#   - (user_id, due_date) - Listagem principal
-#   - (bill_id, user_id) - Busca por conta específica
-#   - (user_id, paid) - Filtro por status
-#   - (user_id, due_date, paid) - Filtros combinados
-#   - (user_id, paid_by) - Auditoria
-#   - (history.action, history.timestamp) - Histórico
 # ✅ 🆕 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
 # ✅ 🆕 NOVO: partialFilterExpression no TTL para otimização
 # ✅ 🆕 NOVO: Índices bills atualizados
-#   - (user_id, category) - Filtro por categoria
-#   - (user_id, paid, due_date) - Filtros combinados (status + data)
 # ✅ 🆕 NOVO: Índices credit_card_purchases atualizados
-#   - (interest_rate) - Filtro por taxa de juros
-#   - (user_id, remaining_installments) - Filtro por parcelas restantes
-#   - (user_id, fully_paid, created_at) - Filtros combinados
 # ✅ 🆕 NOVO: Índices credit_card_installments atualizados
-#   - (purchase_id, paid) - Buscar parcelas por compra + status
-#   - (user_id, due_date) - Buscar parcelas por data de vencimento
+# ✅ 🆕 NOVO: Índices para IA (ia_audit_logs, ia_feedback, chat_history)
+# ✅ 🆕 NOVO: Índices para investments
+#   - (user_id, category) - Filtro por categoria
+#   - (user_id, sold) - Filtro por status de venda
+#   - (user_id, created_at) - Ordenação por data
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
