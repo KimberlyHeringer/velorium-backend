@@ -18,8 +18,9 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para ia_feedback (audit_id, feedback)
 - 🆕 NOVO: Índices para investments (user_id + category, user_id + sold, user_id + created_at)
 - 🆕 NOVO: Índices para notification_logs (user_id + sent_at, type + sent_at)
-- 🆕 NOVO: Índice composto para transactions (user_id + context + date)
-- 🆕 NOVO: Índices para transactions (user_id + date + type, user_id + category)
+- 🆕 NOVO: Índices para transactions (user_id + context + date, user_id + date + type, user_id + category)
+- 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
+- 🆕 NOVO: Índices para delete_requests (user_id)
 """
 
 from app.utils.logger import setup_logger
@@ -59,9 +60,7 @@ async def create_indexes(db):
         ("transactions", [("user_id", 1), ("context", 1), ("type", 1)]),
         ("transactions", [("user_id", 1), ("context", 1), ("category", 1)]),
         ("transactions", [("date", -1)]),
-        # 🆕 NOVO: Índice para filtros combinados (data + tipo)
         ("transactions", [("user_id", 1), ("date", -1), ("type", 1)]),
-        # 🆕 NOVO: Índice para filtro por categoria
         ("transactions", [("user_id", 1), ("category", 1)]),
     ]
     
@@ -344,6 +343,38 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice notification_logs.type + sent_at: {e}", exc_info=True)
     
+    # ================================================================
+    # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS) 🆕
+    # ================================================================
+    try:
+        await db.delete_tokens.create_index(
+            [("expires_at", 1)],
+            expireAfterSeconds=0
+        )
+        logger.info("✅ Índice delete_tokens.expires_at (TTL) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice delete_tokens.expires_at: {e}", exc_info=True)
+    
+    try:
+        await db.delete_tokens.create_index(
+            [("token", 1)],
+            unique=True
+        )
+        logger.info("✅ Índice delete_tokens.token (unique) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice delete_tokens.token: {e}", exc_info=True)
+    
+    # ================================================================
+    # 21. SOLICITAÇÕES DE EXCLUSÃO (DELETE_REQUESTS) 🆕
+    # ================================================================
+    try:
+        await db.delete_requests.create_index(
+            [("user_id", 1)]
+        )
+        logger.info("✅ Índice delete_requests.user_id criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice delete_requests.user_id: {e}", exc_info=True)
+    
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
 
@@ -370,10 +401,7 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para investments
 # ✅ 🆕 NOVO: Índices para notification_logs
 # ✅ 🆕 NOVO: Índices para transactions
-#   - (user_id, context, date) - Filtros combinados
-#   - (user_id, context, type) - Filtro por tipo
-#   - (user_id, context, category) - Filtro por categoria
-#   - (user_id, date, type) - Filtros combinados (data + tipo)
-#   - (user_id, category) - Filtro por categoria
+# ✅ 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
+# ✅ 🆕 NOVO: Índices para delete_requests (user_id)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
