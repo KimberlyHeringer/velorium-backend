@@ -17,6 +17,7 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para ia_audit_logs (user_id + created_at)
 - 🆕 NOVO: Índices para ia_feedback (audit_id, feedback)
 - 🆕 NOVO: Índices para investments (user_id + category, user_id + sold, user_id + created_at)
+- 🆕 NOVO: Índices para notification_logs (user_id + sent_at, type + sent_at)
 """
 
 from app.utils.logger import setup_logger
@@ -316,6 +317,27 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice investments.user_id + created_at: {e}", exc_info=True)
     
+    # ================================================================
+    # 19. LOGS DE NOTIFICAÇÕES (NOTIFICATION_LOGS) 🆕
+    # ================================================================
+    try:
+        await db.notification_logs.create_index([
+            ("user_id", 1),
+            ("sent_at", -1)
+        ])
+        logger.info("✅ Índice notification_logs.user_id + sent_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notification_logs.user_id + sent_at: {e}", exc_info=True)
+    
+    try:
+        await db.notification_logs.create_index([
+            ("type", 1),
+            ("sent_at", -1)
+        ])
+        logger.info("✅ Índice notification_logs.type + sent_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notification_logs.type + sent_at: {e}", exc_info=True)
+    
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
 
@@ -343,5 +365,8 @@ async def create_indexes(db):
 #   - (user_id, category) - Filtro por categoria
 #   - (user_id, sold) - Filtro por status de venda
 #   - (user_id, created_at) - Ordenação por data
+# ✅ 🆕 NOVO: Índices para notification_logs
+#   - (user_id, sent_at) - Buscar logs por usuário e data
+#   - (type, sent_at) - Buscar logs por tipo e data
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
