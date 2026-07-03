@@ -6,13 +6,21 @@ Funcionalidade: Centraliza validações de data para reutilização
 em diferentes rotas (bills, bill_installments, credit_card_purchases, etc).
 
 🔧 USO:
-    from app.utils.date_utils import validate_date_not_past, validate_date_range, validate_due_day
+    from app.utils.date_utils import (
+        validate_date_not_past,
+        validate_date_range,
+        validate_due_day,
+        parse_installments_dates,
+        get_month_range
+    )
     
     validate_date_not_past(first_due, request)
     validate_date_range(start_date, end_date, request)
     validate_due_day(due_day, reference_date, request)
+    get_month_range()  # Retorna (inicio_mes, fim_mes)
 
 📋 ESTRUTURA:
+    - get_month_range(): Retorna início e fim do mês atual (UTC)
     - validate_date_not_past(): Valida que data não é passada
     - validate_date_range(): Valida que start_date <= end_date
     - validate_due_day(): Valida que due_day é válido para o mês
@@ -21,11 +29,57 @@ em diferentes rotas (bills, bill_installments, credit_card_purchases, etc).
 
 from datetime import datetime, timezone
 from calendar import monthrange
-from typing import Optional
+from typing import Optional, Tuple
 from fastapi import Request
 
 from app.utils.exceptions import ValidationException
 
+
+# ================================================================
+# GET MONTH RANGE (NOVO - necessário para transactions.py)
+# ================================================================
+
+def get_month_range() -> Tuple[datetime, datetime]:
+    """
+    Retorna o início e fim do mês atual (UTC).
+    
+    Returns:
+        Tuple[datetime, datetime]: (início_do_mês, fim_do_mês)
+    
+    Exemplo:
+        >>> start, end = get_month_range()
+        >>> start  # datetime(2026, 7, 1, 0, 0, 0, tzinfo=timezone.utc)
+        >>> end    # datetime(2026, 8, 1, 0, 0, 0, tzinfo=timezone.utc)
+    """
+    now = datetime.now(timezone.utc)
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    if now.month == 12:
+        end_of_month = now.replace(
+            year=now.year + 1,
+            month=1,
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0
+        )
+    else:
+        end_of_month = now.replace(
+            month=now.month + 1,
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0
+        )
+    
+    return start_of_month, end_of_month
+
+
+# ================================================================
+# VALIDAÇÕES DE DATA
+# ================================================================
 
 def validate_date_not_past(
     date: datetime,
@@ -155,8 +209,11 @@ def parse_installments_dates(
     return result
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
+# ================================================================
+# DECISÕES DOCUMENTADAS
+# ================================================================
 #
+# ✅ get_month_range(): Retorna início e fim do mês atual (UTC)
 # ✅ Funções reutilizáveis para validação de data
 # ✅ Suporte a i18n via Request
 # ✅ Mensagens de erro customizáveis
