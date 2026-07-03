@@ -43,6 +43,18 @@ async def create_indexes(db):
     # 1. USUÁRIOS
     # ================================================================
     try:
+        # 🔧 CORRIGIDO: Verifica se o índice já existe antes de criar
+        existing_indexes = await db.users.index_information()
+        
+        # Se o índice já existe com nome "email_1", remove para recriar com collation
+        if "email_1" in existing_indexes:
+            try:
+                await db.users.drop_index("email_1")
+                logger.info("🗑️ Índice email_1 removido para recriação com collation")
+            except Exception as drop_error:
+                logger.warning(f"⚠️ Não foi possível remover índice email_1: {drop_error}")
+        
+        # Cria o índice com collation
         await db.users.create_index(
             [("email", 1)],
             unique=True,
