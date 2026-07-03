@@ -6,7 +6,7 @@ Funcionalidade: Centraliza todas as constantes usadas em múltiplos arquivos.
 Facilita manutenção e evita duplicação.
 
 🔧 USO:
-    from app.core.constants import MAX_HISTORY_ENTRIES, MAX_INSTALLMENTS
+    from app.core.constants import MAX_HISTORY_ENTRIES, MAX_INSTALLMENTS, PAYMENT_METHOD_CREDIT_CARD
     
     if installments > MAX_INSTALLMENTS:
         raise ValidationException(...)
@@ -22,6 +22,7 @@ Facilita manutenção e evita duplicação.
     - Balance (BALANCE_CACHE_TTL_SECONDS)
     - CSV Export (CSV_MAX_EXPORT)
     - Delete Token (DELETE_TOKEN_EXPIRY_HOURS)
+    - Transações (PAYMENT_METHOD_CREDIT_CARD)
 """
 
 import os
@@ -89,7 +90,7 @@ MAX_INTEREST_RATE = 100.0
 
 
 # ================================================================
-# NOTIFICATIONS 🆕
+# NOTIFICATIONS
 # ================================================================
 
 INACTIVE_TOKEN_DAYS = 30
@@ -148,6 +149,14 @@ MAX_SYNC_BATCH = 100
 
 
 # ================================================================
+# TRANSAÇÕES E PAGAMENTOS
+# ================================================================
+
+PAYMENT_METHOD_CREDIT_CARD = "cartao_credito"
+"""Valor padronizado para método de pagamento com cartão de crédito."""
+
+
+# ================================================================
 # DECISÕES DOCUMENTADAS
 # ================================================================
 #
@@ -156,8 +165,11 @@ MAX_SYNC_BATCH = 100
 # ✅ Fallback para valores padrão
 # ✅ Documentação de cada constante
 # ✅ Fácil manutenção (alterar em um lugar)
-# ✅ 🆕 INACTIVE_TOKEN_DAYS adicionado
-# ✅ 🆕 EXPO_API_URL adicionado
-# ✅ 🆕 MAX_INSTALLMENTS_DAYS_WARNING adicionado
+# ✅ INACTIVE_TOKEN_DAYS adicionado
+# ✅ EXPO_API_URL adicionado
+# ✅ MAX_INSTALLMENTS_DAYS_WARNING adicionado
+# ✅ PAYMENT_METHOD_CREDIT_CARD adicionado (corrige ImportError)
+# ✅ BALANCE_CACHE_TTL_SECONDS já existente
+# ✅ CACHE_TTL_SECONDS já existente
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
