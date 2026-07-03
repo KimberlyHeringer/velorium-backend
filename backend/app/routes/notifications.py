@@ -2,46 +2,27 @@
 Rotas de Notificações
 Arquivo: backend/app/routes/notifications.py
 
-🔧 CORRIGIDO: IMPLEMENTAÇÃO COMPLETA PARA MVP COM MELHORIAS
+Funcionalidades:
+- POST /notifications/register-token: Registrar token push
+- POST /notifications/enable: Ativar notificações
+- POST /notifications/disable: Desativar notificações
+- POST /notifications/test: Enviar notificação de teste
+- GET /notifications/status: Status das notificações
+- PUT /notifications/preferences: Atualizar preferências
+- POST /notifications/trigger-daily: Acionar worker diário
+- POST /notifications/cleanup-tokens: Limpar tokens inativos
 
-🆕 MELHORIAS ADICIONADAS (v2):
-- 🔧 I18n completo com I18nHTTPException e get_message()
-- 🆕 Adicionado request: Request em todos os endpoints
-- 🆕 Rate limiting por usuário
-- 🆕 Suporte a múltiplos tokens por usuário (vários dispositivos)
-- 🆕 Templates em múltiplos idiomas (IA gera no idioma do usuário)
-- 🆕 Categorias de notificação (score, bills, goals, tips, all)
-- 🆕 Filtro de categorias no worker
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting por usuário
+- Múltiplos tokens por usuário
+- Templates em múltiplos idiomas
+- Categorias de notificação (score, bills, goals, tips, all)
+- Cache de insights (24h)
+- Worker de limpeza de tokens inativos (30 dias)
+- Validação de Expo token
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v2.1):
-- 🔧 CORRIGIDO: expo_push_tokens com or [] em todos os lugares
-- 🔧 CORRIGIDO: /trigger-daily com validação de chave secreta
-- 🔧 CORRIGIDO: Cache de insights (24h)
-- 🔧 CORRIGIDO: Validação de token no worker
-
-🔧 CORREÇÕES DO DESENVOLVEDOR (v2.2):
-- 🆕 Literal para device_platform (melhora tipagem)
-- 🆕 Validação de Expo token (prevenção de tokens inválidos)
-- 🆕 Worker de limpeza de tokens inativos (30 dias)
-- 🆕 Índices para notification_logs (performance)
-- 🆕 Forçar ADMIN_SECRET em produção (segurança)
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Múltiplos tokens: Usuário pode ter vários dispositivos
-- ✅ Templates em múltiplos idiomas: IA gera no idioma do usuário
-- ✅ Categorias de notificação: Usuário escolhe o que receber
-- ✅ Rate limiting por usuário
-- ✅ Cache de insights (24h)
-- ✅ /trigger-daily com chave secreta
-- ✅ Validação de tokens Expo
-- ✅ Limpeza de tokens inativos (30 dias)
-- ❌ Scheduler automático: Pós-MVP
-- ❌ Agendamento personalizado: Pós-MVP
-- ❌ Analytics de abertura: Pós-MVP
-
-📌 VARIÁVEIS DE AMBIENTE:
-- ADMIN_SECRET: Chave secreta para o endpoint /trigger-daily (OBRIGATÓRIO EM PRODUÇÃO)
-- ENVIRONMENT: production, development, staging
+Versão: v2.2 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request, Query
@@ -59,8 +40,12 @@ from app.models.user import UserResponse
 from app.database import get_database
 from app.utils.logger import setup_logger
 from app.utils.currency import from_cents
-from app.utils.rate_limiter import limiter
 from app.services.ia_service import obter_resposta_ia_async
+
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import INACTIVE_TOKEN_DAYS, EXPO_API_URL
+from app.utils.rate_limiter import get_user_rate_limit_key
+from app.utils.notifications import send_push_notification
 
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
@@ -72,9 +57,7 @@ router = APIRouter(prefix="/notifications", tags=["Notificações"])
 
 
 # ========== CONSTANTES ==========
-EXPO_API_URL = "https://exp.host/--/api/v2/push/send"
 MAX_INSTALLMENTS_DAYS_WARNING = 3  # Alertar sobre parcelas com vencimento em até 3 dias
-INACTIVE_TOKEN_DAYS = 30  # Tokens inativos por 30 dias são removidos
 
 
 # ========== ENUMS ==========
@@ -97,7 +80,6 @@ class RegisterTokenRequest(BaseModel):
         None, description="ios, android, web"
     )
     
-    # 🆕 Validação de token Expo
     @field_validator('token')
     @classmethod
     def validate_expo_token(cls, v: str) -> str:
@@ -112,7 +94,6 @@ class SendTestNotificationRequest(BaseModel):
 
 
 class UpdatePreferencesRequest(BaseModel):
-    """🆕 Atualiza preferências de notificação"""
     categories: Optional[List[NotificationCategory]] = Field(None, description="Categorias ativas")
     push_enabled: Optional[bool] = Field(None, description="Ativar/desativar notificações")
     language: Optional[str] = Field(None, description="Idioma preferido (pt, en, es, zh)")
@@ -135,67 +116,12 @@ class NotificationStatusResponse(BaseModel):
 
 # ========== FUNÇÕES AUXILIARES ==========
 
-def get_user_rate_limit_key(request: Request) -> str:
-    """
-    🆕 Gera chave de rate limiting por usuário para notificações.
-    Fallback para IP se user_id não estiver disponível.
-    """
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        return f"notifications:user:{user_id}"
-    
-    client_ip = request.client.host if request.client else "unknown"
-    return f"notifications:ip:{client_ip}"
-
-
-async def send_push_notification(token: str, title: str, body: str, data: Optional[Dict] = None) -> bool:
-    """
-    Envia uma notificação push via Expo
-    Retorna True se enviado com sucesso
-    """
-    try:
-        message = {
-            "to": token,
-            "title": title,
-            "body": body,
-            "sound": "default",
-            "priority": "normal",
-        }
-        if data:
-            message["data"] = data
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                EXPO_API_URL,
-                json=message,
-                headers={
-                    "Accept": "application/json",
-                    "Accept-Encoding": "gzip, deflate",
-                    "Content-Type": "application/json",
-                }
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if result.get("data", {}).get("status") == "error":
-                    logger.warning(f"⚠️ Erro no Expo: {result.get('data', {}).get('message')}")
-                    return False
-                return True
-            else:
-                logger.error(f"❌ Erro ao enviar push: {response.status_code} - {response.text}")
-                return False
-    except Exception as e:
-        logger.error(f"❌ Exceção ao enviar push: {e}")
-        return False
-
-
 async def generate_daily_insight(user_id: str, db, language: str = "pt") -> Optional[str]:
     """
     Gera um insight financeiro diário usando IA no idioma do usuário.
-    🔧 Cache de 24h para evitar chamadas repetidas à IA.
+    Cache de 24h para evitar chamadas repetidas à IA.
     """
     try:
-        # Verifica se já tem insight para hoje (cache)
         today = datetime.now(timezone.utc).date()
         today_start = datetime.combine(today, datetime.min.time())
         
@@ -209,19 +135,16 @@ async def generate_daily_insight(user_id: str, db, language: str = "pt") -> Opti
             logger.debug(f"💾 Cache hit para insight do usuário {user_id}")
             return existing.get("message")
         
-        # Busca dados do usuário
         user = await db.users.find_one({"_id": ObjectId(user_id)})
         if not user:
             return None
         
-        # Busca último score
         score_doc = await db.score_history.find_one(
             {"user_id": user_id},
             sort=[("date", -1)]
         )
         score = score_doc.get("score", 0) if score_doc else 0
         
-        # Busca contas a vencer (próximos 3 dias)
         today_date = datetime.now(timezone.utc)
         three_days_later = today_date + timedelta(days=3)
         upcoming_bills = await db.bills.find({
@@ -230,7 +153,6 @@ async def generate_daily_insight(user_id: str, db, language: str = "pt") -> Opti
             "installments.start_date": {"$lte": three_days_later}
         }).to_list(10)
         
-        # Busca metas com progresso > 80%
         goals = await db.goals.find({
             "user_id": user_id,
             "completed": False,
@@ -244,7 +166,6 @@ async def generate_daily_insight(user_id: str, db, language: str = "pt") -> Opti
             if target > 0 and (current / target) >= 0.8:
                 near_completion_goals.append(goal)
         
-        # Monta contexto para IA no idioma do usuário
         context = f"""
 Dados financeiros do usuário:
 - Score financeiro: {score}/1000
@@ -277,7 +198,6 @@ async def send_daily_notifications_worker(db):
     """
     logger.info("🚀 Iniciando worker de notificações diárias")
     
-    # Busca todos os usuários com notificações ativas
     users = await db.users.find({
         "push_enabled": True,
         "expo_push_tokens": {"$exists": True, "$ne": []}
@@ -372,7 +292,6 @@ async def send_daily_notifications_worker(db):
     return {"sent": sent_count, "failed": failed_count, "skipped": skipped_count}
 
 
-# 🆕 Worker de limpeza de tokens inativos
 async def cleanup_inactive_tokens_worker(db):
     """
     Worker para limpar tokens inativos (mais de 30 dias).
@@ -397,10 +316,7 @@ async def register_push_token(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Registra o token de push notification do dispositivo.
-    Suporte a múltiplos tokens por usuário (vários dispositivos).
-    """
+    """Registra o token de push notification do dispositivo."""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
@@ -520,10 +436,7 @@ async def send_test_notification(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Envia uma notificação de teste para o dispositivo do usuário.
-    Envia para o primeiro token disponível.
-    """
+    """Envia uma notificação de teste para o dispositivo do usuário."""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
@@ -571,10 +484,7 @@ async def get_notification_status(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Retorna o status das notificações do usuário.
-    Inclui número de dispositivos e categorias ativas.
-    """
+    """Retorna o status das notificações do usuário."""
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     
     if not user:
@@ -619,12 +529,7 @@ async def update_notification_preferences(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Atualiza as preferências de notificação do usuário.
-    - Categorias: score, bills, goals, tips, all
-    - Idioma: pt, en, es, zh
-    - Ativar/desativar notificações
-    """
+    """Atualiza as preferências de notificação do usuário."""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
@@ -672,18 +577,12 @@ async def trigger_daily_notifications(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Endpoint para acionar o worker de notificações diárias.
-    Deve ser chamado por um cron job externo diariamente às 09:00.
-    🔧 Requer chave secreta de admin.
-    """
+    """Endpoint para acionar o worker de notificações diárias."""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
-    # 🔧 Valida chave secreta
     ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
     
-    # 🔧 Em produção, ADMIN_SECRET é obrigatório
     if os.getenv("ENVIRONMENT") == "production" and not ADMIN_SECRET:
         logger.error("❌ ADMIN_SECRET não configurado em produção!")
         raise I18nHTTPException(
@@ -724,15 +623,10 @@ async def cleanup_inactive_tokens(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    🆕 Endpoint para limpar tokens inativos (mais de 30 dias).
-    Deve ser chamado periodicamente (ex: semanalmente).
-    🔧 Requer chave secreta de admin.
-    """
+    """Endpoint para limpar tokens inativos (mais de 30 dias)."""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
-    # 🔧 Valida chave secreta
     ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
     
     if os.getenv("ENVIRONMENT") == "production" and not ADMIN_SECRET:
@@ -766,63 +660,44 @@ async def cleanup_inactive_tokens(
     )
 
 
-# ========== WORKER (para scheduler integrado) ==========
+# ========== WORKERS PARA SCHEDULER ==========
 
 async def run_daily_notifications_scheduler(db):
-    """
-    Função para ser chamada pelo scheduler interno (APScheduler)
-    Roda diariamente às 09:00
-    """
+    """Função para ser chamada pelo scheduler interno (APScheduler) às 09:00"""
     logger.info("⏰ Scheduler: Executando notificações diárias")
     return await send_daily_notifications_worker(db)
 
 
 async def run_cleanup_tokens_scheduler(db):
-    """
-    Função para ser chamada pelo scheduler interno (APScheduler)
-    Roda semanalmente (ex: domingo às 03:00)
-    """
+    """Função para ser chamada pelo scheduler interno (semanalmente)"""
     logger.info("⏰ Scheduler: Executando limpeza de tokens inativos")
     return await cleanup_inactive_tokens_worker(db)
 
 
-"""
-================================================================================
-✅ ARQUIVO 100% FUNCIONAL PARA MVP COM MELHORIAS (v2.2)
-================================================================================
-
-Funcionalidades implementadas:
-1. Registro de token push do dispositivo (/register-token) - ✅
-2. Ativação de notificações (/enable) - ✅
-3. Desativação de notificações (/disable) - ✅
-4. Envio de notificação de teste (/test) - ✅
-5. Status das notificações (/status) - ✅
-6. Trigger manual do worker (/trigger-daily) - ✅
-7. Worker de notificações proativas - ✅
-8. Integração com IA para gerar insights personalizados - ✅
-9. Logs de envio no banco (collection notification_logs) - ✅
-
-🆕 MELHORIAS ADICIONADAS (v2):
-10. I18n completo - ✅
-11. Rate limiting por usuário - ✅
-12. Suporte a múltiplos tokens - ✅
-13. Templates em múltiplos idiomas - ✅
-14. Categorias de notificação - ✅
-15. Endpoint /preferences - ✅
-16. Cache de insights (24h) - ✅
-
-🔧 MELHORIAS ADICIONADAS (v2.2):
-17. Literal para device_platform - ✅
-18. Validação de Expo token - ✅
-19. Worker de limpeza de tokens inativos - ✅
-20. Endpoint /cleanup-tokens - ✅
-21. Índices para notification_logs - ✅
-22. Forçar ADMIN_SECRET em produção - ✅
-
-📌 VARIÁVEIS DE AMBIENTE:
-   - ADMIN_SECRET: Chave secreta para endpoints admin (OBRIGATÓRIO EM PRODUÇÃO)
-   - ENVIRONMENT: production, development, staging
-
-✅ STATUS: PRONTO PARA PRODUÇÃO
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting por usuário
+#   - Múltiplos tokens por usuário
+#   - Templates em múltiplos idiomas
+#   - Categorias de notificação
+#   - Cache de insights (24h)
+#   - Worker de limpeza de tokens inativos (30 dias)
+#   - Validação de Expo token
+#   - Literal para device_platform
+#   - Forçar ADMIN_SECRET em produção
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Scheduler automático (APScheduler)
+#   - Agendamento personalizado
+#   - Analytics de abertura
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n, rate limiting, multi-token, categorias (30/06/2026)
+#   - v2.1: Correções de tokens, ADMIN_SECRET (01/07/2026)
+#   - v2.2: Literal, validação Expo, cleanuptokens, índices (02/07/2026)
+#   - v2.3: Refatoração - constants, rate_limiter, notifications utils (02/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

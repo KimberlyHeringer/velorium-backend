@@ -2,42 +2,28 @@
 Rotas de Transações Financeiras (Receitas e Despesas)
 Arquivo: backend/app/routes/transactions.py
 
-🔧 CORRIGIDO (v3.2 - FINAL):
-- payment_method agora usa valores padronizados ("cartao_credito")
-- split_amount_cents importado da versão corrigida (usa inteiros)
-- Removida conversão float() desnecessária (amount já é int)
-- TransactionBalance agora retorna int (centavos)
-- Adicionada validação de card_id pertence ao usuário
+Funcionalidades:
+- POST /transactions: Criar transação (com suporte a cartão)
+- GET /transactions: Listar transações com paginação, filtros e ordenação
+- GET /transactions/balance: Saldo do mês atual com cache
+- GET /transactions/total-balance: Saldo total com cache
+- POST /transactions/recalculate-balance: Recalcular cache de saldo
+- GET /transactions/{id}: Buscar transação específica
+- PUT /transactions/{id}: Atualizar transação
+- DELETE /transactions/{id}: Remover transação
+- POST /transactions/bulk-categorize: Recategorização em massa
+- GET /transactions/export-csv: Exportar CSV (LGPD)
 
-🆕 MELHORIAS ADICIONADAS (v3):
-- 🔧 Substituído format_mongo_doc por convert_objectid_to_str
-- 🆕 I18n completo com I18nHTTPException e get_message()
-- 🆕 Adicionado request: Request em todos os endpoints
-- 🆕 Adicionado rate limiting
-- 🆕 Adicionada ordenação personalizada (sort_by, sort_order)
-- 🆕 Adicionado filtro por categoria (category)
-- 🆕 Adicionado filtro por tipo (type)
-- 🆕 Cache de saldo com Redis (TTL: 5 minutos)
-- 🆕 Endpoint /recalculate-balance
-- 🆕 Endpoint /bulk-categorize
-- 🆕 Endpoint /export-csv
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting
+- Cache de saldo com Redis (TTL: 5 min)
+- Recategorização em massa (até 100)
+- Exportação CSV (LGPD)
+- Categorias centralizadas
+- Índices otimizados
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v3.1):
-- 🔧 CORRIGIDO: request passado para create_credit_card_purchase_from_transaction
-- 🔧 CORRIGIDO: Redis scan_iter em vez de keys() (performance)
-- 🔧 CORRIGIDO: StreamingResponse com StringIO diretamente (memória)
-
-🆕 MELHORIAS ADICIONADAS (v3.2):
-- 🆕 Categorias centralizadas em app/constants/categories.py
-- 🆕 Adicionados índices (user_id, date, type) e (user_id, category)
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Cache de saldo com Redis (TTL: 5 minutos)
-- ✅ Recategorização em massa (até 100 transações)
-- ✅ Exportação CSV (LGPD)
-- ✅ Categorias centralizadas
-- ❌ Timezone do usuário (Pós-MVP)
-- ❌ Exportação PDF (Pós-MVP)
+Versão: v3.2 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
@@ -58,14 +44,23 @@ from app.utils.pagination import PaginationParams, PaginatedResponse, paginate, 
 from app.utils.validators import convert_objectid_to_str, validate_object_id
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
-from app.utils.rate_limiter import limiter
+
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import PAYMENT_METHOD_CREDIT_CARD, BALANCE_CACHE_TTL_SECONDS, CSV_MAX_EXPORT
+from app.utils.rate_limiter import limiter, get_user_rate_limit_key
+from app.utils.date_utils import get_month_range
+from app.utils.installments import split_amount_cents
+from app.utils.balance_cache import (
+    get_cached_balance_redis,
+    set_cached_balance_redis,
+    invalidate_balance_cache,
+    calculate_balance
+)
+from app.constants.categories import CATEGORIAS_VALIDAS
 
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
-
-# ========== CATEGORIAS CENTRALIZADAS ==========
-from app.constants.categories import CATEGORIAS_VALIDAS
 
 logger = setup_logger(__name__)
 
@@ -90,108 +85,7 @@ except Exception as e:
     logger.error(f"❌ Erro ao conectar Redis: {e}")
 
 
-# ========== CONSTANTES ==========
-PAYMENT_METHOD_CREDIT_CARD = "cartao_credito"
-BALANCE_CACHE_TTL_SECONDS = 300  # 5 minutos
-CSV_MAX_EXPORT = 10000  # Máximo de registros para exportação
-
-
 # ========== FUNÇÕES AUXILIARES ==========
-
-def get_user_rate_limit_key(request: Request) -> str:
-    """
-    Gera chave de rate limiting por usuário.
-    """
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        return f"transactions:user:{user_id}"
-    
-    client_ip = request.client.host if request.client else "unknown"
-    return f"transactions:ip:{client_ip}"
-
-
-def get_month_range() -> tuple:
-    """Retorna o início e fim do mês atual (UTC)"""
-    now = datetime.now(timezone.utc)
-    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    if now.month == 12:
-        end_of_month = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        end_of_month = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
-    return start_of_month, end_of_month
-
-
-def split_amount_cents(total_cents: int, parts: int) -> List[int]:
-    """
-    Divide um valor em centavos igualmente entre parcelas.
-    Distribui o resto (se houver) nas primeiras parcelas.
-    """
-    if parts <= 0:
-        return []
-    base = total_cents // parts
-    remainder = total_cents - (base * parts)
-    amounts = [base] * parts
-    for i in range(remainder):
-        amounts[i] += 1
-    return amounts
-
-
-async def get_cached_balance_redis(user_id: str, context: str = None) -> Optional[dict]:
-    """Busca saldo do cache Redis."""
-    if not redis_client:
-        return None
-    
-    try:
-        key = f"balance:{user_id}:{context or 'all'}"
-        data = await redis_client.get(key)
-        if data:
-            return json.loads(data)
-        return None
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao buscar saldo no Redis: {e}")
-        return None
-
-
-async def set_cached_balance_redis(user_id: str, balance_data: dict, context: str = None):
-    """Armazena saldo no cache Redis."""
-    if not redis_client:
-        return
-    
-    try:
-        key = f"balance:{user_id}:{context or 'all'}"
-        await redis_client.setex(
-            key,
-            BALANCE_CACHE_TTL_SECONDS,
-            json.dumps(balance_data, default=str)
-        )
-        logger.debug(f"💾 Saldo armazenado no Redis para usuário {user_id}")
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao armazenar saldo no Redis: {e}")
-
-
-async def invalidate_balance_cache(user_id: str):
-    """
-    Invalida cache de saldo para um usuário.
-    🔧 CORRIGIDO: Usa scan_iter em vez de keys() para performance.
-    """
-    if not redis_client:
-        return
-    
-    try:
-        keys = []
-        async for key in redis_client.scan_iter(match=f"balance:{user_id}:*"):
-            keys.append(key)
-            if len(keys) >= 100:
-                await redis_client.delete(*keys)
-                keys = []
-        
-        if keys:
-            await redis_client.delete(*keys)
-        
-        logger.info(f"🗑️ Cache de saldo invalidado para usuário {user_id}")
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao invalidar cache de saldo: {e}")
-
 
 async def create_credit_card_purchase_from_transaction(
     transaction_id: str,
@@ -312,45 +206,6 @@ async def delete_credit_card_purchase_from_transaction(
     
     await db.credit_card_installments.delete_many({"purchase_id": str(purchase["_id"])})
     await db.credit_card_purchases.delete_one({"_id": purchase["_id"]})
-
-
-async def calculate_balance(user_id: str, db, context: str = None) -> dict:
-    """Calcula o saldo do usuário (usado pelo cache)"""
-    start_of_month, end_of_month = get_month_range()
-    
-    match = {
-        "user_id": user_id,
-        "date": {"$gte": start_of_month, "$lt": end_of_month},
-        "$or": [
-            {"type": "income"},
-            {"type": "expense", "payment_method": {"$ne": PAYMENT_METHOD_CREDIT_CARD}},
-            {"type": "expense", "payment_method": {"$exists": False}}
-        ]
-    }
-    if context:
-        match["context"] = context
-
-    pipeline = [
-        {"$match": match},
-        {"$group": {
-            "_id": None,
-            "total_income": {"$sum": {"$cond": [{"$eq": ["$type", "income"]}, "$amount", 0]}},
-            "total_expense": {"$sum": {"$cond": [{"$eq": ["$type", "expense"]}, "$amount", 0]}}
-        }}
-    ]
-
-    result = await db.transactions.aggregate(pipeline).to_list(1)
-    
-    if result:
-        income = result[0]["total_income"]
-        expense = result[0]["total_expense"]
-        return {
-            "income": income,
-            "expense": expense,
-            "balance": income - expense
-        }
-    
-    return {"income": 0, "expense": 0, "balance": 0}
 
 
 # ========== ENDPOINTS ==========
@@ -618,7 +473,7 @@ async def recalculate_balance(
     db=Depends(get_database)
 ):
     """
-    🆕 Recalcula e atualiza o cache de saldo do usuário.
+    Recalcula e atualiza o cache de saldo do usuário.
     """
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
@@ -802,15 +657,12 @@ async def bulk_categorize_transactions(
     db=Depends(get_database)
 ):
     """
-    🆕 Recategoriza múltiplas transações de uma vez.
+    Recategoriza múltiplas transações de uma vez.
     Máximo de 100 transações por requisição.
-    
-    🔧 v3.2: Usa categorias centralizadas.
     """
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
-    # 🔧 Valida categoria usando lista centralizada
     if category not in CATEGORIAS_VALIDAS:
         raise ValidationException(
             message_key="ERROR_INVALID_CATEGORY",
@@ -875,7 +727,7 @@ async def export_transactions_csv(
     db=Depends(get_database)
 ):
     """
-    🆕 Exporta transações em formato CSV (LGPD - portabilidade de dados).
+    Exporta transações em formato CSV (LGPD - portabilidade de dados).
     Limite de 10.000 registros.
     """
     language = getattr(request.state, "language", "pt")
@@ -903,7 +755,6 @@ async def export_transactions_csv(
     cursor = db.transactions.find(query).sort("date", -1).limit(CSV_MAX_EXPORT)
     transactions = await cursor.to_list(CSV_MAX_EXPORT)
     
-    # 🔧 CORRIGIDO: Usa utf-8-sig para compatibilidade com Excel
     output = io.StringIO()
     output.write('\ufeff')  # BOM para Excel
     writer = csv.writer(output)
@@ -943,31 +794,27 @@ async def export_transactions_csv(
     )
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO (v3.2):
-================================================================================
-1. 🔧 CORRIGIDO: request passado para create_credit_card_purchase_from_transaction
-2. 🔧 CORRIGIDO: Redis scan_iter em vez de keys() (performance)
-3. 🔧 CORRIGIDO: StreamingResponse com StringIO diretamente
-4. 🔧 CORRIGIDO: Validação de category no bulk (categorias válidas)
-5. 🔧 CORRIGIDO: Tratamento de category vazia no GET
-6. 🆕 Bulk com resposta detalhada (failed_ids, total)
-7. 🆕 Categorias centralizadas em app/constants/categories.py
-8. 🆕 Adicionados índices (user_id, date, type) e (user_id, category)
-
-📌 CHAVES I18N UTILIZADAS:
-   - ERROR_INSUFFICIENT_LIMIT → "Limite insuficiente..."
-   - ERROR_TRANSACTION_NOT_FOUND → "Transação não encontrada"
-   - ERROR_NO_DATA_TO_UPDATE → "Nenhum dado para atualizar"
-   - ERROR_CREATE_TRANSACTION_FAILED → "Erro interno ao criar transação."
-   - ERROR_CANNOT_DELETE_PAID_INSTALLMENTS → "Não é possível deletar despesa..."
-   - SUCCESS_TRANSACTION_DELETED → "Transação deletada com sucesso"
-   - SUCCESS_BULK_CATEGORIZED → "{count} transações recategorizadas com sucesso"
-   - SUCCESS_BALANCE_RECALCULATED → "Saldo recalculado com sucesso"
-   - ERROR_BULK_LIMIT_EXCEEDED → "Limite de 100 transações por requisição excedido."
-   - ERROR_INVALID_CATEGORY → "Categoria inválida. Use: {categories}"
-
-✅ STATUS: PRONTO PARA PRODUÇÃO
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting
+#   - Cache de saldo com Redis (TTL: 5 min)
+#   - Recategorização em massa (até 100)
+#   - Exportação CSV (LGPD)
+#   - Categorias centralizadas
+#   - Índices otimizados
+#   - Funções auxiliares centralizadas
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Timezone do usuário
+#   - Exportação PDF
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Rate limiting, cache, bulk, CSV (30/06/2026)
+#   - v3.1: Correções de request, scan_iter (01/07/2026)
+#   - v3.2: Refatoração - constants, rate_limiter, date_utils, installments, balance_cache (02/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

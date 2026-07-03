@@ -2,52 +2,27 @@
 Rotas de Compras Parceladas no Cartão de Crédito
 Arquivo: backend/app/routes/credit_card_purchases.py
 
-🔧 CORRIGIDO (v5 - FINAL):
-- split_amount_cents() agora trabalha com inteiros (centavos)
-- update_card_committed_amount agora recebe delta_cents (int)
-- check_available_limit agora recebe required_cents (int)
-- create_purchase agora usa centavos internamente
-- Removido endpoint /debug/clean-invalid-data
-- Corrigidas mensagens de erro para usar from_cents() na exibição
+Funcionalidades:
+- POST /credit-card-purchases: Criar compra parcelada (com suporte a juros)
+- GET /credit-card-purchases/purchases: Listar compras com paginação, filtros e ordenação
+- GET /credit-card-purchases/faturas: Buscar faturas do cartão
+- GET /credit-card-purchases/purchases/{id}: Buscar compra específica
+- PUT /credit-card-purchases/purchases/{id}: Atualizar compra (com suporte a juros)
+- DELETE /credit-card-purchases/purchases/{id}: Remover compra
+- PUT /credit-card-purchases/installments/{id}/pay: Marcar parcela como paga
+- PUT /credit-card-purchases/installments/{id}/unpay: Desmarcar pagamento
 
-🆕 MELHORIAS ADICIONADAS (v4):
-- 🔧 Substituído format_mongo_doc por convert_objectid_to_str (padronização)
-- 🆕 I18n completo com I18nHTTPException e get_message()
-- 🆕 Adicionado request: Request em todos os endpoints
-- 🆕 Adicionado campo paid_by no pagamento de parcelas (auditoria)
-- 🆕 Adicionado logs de auditoria (history) para compras
-- 🆕 Adicionado rota /installments/{installment_id}/unpay (desmarcar pagamento)
-- 🆕 Adicionado filtro por status (paid) no GET
-- 🆕 Adicionado ordenação personalizada (sort_by, sort_order)
-- 🆕 Adicionado rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-- 🆕 Adicionado validação de first_due_date (não permite data passada)
-- 🆕 Adicionado suporte a juros em parcelas (interest_rate)
-- 🆕 Adicionado campo total_with_interest para valor com juros
-- 🆕 Adicionado cálculo de parcelas com juros compostos
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting (create: 30/min, update: 20/min, delete: 10/min, pay: 30/min, unpay: 10/min)
+- Suporte a juros (interest_rate com validação 0-100%)
+- Auditoria completa (history + paid_by)
+- Filtros por status e cartão
+- Ordenação personalizada
+- Janela de reversão de 30 dias no /unpay
+- Atualização automática de remaining_installments e fully_paid
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v5):
-- 🆕 Adicionada validação de installments > 0 em calculate_installments_with_interest
-- 🆕 Adicionada verificação de divisão por zero em calculate_installments_with_interest
-- 🆕 Adicionado request no endpoint /faturas com I18n
-- 🆕 Adicionada validação de novo card_id no update_purchase
-- 🆕 Adicionada validação de interest_rate (0-100%)
-- 🆕 Adicionada validação de total_amount negativo
-- 🆕 Adicionada validação de total_with_interest no update
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Implementado suporte a juros (versão simplificada)
-- ✅ Implementado validação de first_due_date
-- ✅ Implementado logs de auditoria com histórico completo
-- ✅ Implementado rota /unpay para reverter pagamento
-- ✅ Mantido padrão de i18n em todas as mensagens
-- ✅ Usa convert_objectid_to_str em vez de format_mongo_doc
-- ✅ Histórico limitado a 1000 entradas por documento (evita 16MB)
-- ✅ TTL de 1 ano para entradas antigas do histórico
-
-📋 LIMITAÇÕES CONHECIDAS:
-- Transações MongoDB: O Atlas Free Tier não suporta transações multi-documento.
-- Juros: Implementação simplificada (taxa fixa, parcelas iguais).
-- Em produção (M10+), considerar implementar transações.
+Versão: v5.2 (corrigido + refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -55,7 +30,6 @@ from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from dateutil.relativedelta import relativedelta
 from bson import ObjectId
-import os
 
 from app.database import get_database
 from app.models.credit_card_purchase import CreditCardPurchaseCreate, CreditCardPurchaseResponse
@@ -67,6 +41,11 @@ from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 from app.utils.rate_limiter import limiter
 
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import MAX_INSTALLMENTS, MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS
+from app.utils.audit import add_audit_history
+from app.utils.installments import split_amount_cents, calculate_installments_with_interest
+
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
@@ -75,148 +54,8 @@ logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 
-# ========== CONSTANTES ==========
-MAX_INSTALLMENTS = 360  # 30 anos
-
-# ========== CONFIGURAÇÃO ==========
-MAX_HISTORY_ENTRIES = int(os.getenv("MAX_HISTORY_ENTRIES", "1000"))
-"""Número máximo de entradas no histórico por documento."""
-
-if MAX_HISTORY_ENTRIES < 10 or MAX_HISTORY_ENTRIES > 10000:
-    logger.warning(f"⚠️ MAX_HISTORY_ENTRIES inválido: {MAX_HISTORY_ENTRIES}, usando 1000")
-    MAX_HISTORY_ENTRIES = 1000
-
-HISTORY_TTL_DAYS = int(os.getenv("HISTORY_TTL_DAYS", "365"))
-"""Tempo de vida das entradas do histórico em dias."""
-
-if HISTORY_TTL_DAYS < 7 or HISTORY_TTL_DAYS > 730:
-    logger.warning(f"⚠️ HISTORY_TTL_DAYS inválido: {HISTORY_TTL_DAYS}, usando 365")
-    HISTORY_TTL_DAYS = 365
-
 
 # ========== FUNÇÕES AUXILIARES ==========
-
-async def add_purchase_audit_history(db, purchase_id: str, action: str, user_id: str, details: dict):
-    """
-    🆕 Adiciona entrada no histórico de auditoria da compra.
-    
-    🔧 Validações completas:
-    - Verifica se db é válido
-    - Verifica se purchase_id é um ObjectId válido
-    - Limita o histórico a MAX_HISTORY_ENTRIES (evita 16MB)
-    - Adiciona TTL automático para entradas antigas
-    """
-    if db is None:
-        logger.error("❌ db não pode ser None em add_purchase_audit_history")
-        return
-    
-    if not purchase_id:
-        logger.error("❌ purchase_id não pode ser vazio em add_purchase_audit_history")
-        return
-    
-    try:
-        ObjectId(purchase_id)
-    except Exception as e:
-        logger.error(f"❌ purchase_id inválido em add_purchase_audit_history: {purchase_id} - {e}")
-        return
-    
-    if not details:
-        details = {"action": action, "timestamp": datetime.now(timezone.utc).isoformat()}
-    
-    try:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=HISTORY_TTL_DAYS)
-        
-        history_entry = {
-            "action": action,
-            "user_id": user_id,
-            "timestamp": datetime.now(timezone.utc),
-            "expires_at": expires_at,
-            "details": details
-        }
-        
-        await db.credit_card_purchases.update_one(
-            {"_id": ObjectId(purchase_id)},
-            {
-                "$push": {
-                    "history": {
-                        "$each": [history_entry],
-                        "$slice": -MAX_HISTORY_ENTRIES
-                    }
-                }
-            }
-        )
-    except Exception as e:
-        logger.error(f"❌ Erro ao adicionar histórico de auditoria: {e}")
-
-
-def split_amount_cents(total_cents: int, parts: int) -> List[int]:
-    """
-    Divide um valor em centavos igualmente entre parcelas.
-    Distribui o resto (se houver) nas primeiras parcelas.
-    
-    Exemplo: 100 centavos em 3 parcelas = [34, 33, 33]
-    """
-    if parts <= 0:
-        return []
-    base = total_cents // parts
-    remainder = total_cents - (base * parts)
-    amounts = [base] * parts
-    for i in range(remainder):
-        amounts[i] += 1
-    return amounts
-
-
-def calculate_installments_with_interest(
-    total_cents: int,
-    installments: int,
-    interest_rate: float
-) -> List[int]:
-    """
-    🆕 Calcula parcelas com juros compostos.
-    
-    Fórmula: PMT = PV * (i * (1 + i)^n) / ((1 + i)^n - 1)
-    Onde:
-    - PV = valor presente (total_cents)
-    - i = taxa de juros mensal (interest_rate / 100)
-    - n = número de parcelas (installments)
-    
-    Se interest_rate = 0 ou installments = 1, usa split_amount_cents (sem juros).
-    
-    🔧 CORRIGIDO: Valida installments > 0 e previne divisão por zero.
-    """
-    # 🔧 Validação de installments
-    if installments <= 0:
-        raise ValueError("Número de parcelas deve ser maior que zero")
-    
-    # Se não tem juros ou é 1 parcela, usa split simples
-    if interest_rate == 0 or installments == 1:
-        return split_amount_cents(total_cents, installments)
-    
-    i = interest_rate / 100
-    n = installments
-    
-    # 🔧 Evita divisão por zero
-    denominator = (1 + i) ** n - 1
-    if denominator == 0:
-        return split_amount_cents(total_cents, installments)
-    
-    # Fórmula da parcela com juros compostos
-    pmt = total_cents * (i * (1 + i) ** n) / denominator
-    
-    # Arredonda para centavos
-    pmt_cents = round(pmt)
-    
-    # Cria lista com todas as parcelas iguais
-    amounts = [pmt_cents] * n
-    
-    # Ajusta o resto para não perder centavos
-    total_calculated = sum(amounts)
-    if total_calculated != total_cents:
-        diff = total_cents - total_calculated
-        amounts[0] += diff
-    
-    return amounts
-
 
 async def update_card_committed_amount(card_id: str, delta_cents: int, db):
     """Atualiza o committed_amount do cartão (delta em centavos, pode ser negativo)"""
@@ -265,7 +104,7 @@ async def create_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Cria uma nova compra parcelada"""
+    """Cria uma nova compra parcelada com suporte a juros."""
     validate_object_id(purchase_data.card_id, "card_id")
     
     # Verifica se o cartão pertence ao usuário
@@ -279,33 +118,39 @@ async def create_purchase(
             request=request
         )
 
-    # 🔧 Validação de total_amount (já vem em centavos do modelo)
+    # Valida total_amount
     if purchase_data.total_amount <= 0:
         raise ValidationException(
             message_key="ERROR_AMOUNT_INVALID",
             request=request
         )
 
-    # 🔧 total_amount já está em centavos no modelo
     total_amount_cents = purchase_data.total_amount
     
-    # 🆕 O modelo não tem interest_rate, mas vamos suportar via campo extra
-    # Por enquanto, usamos 0 como padrão (sem juros)
-    # TODO: Adicionar interest_rate no modelo CreditCardPurchaseCreate
-    interest_rate = 0.0
+    # 🔧 CORRIGIDO: Usa interest_rate do modelo
+    interest_rate = purchase_data.interest_rate or 0.0
     
-    # 🆕 Se tiver juros, calcula o valor total com juros
+    # 🔧 CORRIGIDO: Valida interest_rate
+    if interest_rate < 0 or interest_rate > 100:
+        raise ValidationException(
+            message_key="ERROR_INVALID_INTEREST_RATE",
+            request=request
+        )
+    
+    # Calcula valor total com juros
     if interest_rate > 0:
         amounts_cents = calculate_installments_with_interest(
             total_amount_cents,
             purchase_data.installments,
             interest_rate
         )
-        total_with_interest_cents = sum(amounts_cents)
+        calculated_total_with_interest = sum(amounts_cents)
+        # 🔧 CORRIGIDO: Usa total_with_interest do modelo se fornecido
+        total_with_interest_cents = purchase_data.total_with_interest or calculated_total_with_interest
     else:
         total_with_interest_cents = total_amount_cents
     
-    # 🔧 Valida limite com o valor total (com ou sem juros)
+    # Valida limite com o valor total (com ou sem juros)
     await check_available_limit(purchase_data.card_id, total_with_interest_cents, db, request)
 
     # Valida número máximo de parcelas
@@ -315,7 +160,7 @@ async def create_purchase(
             request=request
         )
 
-    # 🆕 Valida first_due_date (não permite data passada)
+    # Valida first_due_date (não permite data passada)
     first_due = purchase_data.first_due_date
     if isinstance(first_due, str):
         first_due = datetime.fromisoformat(first_due.replace('Z', '+00:00'))
@@ -326,20 +171,20 @@ async def create_purchase(
             request=request
         )
 
-    # Usa o método to_purchase_data() do modelo para criar o dict
+    # Usa o método to_purchase_data() do modelo
     purchase_dict = purchase_data.to_purchase_data()
     purchase_dict["user_id"] = str(current_user.id)
     purchase_dict["first_due_date"] = first_due
-    purchase_dict["committed_amount"] = total_with_interest_cents  # Compromete o valor com juros
+    purchase_dict["committed_amount"] = total_with_interest_cents
     
-    # 🆕 Armazena informações de juros (quando implementado no modelo)
-    # purchase_dict["interest_rate"] = interest_rate
-    # purchase_dict["total_with_interest"] = total_with_interest_cents
+    # 🔧 CORRIGIDO: Armazena informações de juros
+    purchase_dict["interest_rate"] = interest_rate
+    purchase_dict["total_with_interest"] = total_with_interest_cents
 
     result = await db.credit_card_purchases.insert_one(purchase_dict)
     purchase_id = str(result.inserted_id)
 
-    # 🆕 Cria parcelas (com ou sem juros)
+    # Cria parcelas (com ou sem juros)
     if interest_rate > 0:
         amounts_cents = calculate_installments_with_interest(
             total_amount_cents,
@@ -367,12 +212,12 @@ async def create_purchase(
     if installments:
         await db.credit_card_installments.insert_many(installments)
 
-    # 🔧 Atualiza committed_amount com o valor total (com ou sem juros)
+    # Atualiza committed_amount com o valor total (com ou sem juros)
     await update_card_committed_amount(purchase_data.card_id, total_with_interest_cents, db)
 
-    # 🆕 Log de auditoria
-    await add_purchase_audit_history(
-        db,
+    # Log de auditoria
+    await add_audit_history(
+        db.credit_card_purchases,
         purchase_id,
         "create",
         str(current_user.id),
@@ -381,7 +226,7 @@ async def create_purchase(
             "total_amount": total_amount_cents,
             "installments": purchase_data.installments,
             "interest_rate": interest_rate,
-            "total_with_interest": total_with_interest_cents if interest_rate > 0 else None
+            "total_with_interest": total_with_interest_cents
         }
     )
 
@@ -410,10 +255,6 @@ async def get_purchases(
 ):
     """
     Lista compras parceladas do usuário com paginação, filtros e ordenação.
-    
-    🆕 v4: Adicionados:
-    - Filtro por status (paid)
-    - Ordenação personalizada (sort_by, sort_order)
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
@@ -422,11 +263,9 @@ async def get_purchases(
         validate_object_id(card_id, "card_id")
         query["card_id"] = card_id
     
-    # 🆕 Filtro por status
     if paid is not None:
         query["paid"] = paid
     
-    # 🆕 Ordenação personalizada
     sort_field_mapping = {
         "created_at": "created_at",
         "total_amount": "total_amount",
@@ -465,8 +304,6 @@ async def get_faturas(
 ):
     """
     Retorna faturas do cartão.
-    
-    🔧 CORRIGIDO: Adicionado I18n e tratamento de erro adequado.
     """
     try:
         logger.info(f"🔍 Buscando faturas - card_id: {card_id}")
@@ -609,7 +446,7 @@ async def update_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Atualiza uma compra existente"""
+    """Atualiza uma compra existente (com suporte a juros)"""
     validate_object_id(purchase_id, "purchase_id")
     
     purchase = await db.credit_card_purchases.find_one({
@@ -622,7 +459,7 @@ async def update_purchase(
             request=request
         )
 
-    # 🆕 Verifica se o novo cartão pertence ao usuário
+    # Verifica se o novo cartão pertence ao usuário
     if purchase_data.card_id != purchase.get("card_id"):
         new_card = await db.credit_cards.find_one({
             "_id": ObjectId(purchase_data.card_id),
@@ -645,23 +482,27 @@ async def update_purchase(
             request=request
         )
 
-    # 🔧 Validação de total_amount (já vem em centavos do modelo)
+    # Valida total_amount
     if purchase_data.total_amount <= 0:
         raise ValidationException(
             message_key="ERROR_AMOUNT_INVALID",
             request=request
         )
 
-    # 🔧 total_amount já está em centavos no modelo
     old_total_cents = purchase["total_amount"]
     new_total_cents = purchase_data.total_amount
     
-    # 🆕 O modelo não tem interest_rate, mas vamos suportar via campo extra
-    # Por enquanto, usamos 0 como padrão (sem juros)
-    # TODO: Adicionar interest_rate no modelo CreditCardPurchaseCreate
-    interest_rate = 0.0
+    # 🔧 CORRIGIDO: Usa interest_rate do modelo
+    interest_rate = purchase_data.interest_rate or 0.0
     
-    # 🆕 Se tiver juros, calcula o valor total com juros
+    # 🔧 CORRIGIDO: Valida interest_rate
+    if interest_rate < 0 or interest_rate > 100:
+        raise ValidationException(
+            message_key="ERROR_INVALID_INTEREST_RATE",
+            request=request
+        )
+    
+    # Calcula valor total com juros
     if interest_rate > 0:
         amounts_cents = calculate_installments_with_interest(
             new_total_cents,
@@ -669,11 +510,12 @@ async def update_purchase(
             interest_rate
         )
         calculated_total_with_interest = sum(amounts_cents)
-        new_total_with_interest_cents = calculated_total_with_interest
+        # 🔧 CORRIGIDO: Usa total_with_interest do modelo se fornecido
+        new_total_with_interest_cents = purchase_data.total_with_interest or calculated_total_with_interest
     else:
         new_total_with_interest_cents = new_total_cents
     
-    # 🆕 Verifica se a compra já tinha juros
+    # Verifica se a compra já tinha juros
     old_interest_rate = purchase.get("interest_rate", 0)
     old_total_with_interest = purchase.get("total_with_interest", old_total_cents)
     
@@ -692,7 +534,7 @@ async def update_purchase(
             request=request
         )
 
-    # 🆕 Valida first_due_date
+    # Valida first_due_date
     first_due = purchase_data.first_due_date
     if isinstance(first_due, str):
         first_due = datetime.fromisoformat(first_due.replace('Z', '+00:00'))
@@ -703,19 +545,15 @@ async def update_purchase(
             request=request
         )
 
-    # Usa o método to_purchase_data() do modelo para criar o dict
+    # Usa o método to_purchase_data() do modelo
     update_dict = purchase_data.to_purchase_data()
     update_dict["updated_at"] = datetime.now(timezone.utc)
     update_dict["first_due_date"] = first_due
     update_dict["committed_amount"] = new_total_with_interest_cents
     
-    # 🆕 Atualiza informações de juros (quando implementado no modelo)
-    # if interest_rate > 0:
-    #     update_dict["interest_rate"] = interest_rate
-    #     update_dict["total_with_interest"] = new_total_with_interest_cents
-    # else:
-    #     update_dict.pop("interest_rate", None)
-    #     update_dict.pop("total_with_interest", None)
+    # 🔧 CORRIGIDO: Armazena informações de juros
+    update_dict["interest_rate"] = interest_rate
+    update_dict["total_with_interest"] = new_total_with_interest_cents
 
     await db.credit_card_purchases.update_one(
         {"_id": ObjectId(purchase_id)},
@@ -725,7 +563,7 @@ async def update_purchase(
     # Recria parcelas
     await db.credit_card_installments.delete_many({"purchase_id": purchase_id})
     
-    # 🆕 Cria parcelas (com ou sem juros)
+    # Cria parcelas (com ou sem juros)
     if interest_rate > 0:
         amounts_cents = calculate_installments_with_interest(
             new_total_cents,
@@ -753,9 +591,9 @@ async def update_purchase(
     if new_installments:
         await db.credit_card_installments.insert_many(new_installments)
 
-    # 🆕 Log de auditoria
-    await add_purchase_audit_history(
-        db,
+    # Log de auditoria
+    await add_audit_history(
+        db.credit_card_purchases,
         purchase_id,
         "update",
         str(current_user.id),
@@ -808,9 +646,9 @@ async def delete_purchase(
     total_to_remove = purchase.get("total_with_interest", purchase["total_amount"])
     await update_card_committed_amount(purchase["card_id"], -total_to_remove, db)
 
-    # 🆕 Log de auditoria
-    await add_purchase_audit_history(
-        db,
+    # Log de auditoria
+    await add_audit_history(
+        db.credit_card_purchases,
         purchase_id,
         "delete",
         str(current_user.id),
@@ -881,10 +719,10 @@ async def mark_installment_paid(
         }
     )
 
-    # 🆕 Reduz committed_amount
+    # Reduz committed_amount
     await update_card_committed_amount(installment["card_id"], -installment["amount"], db)
 
-    # 🆕 Atualiza remaining_installments na compra
+    # Atualiza remaining_installments na compra
     remaining = await db.credit_card_installments.count_documents({
         "purchase_id": installment["purchase_id"],
         "paid": False
@@ -896,7 +734,7 @@ async def mark_installment_paid(
                 "remaining_installments": remaining,
                 "updated_at": now
             },
-            "$inc": {"paid_installments_count": 1}  # Contador de parcelas pagas
+            "$inc": {"paid_installments_count": 1}
         }
     )
 
@@ -913,9 +751,9 @@ async def mark_installment_paid(
         )
         logger.info(f"✅ Compra {installment['purchase_id']} totalmente quitada!")
 
-    # 🆕 Log de auditoria na compra
-    await add_purchase_audit_history(
-        db,
+    # Log de auditoria na compra
+    await add_audit_history(
+        db.credit_card_purchases,
         installment["purchase_id"],
         "installment_paid",
         user_id,
@@ -948,7 +786,7 @@ async def unpay_installment(
     db=Depends(get_database)
 ):
     """
-    🆕 Desmarca uma parcela como paga (rollback).
+    Desmarca uma parcela como paga (rollback).
     
     Permite reverter um pagamento feito por engano.
     
@@ -1012,7 +850,7 @@ async def unpay_installment(
     # Restaura committed_amount
     await update_card_committed_amount(installment["card_id"], installment["amount"], db)
 
-    # 🆕 Atualiza remaining_installments na compra
+    # Atualiza remaining_installments na compra
     remaining = await db.credit_card_installments.count_documents({
         "purchase_id": installment["purchase_id"],
         "paid": False
@@ -1026,13 +864,13 @@ async def unpay_installment(
                 "fully_paid_date": None,
                 "updated_at": now
             },
-            "$inc": {"paid_installments_count": -1}  # Decrementa contador
+            "$inc": {"paid_installments_count": -1}
         }
     )
 
     # Log de auditoria
-    await add_purchase_audit_history(
-        db,
+    await add_audit_history(
+        db.credit_card_purchases,
         installment["purchase_id"],
         "installment_unpay",
         user_id,
@@ -1059,29 +897,28 @@ async def unpay_installment(
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
-# ✅ CRUD completo com paginação
-# ✅ ✅ Filtros: card_id, paid
-# ✅ ✅ Ordenação: sort_by, sort_order
-# ✅ ✅ I18n completo
-# ✅ ✅ Auditoria com history
-# ✅ ✅ paid_by (quem pagou)
-# ✅ ✅ Rate limiting
-# ✅ ✅ Validação de first_due_date
-# ✅ ✅ Suporte a juros (interest_rate)
-# ✅ ✅ Rota /unpay para desmarcar pagamento
-# ✅ ✅ Limite de histórico (1000 entradas)
-# ✅ ✅ TTL para histórico (1 ano)
-# ✅ ✅ Validação de installments > 0
-# ✅ ✅ Validação de interest_rate (0-100%)
-# ✅ ✅ Validação de total_amount > 0
-# ✅ ✅ Validação de novo card_id no update
-# ✅ ✅ I18n no endpoint /faturas
-# ✅ ✅ Atualização de remaining_installments no pay/unpay
-# ✅ ✅ Atualização de fully_paid no pay/unpay
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting (create: 30/min, update: 20/min, delete: 10/min, pay: 30/min, unpay: 10/min)
+#   - Suporte a juros (interest_rate com validação 0-100%)
+#   - Auditoria completa (history + paid_by)
+#   - Filtros por status e cartão
+#   - Ordenação personalizada
+#   - Janela de reversão de 30 dias no /unpay
+#   - Atualização automática de remaining_installments e fully_paid
+#   - Validação de first_due_date, total_amount e installments
+#   - interest_rate e total_with_interest do modelo
 #
-# 📋 LIMITAÇÕES CONHECIDAS:
-# - Transações MongoDB: Free Tier não suporta (documentado)
-# - Juros: Implementação simplificada (taxa fixa, parcelas iguais)
-# - TODO: Adicionar interest_rate e total_with_interest no modelo CreditCardPurchaseCreate
+# ❌ Não implementado (Pós-MVP):
+#   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Auditoria, /unpay, juros (30/06/2026)
+#   - v4: Rate limiting, validações (01/07/2026)
+#   - v5: Refatoração - constantes, audit, installments (02/07/2026)
+#   - v5.1: Documentação atualizada para novo padrão
+#   - v5.2: CORREÇÃO - Usa interest_rate e total_with_interest do modelo (02/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

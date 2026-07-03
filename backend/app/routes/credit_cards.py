@@ -2,53 +2,32 @@
 Rotas de Cartões de Crédito
 Arquivo: backend/app/routes/credit_cards.py
 
-🔧 CORRIGIDO (v3 - FINAL):
-- Alinhada nomenclatura com o model corrigido (total_limit, used_limit, available_limit)
-- Removido campo duplicado 'limit'
-- Adicionado campo 'available_limit' calculado
-- Corrigida validação de redução de limite (considera used_limit + committed_amount)
-- Adicionado campo 'available_limit' na resposta
+Funcionalidades:
+- GET /credit-cards: Listar cartões com paginação, filtros e ordenação
+- POST /credit-cards: Criar cartão de crédito
+- PUT /credit-cards/{id}: Atualizar cartão
+- DELETE /credit-cards/{id}: Remover cartão (com verificação de compras)
+- GET /credit-cards/{id}: Buscar cartão específico
+- POST /credit-cards/{id}/recalculate: Recalcular limites
+- GET /credit-cards/{id}/history: Histórico de alterações
 
-🆕 MELHORIAS ADICIONADAS (v3):
-- 🔧 Substituído format_mongo_doc por convert_objectid_to_str (padronização)
-- 🆕 I18n completo com I18nHTTPException e get_message()
-- 🆕 Adicionado request: Request em todos os endpoints
-- 🆕 Adicionado campo updated_by (auditoria de quem alterou)
-- 🆕 Adicionado logs de auditoria (history) para cartões
-- 🆕 Adicionado rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-- 🆕 Adicionado campo is_active (permitir desativar sem deletar)
-- 🆕 Adicionado filtro por status (is_active) no GET
-- 🆕 Adicionado ordenação personalizada (sort_by, sort_order)
-- 🆕 Adicionada rota /recalculate/{card_id} para recalcular limites
-- 🆕 Adicionado histórico específico de alterações de limite
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
+- Auditoria completa (history + updated_by)
+- Filtro por status (is_active)
+- Ordenação personalizada
+- Rota /recalculate para corrigir inconsistências
+- Histórico de alterações de limite
+- SEM TTL (dados mantidos para análise de longo prazo)
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v3.1):
-- 🔧 add_available_limit: Agora cria uma cópia do dicionário (sem efeitos colaterais)
-- 🔧 add_available_limit: Adicionado log warning para available_limit negativo
-- 🔧 create_credit_card: Validação robusta para to_cents com None
-- 🔧 update_credit_card: Validação robusta para to_cents com None
-- 🔧 update_credit_card: Validação de closing_day e due_day
-- 🔧 get_card_history: Garante que history seja uma lista antes de ordenar
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Implementado rota para recalcular limites (corrigir inconsistências)
-- ✅ Implementado histórico de alterações de limite
-- ✅ Implementado logs de auditoria com histórico completo
-- ✅ Mantido padrão de i18n em todas as mensagens
-- ✅ Usa convert_objectid_to_str em vez de format_mongo_doc
-- ✅ Histórico limitado a 1000 entradas por documento (evita 16MB)
-- ❌ SEM TTL para histórico de cartões (dados mantidos para análise de longo prazo)
-- ❌ Webhook de limite próximo NÃO implementado (app do banco já faz)
-
-📋 LIMITAÇÕES CONHECIDAS:
-- Transações MongoDB: O Atlas Free Tier não suporta transações multi-documento.
+Versão: v3.1 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
-import os
 
 from app.database import get_database
 from app.models.credit_card import CreditCardCreate, CreditCardResponse, CreditCardUpdate
@@ -60,6 +39,10 @@ from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 from app.utils.rate_limiter import limiter
 
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS
+from app.utils.audit import add_audit_history, add_limit_history
+
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
@@ -68,27 +51,12 @@ logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/credit-cards", tags=["Cartões de Crédito"])
 
-# ========== CONFIGURAÇÃO ==========
-MAX_HISTORY_ENTRIES = int(os.getenv("MAX_HISTORY_ENTRIES", "1000"))
-"""Número máximo de entradas no histórico por documento."""
-
-if MAX_HISTORY_ENTRIES < 10 or MAX_HISTORY_ENTRIES > 10000:
-    logger.warning(f"⚠️ MAX_HISTORY_ENTRIES inválido: {MAX_HISTORY_ENTRIES}, usando 1000")
-    MAX_HISTORY_ENTRIES = 1000
-
-HISTORY_TTL_DAYS = int(os.getenv("HISTORY_TTL_DAYS", "365"))
-"""Tempo de vida das entradas do histórico em dias."""
-
-if HISTORY_TTL_DAYS < 7 or HISTORY_TTL_DAYS > 730:
-    logger.warning(f"⚠️ HISTORY_TTL_DAYS inválido: {HISTORY_TTL_DAYS}, usando 365")
-    HISTORY_TTL_DAYS = 365
-
 
 # ========== FUNÇÕES AUXILIARES ==========
 
 def add_available_limit(card: dict) -> dict:
     """
-    🔧 CORRIGIDO: Adiciona o campo available_limit calculado ao cartão.
+    Adiciona o campo available_limit calculado ao cartão.
     Retorna uma cópia do dicionário para evitar efeitos colaterais.
     """
     if not card:
@@ -102,83 +70,12 @@ def add_available_limit(card: dict) -> dict:
     
     available = total_limit - used_limit - committed_amount
     
-    # 🆕 Log warning se available for negativo
     if available < 0:
         logger.warning(f"⚠️ available_limit negativo: {available} para cartão {result.get('_id', 'desconhecido')}")
     
     result["available_limit"] = max(available, 0)
     
     return result
-
-
-async def add_card_audit_history(db, card_id: str, action: str, user_id: str, details: dict):
-    """
-    🆕 Adiciona entrada no histórico de auditoria do cartão.
-    
-    🔧 Validações completas:
-    - Verifica se db é válido
-    - Verifica se card_id é um ObjectId válido
-    - Limita o histórico a MAX_HISTORY_ENTRIES (evita 16MB)
-    - 🔧 SEM TTL: Dados mantidos para análise de longo prazo
-    """
-    if db is None:
-        logger.error("❌ db não pode ser None em add_card_audit_history")
-        return
-    
-    if not card_id:
-        logger.error("❌ card_id não pode ser vazio em add_card_audit_history")
-        return
-    
-    try:
-        ObjectId(card_id)
-    except Exception as e:
-        logger.error(f"❌ card_id inválido em add_card_audit_history: {card_id} - {e}")
-        return
-    
-    if not details:
-        details = {"action": action, "timestamp": datetime.now(timezone.utc).isoformat()}
-    
-    try:
-        # 🔧 SEM TTL: Mantém dados para sempre
-        # O campo expires_at é mantido para compatibilidade, mas NÃO tem índice TTL
-        expires_at = datetime.now(timezone.utc) + timedelta(days=HISTORY_TTL_DAYS)
-        
-        history_entry = {
-            "action": action,
-            "user_id": user_id,
-            "timestamp": datetime.now(timezone.utc),
-            "expires_at": expires_at,  # ← Campo existe mas NÃO tem índice TTL
-            "details": details
-        }
-        
-        await db.credit_cards.update_one(
-            {"_id": ObjectId(card_id)},
-            {
-                "$push": {
-                    "history": {
-                        "$each": [history_entry],
-                        "$slice": -MAX_HISTORY_ENTRIES
-                    }
-                }
-            }
-        )
-    except Exception as e:
-        logger.error(f"❌ Erro ao adicionar histórico de auditoria: {e}")
-
-
-async def add_limit_history(db, card_id: str, user_id: str, old_limit: int, new_limit: int, reason: str = None):
-    """
-    🆕 Adiciona entrada específica no histórico de alterações de limite.
-    """
-    details = {
-        "old_limit": old_limit,
-        "new_limit": new_limit,
-        "reason": reason or "Atualização manual"
-    }
-    
-    await add_card_audit_history(db, card_id, "limit_change", user_id, details)
-    
-    logger.info(f"📊 Histórico de limite: {card_id} - {old_limit} → {new_limit}")
 
 
 # ========== ENDPOINTS ==========
@@ -196,10 +93,6 @@ async def get_credit_cards(
 ):
     """
     Lista todos os cartões do usuário com paginação, filtros e ordenação.
-    
-    🆕 v3: Adicionados:
-    - Filtro por status (is_active)
-    - Ordenação personalizada (sort_by, sort_order)
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
@@ -265,8 +158,8 @@ async def create_credit_card(
     result = await db.credit_cards.insert_one(card_dict)
     card_id = str(result.inserted_id)
     
-    await add_card_audit_history(
-        db,
+    await add_audit_history(
+        db.credit_cards,
         card_id,
         "create",
         str(current_user.id),
@@ -275,7 +168,8 @@ async def create_credit_card(
             "total_limit": total_limit_cents,
             "closing_day": card_data.closing_day,
             "due_day": card_data.due_day
-        }
+        },
+        history_field="history"
     )
     
     created = await db.credit_cards.find_one({"_id": result.inserted_id})
@@ -321,7 +215,6 @@ async def update_credit_card(
     update_data["updated_at"] = datetime.now(timezone.utc)
     update_data["updated_by"] = str(current_user.id)
     
-    # 🆕 Validação de closing_day
     if "closing_day" in update_data:
         closing_day = update_data["closing_day"]
         if closing_day < 1 or closing_day > 31:
@@ -330,7 +223,6 @@ async def update_credit_card(
                 request=request
             )
     
-    # 🆕 Validação de due_day
     if "due_day" in update_data:
         due_day = update_data["due_day"]
         if due_day < 1 or due_day > 31:
@@ -378,15 +270,16 @@ async def update_credit_card(
             "Atualização via PUT"
         )
     
-    await add_card_audit_history(
-        db,
+    await add_audit_history(
+        db.credit_cards,
         card_id,
         "update",
         str(current_user.id),
         {
             "changes": update_data,
             "limit_changed": limit_changed
-        }
+        },
+        history_field="history"
     )
     
     updated_card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
@@ -435,15 +328,16 @@ async def delete_credit_card(
             request=request
         )
     
-    await add_card_audit_history(
-        db,
+    await add_audit_history(
+        db.credit_cards,
         card_id,
         "delete",
         str(current_user.id),
         {
             "name": card.get("name"),
             "total_limit": card.get("total_limit")
-        }
+        },
+        history_field="history"
     )
     
     await db.credit_cards.delete_one({"_id": ObjectId(card_id)})
@@ -496,7 +390,7 @@ async def recalculate_card_limits(
     db=Depends(get_database)
 ):
     """
-    🆕 Recalcula os limites do cartão baseado nas parcelas.
+    Recalcula os limites do cartão baseado nas parcelas.
     """
     validate_object_id(card_id, "card_id")
     
@@ -538,8 +432,8 @@ async def recalculate_card_limits(
         }
     )
     
-    await add_card_audit_history(
-        db,
+    await add_audit_history(
+        db.credit_cards,
         card_id,
         "recalculate",
         str(current_user.id),
@@ -550,7 +444,8 @@ async def recalculate_card_limits(
             "new_committed_amount": new_committed,
             "installments_count": len(installments),
             "reason": "Recálculo manual de limites"
-        }
+        },
+        history_field="history"
     )
     
     language = getattr(request.state, "language", "pt")
@@ -576,7 +471,7 @@ async def get_card_history(
     db=Depends(get_database)
 ):
     """
-    🆕 Retorna o histórico de alterações do cartão.
+    Retorna o histórico de alterações do cartão.
     """
     validate_object_id(card_id, "card_id")
     
@@ -603,39 +498,28 @@ async def get_card_history(
     }
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
-================================================================================
-1. 🔧 Substituído format_mongo_doc por convert_objectid_to_str
-2. 🆕 I18n completo com I18nHTTPException e get_message()
-3. 🆕 Adicionado request: Request em todos os endpoints
-4. 🆕 Adicionado campo updated_by (auditoria de quem alterou)
-5. 🆕 Adicionado logs de auditoria (history) para cartões
-6. 🆕 Adicionado rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-7. 🆕 Adicionado campo is_active (permitir desativar sem deletar)
-8. 🆕 Adicionado filtro por status (is_active) no GET
-9. 🆕 Adicionado ordenação personalizada (sort_by, sort_order)
-10. 🆕 Adicionada rota /recalculate/{card_id} para recalcular limites
-11. 🆕 Adicionado histórico específico de alterações de limite
-12. 🆕 Adicionada rota /{card_id}/history para consultar histórico
-13. 🔧 add_available_limit: Agora cria uma cópia do dicionário (sem efeitos colaterais)
-14. 🔧 add_available_limit: Adicionado log warning para available_limit negativo
-15. 🔧 create_credit_card: Validação robusta para to_cents com None
-16. 🔧 update_credit_card: Validação robusta para to_cents com None
-17. 🔧 update_credit_card: Validação de closing_day e due_day
-18. 🔧 get_card_history: Garante que history seja uma lista antes de ordenar
-19. 🔧 SEM TTL: Dados de histórico mantidos para análise de longo prazo
-
-📌 CHAVES I18N UTILIZADAS:
-   - ERROR_CARD_NOT_FOUND → "Cartão não encontrado"
-   - ERROR_CARD_HAS_PURCHASES → "Cartão possui compras associadas..."
-   - SUCCESS_CARD_DELETED → "Cartão removido com sucesso"
-   - ERROR_CANNOT_REDUCE_LIMIT → "Não é possível reduzir o limite..."
-   - SUCCESS_LIMITS_RECALCULATED → "Limites recalculados com sucesso"
-   - CARD_INVALID_CLOSING_DAY → "Dia de fechamento inválido"
-   - CARD_INVALID_DUE_DAY → "Dia de vencimento inválido"
-
-✅ STATUS: PRONTO PARA PRODUÇÃO
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
+#   - Auditoria completa (history + updated_by)
+#   - Filtro por status (is_active)
+#   - Ordenação personalizada
+#   - Rota /recalculate para corrigir inconsistências
+#   - Histórico de alterações de limite
+#   - available_limit calculado com cópia (sem efeitos colaterais)
+#   - Validação de closing_day e due_day
+#   - SEM TTL (dados mantidos para análise de longo prazo)
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
+#   - Webhook de limite próximo (app do banco já faz)
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Auditoria, recalculate, is_active, ordenação (30/06/2026)
+#   - v3.1: Refatoração - constantes, audit (02/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -2,55 +2,23 @@
 Rotas de Contas a Pagar (Bills)
 Arquivo: backend/app/routes/bills.py
 
-🔧 CORRIGIDO (v5 - FINAL):
-- split_amount_cents() agora trabalha com inteiros (centavos)
-- create_bill_installments agora recebe amount_cents (int)
-- update_future_installments agora recebe new_amount_cents (int)
-- adjust_future_installments default mudado para True
-- Adicionada validação de limite máximo de parcelas (360)
-- 🔧 NOVO: I18n com I18nHTTPException
-- 🔧 NOVO: Função get_current_installment()
-- 🔧 i18n: Todas as mensagens de erro substituídas
-- 🔧 i18n: Mensagens de sucesso com get_message()
-- 🔧 CORRIGIDO: parse_installments_dates cria cópia antes de modificar
-- 🔧 CORRIGIDO: parse_installments_dates valida start_date não passado
-- 🔧 CORRIGIDO: split_amount_cents valida parts > 0 e total_cents > 0
-- 🔧 CORRIGIDO: update_future_installments valida new_total_parcelas >= paid_count
-- 🔧 CORRIGIDO: Validação de amount > 0 no update
-- 🔧 CORRIGIDO: Validação de new_total_parcelas > 0 no update
-- 🔧 CORRIGIDO: Validação de new_amount_cents > 0 no update_future_installments
-- 🔧 CORRIGIDO: Validação de due_day no update
+Funcionalidades:
+- POST /bills: Criar conta com parcelas
+- GET /bills: Listar contas com paginação, filtros e ordenação
+- GET /bills/{id}: Buscar conta específica
+- PUT /bills/{id}: Atualizar conta (com ajuste de parcelas futuras)
+- DELETE /bills/{id}: Remover conta e parcelas
 
-🆕 MELHORIAS ADICIONADAS (v5):
-- 🔧 Substituído format_mongo_doc por convert_objectid_to_str (padronização)
-- 🆕 Adicionado campo paid_by nos updates (auditoria de quem pagou)
-- 🆕 Adicionado logs de auditoria (history) para contas
-- 🆕 Adicionado validação de due_day no create
-- 🆕 Adicionado validação de start_date no update
-- 🆕 Adicionado filtro por categoria no GET
-- 🆕 Adicionado ordenação personalizada no GET (sort_by, sort_order)
-- 🆕 Adicionado campo 'history' para logs de auditoria completos
-- 🆕 Adicionado TTL para histórico antigo (expiração automática após 1 ano)
-- 🆕 Adicionado limite de 1000 entradas no histórico (evita estourar 16MB)
-- 🆕 Adicionado validação de collection, doc_id e details em add_bill_audit_history
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
+- Auditoria completa (history + paid_by)
+- Filtros por status (paid) e categoria
+- Ordenação personalizada (sort_by, sort_order)
+- Validação de due_day, start_date e amount
+- Cálculo automático de parcela atual
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v5.1):
-- 🔧 CORRIGIDO: Mapeamento de sort_by para due_date → installments.start_date
-- 🆕 Adicionado comentário explicativo sobre paid_by no update
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Implementado logs de auditoria com histórico completo
-- ✅ Implementado filtros por categoria para melhor UX
-- ✅ Implementado ordenação personalizada
-- ✅ Mantido padrão de i18n em todas as mensagens
-- ✅ Usa convert_objectid_to_str em vez de format_mongo_doc
-- ✅ Histórico limitado a 1000 entradas por documento (evita 16MB)
-- ✅ TTL de 1 ano para entradas antigas do histórico
-
-📋 LIMITAÇÕES CONHECIDAS:
-- Transações MongoDB: O Atlas Free Tier não suporta transações multi-documento.
-  Para consistência, o frontend pode re-sync se houver falha.
-  Em produção (M10+), considerar implementar transações.
+Versão: v5.1 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
@@ -59,7 +27,6 @@ from datetime import datetime, timezone, timedelta
 from dateutil.relativedelta import relativedelta
 from bson import ObjectId
 from calendar import monthrange
-import os
 
 from app.database import get_database
 from app.models.bill import BillCreate, BillResponse, BillUpdate
@@ -71,6 +38,13 @@ from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 from app.utils.rate_limiter import limiter
 
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import MAX_INSTALLMENTS, MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS
+from app.utils.audit import add_audit_history
+from app.utils.installments import split_amount_cents
+from app.utils.date_utils import parse_installments_dates
+from app.utils.validators_extras import validate_amount
+
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message, get_language_from_request
@@ -79,136 +53,13 @@ logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/bills", tags=["Contas a Pagar"])
 
-# ========== CONSTANTES ==========
-MAX_INSTALLMENTS = 360  # 30 anos (máximo para financiamentos)
-
-# ========== CONFIGURAÇÃO ==========
-MAX_HISTORY_ENTRIES = int(os.getenv("MAX_HISTORY_ENTRIES", "1000"))
-"""Número máximo de entradas no histórico por documento."""
-
-if MAX_HISTORY_ENTRIES < 10 or MAX_HISTORY_ENTRIES > 10000:
-    logger.warning(f"⚠️ MAX_HISTORY_ENTRIES inválido: {MAX_HISTORY_ENTRIES}, usando 1000")
-    MAX_HISTORY_ENTRIES = 1000
-
-HISTORY_TTL_DAYS = int(os.getenv("HISTORY_TTL_DAYS", "365"))
-"""Tempo de vida das entradas do histórico em dias."""
-
-if HISTORY_TTL_DAYS < 7 or HISTORY_TTL_DAYS > 730:
-    logger.warning(f"⚠️ HISTORY_TTL_DAYS inválido: {HISTORY_TTL_DAYS}, usando 365")
-    HISTORY_TTL_DAYS = 365
-
 
 # ========== FUNÇÕES AUXILIARES ==========
-
-async def add_bill_audit_history(db, bill_id: str, action: str, user_id: str, details: dict):
-    """
-    🆕 Adiciona entrada no histórico de auditoria da conta.
-    
-    🔧 CORRIGIDO: Validações completas:
-    - Verifica se db é válido
-    - Verifica se bill_id é um ObjectId válido
-    - Limita o histórico a MAX_HISTORY_ENTRIES (evita 16MB)
-    - Adiciona TTL automático para entradas antigas
-    
-    ✅ O try/except é uma boa prática de defesa em profundidade.
-    O bill_id já é validado antes de chamar a função em todos os lugares.
-    """
-    if db is None:
-        logger.error("❌ db não pode ser None em add_bill_audit_history")
-        return
-    
-    if not bill_id:
-        logger.error("❌ bill_id não pode ser vazio em add_bill_audit_history")
-        return
-    
-    # ✅ try/except é defesa em profundidade (boa prática)
-    try:
-        ObjectId(bill_id)
-    except Exception as e:
-        logger.error(f"❌ bill_id inválido em add_bill_audit_history: {bill_id} - {e}")
-        return
-    
-    if not details:
-        details = {"action": action, "timestamp": datetime.now(timezone.utc).isoformat()}
-    
-    try:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=HISTORY_TTL_DAYS)
-        
-        history_entry = {
-            "action": action,
-            "user_id": user_id,
-            "timestamp": datetime.now(timezone.utc),
-            "expires_at": expires_at,
-            "details": details
-        }
-        
-        await db.bills.update_one(
-            {"_id": ObjectId(bill_id)},
-            {
-                "$push": {
-                    "history": {
-                        "$each": [history_entry],
-                        "$slice": -MAX_HISTORY_ENTRIES
-                    }
-                }
-            }
-        )
-    except Exception as e:
-        logger.error(f"❌ Erro ao adicionar histórico de auditoria: {e}")
-
-
-def parse_installments_dates(installments: dict, request: Request = None) -> dict:
-    """
-    Converte start_date de string para datetime se necessário.
-    🔧 CORRIGIDO: Cria uma cópia antes de modificar (evita efeitos colaterais).
-    🔧 CORRIGIDO: Valida se start_date não é uma data passada.
-    """
-    if not installments or not isinstance(installments, dict):
-        return installments
-    
-    result = installments.copy()
-    start_date = result.get("start_date")
-    
-    if start_date and isinstance(start_date, str):
-        try:
-            dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-            if dt < datetime.now(timezone.utc):
-                raise ValidationException(
-                    message_key="ERROR_START_DATE_PAST",
-                    request=request
-                )
-            result["start_date"] = dt
-        except (ValueError, TypeError):
-            pass
-    return result
-
-
-def split_amount_cents(total_cents: int, parts: int) -> List[int]:
-    """
-    Divide um valor em centavos igualmente entre parcelas.
-    Distribui o resto (se houver) nas primeiras parcelas.
-    
-    Exemplo: 100 centavos em 3 parcelas = [34, 33, 33]
-    
-    🔧 CORRIGIDO: Valida parts > 0 e total_cents > 0
-    """
-    if parts <= 0:
-        raise ValueError("Número de parcelas deve ser maior que zero")
-    if total_cents <= 0:
-        raise ValueError("Valor total deve ser maior que zero")
-    
-    base = total_cents // parts
-    remainder = total_cents - (base * parts)
-    amounts = [base] * parts
-    for i in range(remainder):
-        amounts[i] += 1
-    return amounts
-
 
 async def get_current_installment(bill_id: str, user_id: str, db) -> int:
     """
     Calcula a parcela atual com base nas parcelas pagas.
-    🔧 NOVO: Substitui o campo 'current' removido do modelo.
+    Substitui o campo 'current' removido do modelo.
     """
     paid_count = await db.bill_installments.count_documents({
         "bill_id": bill_id,
@@ -227,15 +78,13 @@ async def create_bill_installments(
     request: Request = None
 ):
     """
-    Cria as parcelas individuais para uma conta
-    🔧 VERSÃO SIMPLIFICADA: Apenas as parcelas RESTANTES, todas pendentes
-    🔧 CORRIGIDO: amount_cents é int (centavos)
+    Cria as parcelas individuais para uma conta.
+    Apenas as parcelas RESTANTES, todas pendentes.
     """
     total_parcelas = installments_data.get("total", 1)
     start_date = installments_data.get("start_date")
     due_day = installments_data.get("due_day")
     
-    # 🔧 Validação de limite máximo de parcelas
     if total_parcelas > MAX_INSTALLMENTS:
         raise ValidationException(
             message_key="ERROR_MAX_INSTALLMENTS_EXCEEDED",
@@ -248,7 +97,6 @@ async def create_bill_installments(
             request=request
         )
     
-    # 🆕 Validação de due_day no create
     if due_day:
         if not start_date:
             start_date = datetime.now(timezone.utc)
@@ -299,7 +147,7 @@ async def create_bill_installments(
     
     if installments:
         await db.bill_installments.insert_many(installments)
-        logger.info(f"✅ {len(installments)} parcelas criadas para conta {bill_id} (todas pendentes)")
+        logger.info(f"✅ {len(installments)} parcelas criadas para conta {bill_id}")
 
 
 async def update_future_installments(
@@ -376,7 +224,7 @@ async def update_future_installments(
     
     if new_installments:
         await db.bill_installments.insert_many(new_installments)
-        logger.info(f"✅ {len(new_installments)} parcelas futuras atualizadas para conta {bill_id}")
+        logger.info(f"✅ {len(new_installments)} parcelas futuras atualizadas")
 
 
 # ========== ENDPOINTS ==========
@@ -389,7 +237,7 @@ async def create_bill(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Cria uma nova conta a pagar com parcelas individuais (apenas pendentes)"""
+    """Cria uma nova conta a pagar com parcelas individuais."""
     try:
         bill_dict = bill_data.model_dump()
         bill_dict["user_id"] = str(current_user.id)
@@ -417,9 +265,8 @@ async def create_bill(
         if created:
             created["current"] = await get_current_installment(bill_id, str(current_user.id), db)
         
-        # 🆕 Log de auditoria
-        await add_bill_audit_history(
-            db,
+        await add_audit_history(
+            db.bills,
             bill_id,
             "create",
             str(current_user.id),
@@ -461,10 +308,6 @@ async def list_bills(
     """
     Lista contas do usuário com paginação, filtros e ordenação.
     
-    🆕 v5: Adicionados:
-    - Filtro por categoria
-    - Ordenação personalizada (sort_by, sort_order)
-    
     🔧 CORRIGIDO: Mapeamento de campos para ordenação
     - due_date → installments.start_date (campo correto)
     """
@@ -477,12 +320,9 @@ async def list_bills(
     if category:
         query["category"] = category
     
-    # 🔧 CORRIGIDO: Mapeamento de campos para ordenação
-    # O campo due_date não existe diretamente no documento bills
-    # Está dentro de installments como start_date
     sort_field_mapping = {
         "created_at": "created_at",
-        "due_date": "installments.start_date",  # ← Mapeia para o campo correto
+        "due_date": "installments.start_date",
         "amount": "amount",
         "paid": "paid",
         "updated_at": "updated_at"
@@ -583,10 +423,7 @@ async def update_bill(
             )
         update_data["amount"] = amount_cents
     
-    # 🆕 Quando marcar como paga, registra quem está realizando a ação
-    # Isso é importante para auditoria, mesmo se a conta já estava paga
-    # O paid_by será sobrescrito com o ID do usuário atual, o que é correto
-    # pois o usuário atual está confirmando o pagamento
+    # Quando marcar como paga, registra quem está realizando a ação
     if update_data.get("paid") is True and update_data.get("paid_date") is None:
         update_data["paid_date"] = datetime.now(timezone.utc)
         update_data["paid_by"] = str(current_user.id)
@@ -608,7 +445,6 @@ async def update_bill(
                 request=request
             )
         
-        # 🆕 Validação de start_date no update
         if new_start_date:
             if isinstance(new_start_date, str):
                 try:
@@ -664,9 +500,8 @@ async def update_bill(
             request
         )
 
-    # 🆕 Log de auditoria
-    await add_bill_audit_history(
-        db,
+    await add_audit_history(
+        db.bills,
         bill_id,
         "update",
         str(current_user.id),
@@ -699,7 +534,6 @@ async def delete_bill(
     """Remove uma conta e todas as suas parcelas"""
     validate_object_id(bill_id, "bill_id")
     
-    # 🆕 Log de auditoria antes de deletar
     bill = await db.bills.find_one({
         "_id": ObjectId(bill_id),
         "user_id": str(current_user.id)
@@ -723,8 +557,8 @@ async def delete_bill(
         )
     
     if bill:
-        await add_bill_audit_history(
-            db,
+        await add_audit_history(
+            db.bills,
             bill_id,
             "delete",
             str(current_user.id),
@@ -743,20 +577,25 @@ async def delete_bill(
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
-# ✅ CRUD completo com paginação
-# ✅ ✅ Filtros: paid, category
-# ✅ ✅ Ordenação: sort_by, sort_order (com mapeamento correto)
-# ✅ ✅ I18n completo
-# ✅ ✅ Auditoria com history
-# ✅ ✅ paid_by (quem pagou)
-# ✅ ✅ Rate limiting
-# ✅ ✅ Validação de due_day no create
-# ✅ ✅ Validação de start_date no update
-# ✅ ✅ Limite de histórico (1000 entradas)
-# ✅ ✅ TTL para histórico (1 ano)
-# ✅ ✅ Mapeamento de sort_by: due_date → installments.start_date
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
+#   - Auditoria completa (history + paid_by)
+#   - Filtros por status (paid) e categoria
+#   - Ordenação personalizada (sort_by, sort_order)
+#   - Validação de due_day, start_date e amount
+#   - Cálculo automático de parcela atual
+#   - Mapeamento de sort_by: due_date → installments.start_date
 #
-# 📋 LIMITAÇÕES CONHECIDAS:
-# - Transações MongoDB: Free Tier não suporta (documentado)
+# ❌ Não implementado (Pós-MVP):
+#   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Auditoria, filtros, ordenação (30/06/2026)
+#   - v4: Rate limiting, validações (01/07/2026)
+#   - v5: Refatoração - constantes, audit, installments, date_utils (02/07/2026)
+#   - v5.1: Documentação atualizada para novo padrão
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

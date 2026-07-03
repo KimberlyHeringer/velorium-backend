@@ -2,16 +2,24 @@
 Rotas de Autenticação
 Arquivo: backend/app/routes/auth.py
 
-🔧 CORRIGIDO (VERSÃO FINAL):
-- monthly_income agora tratado como int (centavos)
-- 🔧 NOVO: I18n com I18nHTTPException
-- 🔧 i18n: Todas as mensagens de erro substituídas
-- 🔧 NOVO: Logout com refresh token no body
-- 🔧 NOVO: Rate limiting no login (5/minuto)
-- 🔧 NOVO: Validação de refresh_token no logout
-- 🔧 NOVO: Verificação de blacklist no /me
-- 🔧 NOVO: Validação de terms_accepted no registro
-- 🔧 NOVO: Logs de auditoria no login
+Funcionalidades:
+- POST /auth/register: Registrar novo usuário (com validação de termos)
+- POST /auth/login: Login com rate limiting (5/min)
+- POST /auth/refresh: Refresh token
+- GET /auth/me: Perfil do usuário autenticado
+- POST /auth/logout: Logout (com revogação de token)
+- POST /auth/forgot-password: Solicitar redefinição de senha
+- POST /auth/reset-password: Redefinir senha com token
+
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting no login (5/minuto)
+- Refresh token com blacklist
+- Validação de força de senha
+- Logs de auditoria no login
+- Validação de termos aceitos
+
+Versão: v3 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -19,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 import secrets
 from bson import ObjectId
+from pydantic import BaseModel, EmailStr, Field
 
 from app.database import get_database
 from app.models.user import UserCreate, UserLogin, UserResponse
@@ -31,11 +40,14 @@ from app.utils.auth import (
     is_token_blacklisted,
     add_token_to_blacklist,
     decode_token,
-    oauth2_scheme
+    oauth2_scheme,
+    refresh_access_token
 )
 from app.utils.rate_limiter import limiter
 from app.utils.logger import setup_logger
-from app.utils.validators import validate_password_strength
+
+# ========== NOVOS IMPORTS ==========
+from app.utils.validators_extras import validate_password_strength
 
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, ValidationException, UnauthorizedException
@@ -43,8 +55,6 @@ from app.utils.i18n import get_message, get_language_from_request
 
 # ========== CONFIGURAÇÃO DE LOG ==========
 logger = setup_logger(__name__)
-
-from pydantic import BaseModel, EmailStr, Field
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
 
@@ -84,7 +94,8 @@ async def register(
     user_data: UserCreate,
     db=Depends(get_database)
 ):
-    # 🔧 NOVO: Valida se os termos foram aceitos
+    """Registra um novo usuário."""
+    
     if not user_data.terms_accepted:
         raise ValidationException(
             message_key="AUTH_TERMS_REQUIRED",
@@ -116,22 +127,24 @@ async def register(
     user_dict["updated_at"] = datetime.now(timezone.utc)
 
     result = await db.users.insert_one(user_dict)
-    logger.info(f"Novo usuário registrado: {user_data.email.lower()}")
+    logger.info(f"✅ Novo usuário registrado: {user_data.email.lower()}")
     
     language = getattr(request.state, "language", "pt")
     return {"message": get_message("SUCCESS_CREATED", language), "id": str(result.inserted_id)}
 
 
 @router.post("/login", response_model=LoginResponse)
-@limiter.limit("5/minute")  # 🔧 NOVO: Rate limiting específico para login
+@limiter.limit("5/minute")
 async def login(
     request: Request,
     user_data: UserLogin,
     db=Depends(get_database)
 ):
+    """Login do usuário com rate limiting (5/min)."""
+    
     db_user = await db.users.find_one({"email": user_data.email.lower()})
     if not db_user or not verify_password(user_data.password, db_user["password_hash"]):
-        logger.warning(f"Tentativa de login falhou para email: {user_data.email.lower()}")
+        logger.warning(f"⚠️ Tentativa de login falhou para email: {user_data.email.lower()}")
         raise UnauthorizedException(
             message_key="AUTH_INVALID_CREDENTIALS",
             request=request
@@ -156,7 +169,7 @@ async def login(
         currency=db_user.get("currency", "BRL")
     )
 
-    # 🔧 NOVO: Log de auditoria
+    # Log de auditoria
     await db.audit_logs.insert_one({
         "action": "login",
         "user_id": str(db_user["_id"]),
@@ -166,7 +179,7 @@ async def login(
         "timestamp": datetime.now(timezone.utc)
     })
 
-    logger.info(f"Usuário logado: {user_data.email.lower()}")
+    logger.info(f"✅ Usuário logado: {user_data.email.lower()}")
     return LoginResponse(
         access_token=token_pair.access_token,
         refresh_token=token_pair.refresh_token,
@@ -182,7 +195,7 @@ async def refresh_token(
     req: RefreshTokenRequest,
     db=Depends(get_database)
 ):
-    from app.utils.auth import refresh_access_token
+    """Renova o access token usando refresh token."""
     
     if await is_token_blacklisted(req.refresh_token, db):
         raise UnauthorizedException(
@@ -207,7 +220,8 @@ async def get_current_user_profile(
     token: str = Depends(oauth2_scheme),
     db=Depends(get_database)
 ):
-    # 🔧 NOVO: Verifica se o token está na blacklist
+    """Retorna o perfil do usuário autenticado."""
+    
     if await is_token_blacklisted(token, db):
         raise UnauthorizedException(
             message_key="AUTH_TOKEN_REVOKED",
@@ -216,7 +230,6 @@ async def get_current_user_profile(
     
     current_user = await get_current_user(token, db)
     
-    # Verifica se o usuário ainda existe
     db_user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not db_user:
         raise UnauthorizedException(
@@ -233,7 +246,8 @@ async def logout(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    # 🔧 NOVO: Valida se o refresh token pertence ao usuário
+    """Logout do usuário com revogação do token."""
+    
     try:
         payload = decode_token(logout_data.refresh_token)
         if payload.get("sub") != current_user.id:
@@ -248,7 +262,7 @@ async def logout(
         )
     
     await add_token_to_blacklist(logout_data.refresh_token, current_user.id, db)
-    logger.info(f"Usuário fez logout: {current_user.email}")
+    logger.info(f"✅ Usuário fez logout: {current_user.email}")
     
     language = getattr(request.state, "language", "pt")
     return {"message": get_message("SUCCESS_LOGOUT", language)}
@@ -260,6 +274,8 @@ async def forgot_password(
     forgot_data: ForgotPasswordRequest,
     db=Depends(get_database)
 ):
+    """Solicita redefinição de senha (envia email com token)."""
+    
     user = await db.users.find_one({"email": forgot_data.email})
     
     language = getattr(request.state, "language", "pt")
@@ -285,7 +301,7 @@ async def forgot_password(
             reset_token=token,
             language=language
         )
-        logger.info(f"Email de redefinição enviado para: {user['email']}")
+        logger.info(f"📧 Email de redefinição enviado para: {user['email']}")
     except ImportError:
         reset_link = f"https://velorium-frontend.com/reset-password?token={token}"
         logger.info(f"🔐 [MOCK] Link para redefinir senha: {reset_link}")
@@ -301,6 +317,8 @@ async def reset_password(
     reset_data: ResetPasswordRequest,
     db=Depends(get_database)
 ):
+    """Redefine a senha usando token recebido por email."""
+    
     try:
         validate_password_strength(reset_data.new_password)
     except ValueError as e:
@@ -332,40 +350,32 @@ async def reset_password(
         }}
     )
     
-    logger.info(f"Senha redefinida para usuário: {user['email']}")
+    logger.info(f"✅ Senha redefinida para usuário: {user['email']}")
     
     language = getattr(request.state, "language", "pt")
     return {"message": get_message("SUCCESS_PASSWORD_RESET", language)}
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
-================================================================================
-1. 🔧 NOVO: Rate limiting no login (5/minuto)
-2. 🔧 NOVO: Validação de refresh_token no logout
-3. 🔧 NOVO: Verificação de blacklist no /me
-4. 🔧 NOVO: Validação de terms_accepted no registro
-5. 🔧 NOVO: Logs de auditoria no login
-6. 🔧 i18n: Todas as mensagens substituídas
-7. 🔧 CORRIGIDO: UserResponse com None em vez de ""
-8. 🔧 CORRIGIDO: refresh_access_token com db
-
-📌 CHAVES I18N REFERENCIADAS:
-   - AUTH_TERMS_REQUIRED → "Você deve aceitar os termos de uso"
-   - AUTH_TOKEN_INVALID → "Token inválido"
-   - AUTH_USER_NOT_FOUND → "Usuário não encontrado"
-   - AUTH_EMAIL_ALREADY_EXISTS → "Email já cadastrado"
-   - AUTH_INVALID_CREDENTIALS → "Email ou senha inválidos"
-   - AUTH_TOKEN_REVOKED → "Token revogado. Faça login novamente."
-   - AUTH_INVALID_REFRESH_TOKEN → "Refresh token inválido ou expirado"
-   - AUTH_INVALID_RESET_TOKEN → "Token inválido ou expirado"
-   - AUTH_WEAK_PASSWORD → "Senha muito fraca"
-   - SUCCESS_LOGOUT → "Logout realizado com sucesso. Token revogado."
-   - SUCCESS_PASSWORD_RESET → "Senha alterada com sucesso."
-   - SUCCESS_CREATED → "Criado com sucesso"
-   - INFO_PASSWORD_RESET_EMAIL_SENT → "Se o email estiver cadastrado, você receberá um link de redefinição."
-
-✅ STATUS: PRONTO PARA PRODUÇÃO
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting no login (5/min)
+#   - Refresh token com blacklist
+#   - Validação de força de senha (3/4 critérios)
+#   - Logs de auditoria no login
+#   - Validação de termos aceitos no registro
+#   - Validação de refresh token no logout
+#   - Verificação de blacklist no /me
+#
+# ❌ Não implementado (Pós-MVP):
+#   - 2FA (dois fatores)
+#   - Biometria/FaceID
+#   - Notificação de novo login
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Refatoração - validate_password_strength movido para utils/validators_extras.py (02/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -2,33 +2,28 @@
 Rotas de Usuário (Perfil, Senha, Consentimento, Preferências, Export, Delete)
 Arquivo: backend/app/routes/user.py
 
-🔧 CORRIGIDO (v4.1 - FINAL):
-- 🔧 NOVO: I18n com I18nHTTPException
-- 🔧 i18n: Todas as mensagens de erro substituídas
-- 🔧 i18n: Mensagens de sucesso com get_message()
-- 🔧 NOVO: request: Request em todos os endpoints
-- 🔧 NOVO: Validação de força da nova senha no change-password
-- 🔧 CORRIGIDO: monthly_income com from_cents() no response
+Funcionalidades:
+- GET /users/me: Dados do usuário logado
+- PUT /users/profile: Atualizar perfil
+- PUT /users/change-password: Alterar senha
+- GET /users/preferences: Buscar preferências
+- PUT /users/preferences: Atualizar preferências
+- PUT /users/consent: Atualizar consentimento
+- GET /users/consent-status: Status do consentimento
+- GET /users/privacy-policy: Política de Privacidade
+- GET /users/export: Exportar dados (LGPD)
+- DELETE /users/delete: Solicitar exclusão (envia email)
+- POST /users/delete/confirm: Confirmar exclusão (token)
 
-🆕 MELHORIAS ADICIONADAS (v4):
-- 🔧 Substituído format_mongo_doc por convert_objectid_to_str (padronização)
-- 🆕 I18n completo com I18nHTTPException e get_message()
-- 🆕 Adicionado request: Request em todos os endpoints
-- 🆕 Rate limiting em todos os endpoints sensíveis
-- 🆕 Confirmar exclusão por email (token + email de confirmação)
-- 🆕 Remover campos sensíveis do export (refresh_tokens, push_tokens)
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting em todos endpoints
+- Confirmar exclusão por email (token + email)
+- Remover campos sensíveis do export
+- Validação de força de senha
+- Fallback para email em caso de falha
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v4.1):
-- 🔧 CORRIGIDO: convert_objectid_to_str com fallback para {} (evita None)
-- 🔧 CORRIGIDO: send_delete_confirmation_email com fallback em caso de falha
-- 🆕 Validação de reason no delete (max_length=500)
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Confirmar exclusão por email (segurança)
-- ✅ Rate limiting em todos endpoints
-- ✅ Remover campos sensíveis do export
-- ✅ Fallback para email em caso de falha
-- ❌ Pós-MVP: mover privacy-policy para arquivo separado
+Versão: v4.1 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
@@ -44,30 +39,34 @@ import secrets
 from app.database import get_database
 from app.models.user import UserResponse, UserUpdate
 from app.utils.auth import get_current_user, get_password_hash, verify_password
-from app.utils.rate_limiter import limiter
 from app.utils.logger import setup_logger
 from app.utils.currency import from_cents
 from app.utils.validators import convert_objectid_to_str, validate_object_id
+
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import DELETE_TOKEN_EXPIRY_HOURS
+from app.utils.rate_limiter import limiter, get_user_rate_limit_key
+from app.utils.validators_extras import validate_password_strength
+from app.utils.user_tokens import (
+    generate_delete_token,
+    verify_delete_token,
+    mark_token_as_used
+)
 
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, ValidationException, NotFoundException, UnauthorizedException
 from app.utils.i18n import get_message, get_language_from_request
 
-# ========== CONFIGURAÇÃO DE LOG ==========
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/users", tags=["Usuário"])
-
-
-# ========== CONSTANTES ==========
-DELETE_TOKEN_EXPIRY_HOURS = 24
 
 
 # ========== SCHEMAS ==========
 
 class UpdateProfileRequest(BaseModel):
     name: Optional[str] = None
-    email: Optional[EmailStr] = None  # EmailStr já é validado pelo Pydantic ✅
+    email: Optional[EmailStr] = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -98,7 +97,7 @@ class ExportDataResponse(BaseModel):
 
 class DeleteAccountRequest(BaseModel):
     confirm_delete: bool = True
-    reason: Optional[str] = Field(None, max_length=500, description="Motivo da exclusão")  # 🆕
+    reason: Optional[str] = Field(None, max_length=500, description="Motivo da exclusão")
 
 
 class DeleteAccountResponse(BaseModel):
@@ -115,87 +114,6 @@ class ConfirmDeleteRequest(BaseModel):
 class ConfirmDeleteResponse(BaseModel):
     message: str
     user_id: str
-
-
-# ========== FUNÇÕES AUXILIARES ==========
-
-def get_user_rate_limit_key(request: Request) -> str:
-    """
-    Gera chave de rate limiting por usuário.
-    """
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        return f"user:user:{user_id}"
-    
-    client_ip = request.client.host if request.client else "unknown"
-    return f"user:ip:{client_ip}"
-
-
-def validate_password_strength(password: str) -> None:
-    """Valida a força da senha (pelo menos 3 dos 4 critérios)"""
-    if len(password) < 8:
-        raise ValueError("A senha deve ter pelo menos 8 caracteres")
-    
-    criteria = 0
-    if re.search(r"[A-Z]", password):
-        criteria += 1
-    if re.search(r"[a-z]", password):
-        criteria += 1
-    if re.search(r"\d", password):
-        criteria += 1
-    if re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-        criteria += 1
-    
-    if criteria < 3:
-        raise ValueError(
-            'A senha deve conter pelo menos 3 dos seguintes: '
-            'letra maiúscula, letra minúscula, número, caractere especial'
-        )
-
-
-async def generate_delete_token(user_id: str, db) -> str:
-    """
-    Gera token de exclusão de conta.
-    """
-    token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=DELETE_TOKEN_EXPIRY_HOURS)
-    
-    await db.delete_tokens.insert_one({
-        "user_id": user_id,
-        "token": token,
-        "expires_at": expires_at,
-        "created_at": datetime.now(timezone.utc),
-        "used": False
-    })
-    
-    return token
-
-
-async def verify_delete_token(token: str, db) -> Optional[str]:
-    """
-    Verifica token de exclusão de conta.
-    Retorna user_id se válido, None caso contrário.
-    """
-    token_doc = await db.delete_tokens.find_one({
-        "token": token,
-        "used": False,
-        "expires_at": {"$gt": datetime.now(timezone.utc)}
-    })
-    
-    if not token_doc:
-        return None
-    
-    return token_doc.get("user_id")
-
-
-async def mark_token_as_used(token: str, db):
-    """
-    Marca token como usado.
-    """
-    await db.delete_tokens.update_one(
-        {"token": token},
-        {"$set": {"used": True, "used_at": datetime.now(timezone.utc)}}
-    )
 
 
 # ========== ENDPOINTS DE PERFIL ==========
@@ -217,10 +135,8 @@ async def get_me(
             request=request
         )
     
-    # 🔧 CORRIGIDO: convert_objectid_to_str com fallback
     user = convert_objectid_to_str(user) or {}
     
-    # Converte monthly_income de centavos para reais
     if "monthly_income" in user and user["monthly_income"] is not None:
         user["monthly_income"] = from_cents(user["monthly_income"])
     
@@ -269,11 +185,8 @@ async def update_profile(
     )
     
     updated_user = await db.users.find_one({"_id": ObjectId(current_user.id)})
-    
-    # 🔧 CORRIGIDO: convert_objectid_to_str com fallback
     updated_user = convert_objectid_to_str(updated_user) or {}
     
-    # Converte monthly_income de centavos para reais
     if "monthly_income" in updated_user and updated_user["monthly_income"] is not None:
         updated_user["monthly_income"] = from_cents(updated_user["monthly_income"])
     
@@ -309,7 +222,6 @@ async def change_password(
             request=request
         )
     
-    # Valida força da nova senha
     try:
         validate_password_strength(password_data.new_password)
     except ValueError as e:
@@ -415,7 +327,7 @@ async def update_consent(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Atualiza o consentimento do usuário (termos, pesquisa)"""
+    """Atualiza o consentimento do usuário"""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
@@ -477,9 +389,7 @@ async def get_consent_status(
 async def get_privacy_policy(
     request: Request
 ):
-    """
-    Retorna o texto da Política de Privacidade (LGPD)
-    """
+    """Retorna o texto da Política de Privacidade (LGPD)"""
     request.state.user_id = "anonymous"
     
     logger.debug("📋 Política de privacidade solicitada")
@@ -538,9 +448,7 @@ async def export_user_data(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Exporta todos os dados do usuário em formato JSON (LGPD - Direito de Portabilidade)
-    """
+    """Exporta todos os dados do usuário em formato JSON (LGPD)"""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
@@ -548,18 +456,14 @@ async def export_user_data(
     
     logger.info(f"📤 Iniciando exportação de dados para usuário {user_id}")
     
-    # Busca dados de todas as coleções
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     if user:
-        # 🔧 CORRIGIDO: convert_objectid_to_str com fallback
         user = convert_objectid_to_str(user) or {}
-        # Remove campos sensíveis que não devem ser exportados
         user.pop("password_hash", None)
         user.pop("reset_token", None)
         user.pop("reset_token_expires", None)
         user.pop("refresh_tokens", None)
         user.pop("push_tokens", None)
-        # Converte monthly_income de centavos para reais
         if "monthly_income" in user and user["monthly_income"] is not None:
             user["monthly_income"] = from_cents(user["monthly_income"])
     
@@ -623,7 +527,6 @@ async def export_user_data(
         if "next_year_goal_value" in profile and profile["next_year_goal_value"] is not None:
             profile["next_year_goal_value"] = from_cents(profile["next_year_goal_value"])
     
-    # Monta o objeto de exportação
     export_data = {
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "user_id": user_id,
@@ -657,10 +560,7 @@ async def delete_account(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Inicia o processo de exclusão da conta.
-    Envia email de confirmação com link para excluir definitivamente.
-    """
+    """Inicia o processo de exclusão da conta."""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
@@ -673,7 +573,6 @@ async def delete_account(
             request=request
         )
     
-    # Verifica se já há um token pendente
     existing_token = await db.delete_tokens.find_one({
         "user_id": user_id,
         "used": False,
@@ -685,7 +584,6 @@ async def delete_account(
     else:
         token = await generate_delete_token(user_id, db)
     
-    # 🔧 Envia email de confirmação com fallback
     try:
         from app.services.email_service import send_delete_confirmation_email
         background_tasks.add_task(
@@ -698,7 +596,6 @@ async def delete_account(
         logger.info(f"📧 Email de exclusão enviado para {user.get('email')}")
     except Exception as e:
         logger.error(f"❌ Erro ao enviar email de exclusão: {e}")
-        # Fallback: registra no banco para retry manual
         await db.failed_emails.insert_one({
             "user_id": user_id,
             "email": user.get("email"),
@@ -708,10 +605,9 @@ async def delete_account(
             "created_at": datetime.now(timezone.utc)
         })
     
-    # Registra a solicitação de exclusão
     await db.delete_requests.insert_one({
         "user_id": user_id,
-        "reason": delete_data.reason,  # 🆕
+        "reason": delete_data.reason,
         "requested_at": datetime.now(timezone.utc),
         "expires_at": datetime.now(timezone.utc) + timedelta(hours=DELETE_TOKEN_EXPIRY_HOURS),
         "completed": False
@@ -734,13 +630,10 @@ async def confirm_delete_account(
     confirm_data: ConfirmDeleteRequest,
     db=Depends(get_database)
 ):
-    """
-    Confirma a exclusão da conta usando o token enviado por email.
-    """
+    """Confirma a exclusão da conta usando o token enviado por email."""
     language = getattr(request.state, "language", "pt")
     request.state.user_id = "anonymous"
     
-    # Verifica token
     user_id = await verify_delete_token(confirm_data.token, db)
     if not user_id:
         raise ValidationException(
@@ -750,7 +643,6 @@ async def confirm_delete_account(
     
     user_obj_id = ObjectId(user_id)
     
-    # Verifica se o usuário ainda existe
     user = await db.users.find_one({"_id": user_obj_id})
     if not user:
         raise NotFoundException(
@@ -760,7 +652,6 @@ async def confirm_delete_account(
     
     logger.warning(f"🗑️ Confirmando exclusão permanente da conta do usuário {user_id}")
     
-    # Lista de coleções a limpar
     collections = [
         "users",
         "transactions",
@@ -774,7 +665,6 @@ async def confirm_delete_account(
         "refresh_token_blacklist"
     ]
     
-    # Remove os dados de cada coleção
     for collection_name in collections:
         if collection_name == "users":
             result = await db[collection_name].delete_one({"_id": user_obj_id})
@@ -783,13 +673,9 @@ async def confirm_delete_account(
             result = await db[collection_name].delete_many({"user_id": user_id})
             logger.debug(f"Coleção {collection_name}: {result.deleted_count} documento(s) removido(s)")
     
-    # Remove tokens da blacklist
     await db.refresh_token_blacklist.delete_many({"user_id": user_id})
-    
-    # Marca token como usado
     await mark_token_as_used(confirm_data.token, db)
     
-    # Marca solicitação como completada
     await db.delete_requests.update_one(
         {"user_id": user_id, "completed": False},
         {"$set": {"completed": True, "completed_at": datetime.now(timezone.utc)}}
@@ -805,25 +691,23 @@ async def confirm_delete_account(
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
-# ✅ #31 - Política de Privacidade (endpoint GET /users/privacy-policy)
-# ✅ #32 - Exportar dados (endpoint GET /users/export) com rate limit 2/min
-# ✅ #33 - Deletar conta (endpoint DELETE /users/delete) com rate limit 1/min
-# ✅ #34 - Confirmar exclusão por email (POST /users/delete/confirm)
-# ✅ Dados sensíveis (password_hash, reset_token, refresh_tokens, push_tokens) excluídos do export
-# ✅ Todas as coleções relevantes são limpas ao deletar conta
-# ✅ Retorno estruturado com mensagem amigável
-# ✅ 🔧 i18n: Todas as mensagens substituídas
-# ✅ 🔧 Rate limiting em todos os endpoints
-# ✅ 🔧 request: Request em todos os endpoints
-# ✅ 🔧 convert_objectid_to_str com fallback {}
-# ✅ 🔧 Email com fallback em caso de falha
-# ✅ 🔧 Validação de reason (max_length=500)
-# ✅ 🔧 from_cents() nos valores monetários do export
-# ✅ 🔧 Confirmar exclusão por email (segurança adicional)
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting em todos endpoints
+#   - Confirmar exclusão por email (token + email)
+#   - Remover campos sensíveis do export
+#   - Validação de força de senha
+#   - Fallback para email em caso de falha
+#   - Funções de token centralizadas em utils/user_tokens.py
 #
-# 📌 VARIÁVEIS DE AMBIENTE:
-#   - DELETE_TOKEN_EXPIRY_HOURS: 24 (padrão)
-#   - EMAIL_ENABLED: true (para envio de emails)
+# ❌ Não implementado (Pós-MVP):
+#   - Mover privacy-policy para arquivo separado
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Rate limiting, confirmar exclusão (30/06/2026)
+#   - v4: Correções de convert_objectid_to_str, email fallback (01/07/2026)
+#   - v4.1: Refatoração - constants, rate_limiter, validators_extras, user_tokens (02/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
-

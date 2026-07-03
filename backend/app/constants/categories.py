@@ -6,13 +6,21 @@ Funcionalidade: Centraliza todas as categorias usadas no sistema para
 reutilização em diferentes rotas e módulos.
 
 🔧 USO:
-    from app.constants.categories import CATEGORIAS_VALIDAS
+    from app.constants.categories import CATEGORIAS_VALIDAS, CATEGORIAS_INVESTIMENTOS
     
     if category not in CATEGORIAS_VALIDAS:
         raise ValidationException(...)
+    
+    if category not in CATEGORIAS_INVESTIMENTOS:
+        raise ValidationException(...)
 
 📋 ESTRUTURA:
-    CATEGORIAS_VALIDAS = ["categoria1", "categoria2", ...]
+    CATEGORIAS_TRANSACOES: Categorias para transações financeiras
+    CATEGORIAS_METAS: Categorias para metas
+    CATEGORIAS_INVESTIMENTOS: Categorias para investimentos
+    CATEGORIAS_COMPRAS: Categorias para compras no cartão
+    CATEGORIAS_VALIDAS: Alias para CATEGORIAS_TRANSACOES (compatibilidade)
+    VALID_CATEGORIES: Alias para CATEGORIAS_TRANSACOES (compatibilidade)
 """
 
 # ========== CATEGORIAS DE TRANSAÇÕES ==========
@@ -67,9 +75,9 @@ CATEGORIAS_COMPRAS = [
 ]
 
 # ========== ALIAS PARA COMPATIBILIDADE ==========
-# Mantém o nome antigo para não quebrar código existente
+# Mantém os nomes antigos para não quebrar código existente
 CATEGORIAS_VALIDAS = CATEGORIAS_TRANSACOES
-VALID_CATEGORIES = CATEGORIAS_TRANSACOES  # Para compatibilidade com transactions.py
+VALID_CATEGORIES = CATEGORIAS_TRANSACOES
 
 
 # ========== FUNÇÕES AUXILIARES ==========
@@ -87,6 +95,9 @@ def get_categories_by_type(category_type: str) -> list:
     Exemplo:
         >>> get_categories_by_type("transacoes")
         ["alimentacao", "transporte", ...]
+        
+        >>> get_categories_by_type("investimentos")
+        ["renda_fixa", "acoes", ...]
     """
     mapping = {
         "transacoes": CATEGORIAS_TRANSACOES,
@@ -114,6 +125,9 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
         
         >>> is_valid_category("invalida", "transacoes")
         False
+        
+        >>> is_valid_category("acoes", "investimentos")
+        True
     """
     valid_categories = get_categories_by_type(category_type)
     return category in valid_categories
@@ -125,5 +139,7 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
 # ✅ Reutilizável em todas as rotas
 # ✅ Fácil manutenção (alterar em um lugar)
 # ✅ Compatibilidade com código existente (aliases)
+# ✅ Funções auxiliares para validação
+# ✅ 🆕 CATEGORIAS_INVESTIMENTOS adicionado
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

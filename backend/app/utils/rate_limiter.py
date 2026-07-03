@@ -2,11 +2,13 @@
 Configuração de Rate Limiting para FastAPI
 Arquivo: backend/app/utils/rate_limiter.py
 
-🔧 CORRIGIDO:
+🔧 CORRIGIDO (v2):
 - Suporte a rate limiting por user_id (prioriza usuário autenticado)
 - fallback para IP se usuário não estiver autenticado
 - Suporte a i18n na mensagem de erro
 - Limites configurados por endpoint
+- 🔧 NOVO: get_user_rate_limit_key() para uso em rotas
+- 🔧 NOVO: Exportação de limiter e funções
 """
 
 from slowapi import Limiter
@@ -37,6 +39,19 @@ def get_user_or_ip_key(request: Request) -> str:
     return get_remote_address(request)
 
 
+def get_user_rate_limit_key(request: Request) -> str:
+    """
+    🔧 NOVO: Gera chave de rate limiting por usuário para uso em rotas.
+    Similar ao get_user_or_ip_key, mas com prefixo diferente para rotas específicas.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if user_id:
+        return f"ia:user:{user_id}"
+    
+    client_ip = request.client.host if request.client else "unknown"
+    return f"ia:ip:{client_ip}"
+
+
 # 🔧 CORRIGIDO: Criar o limiter com a função de chave personalizada
 limiter = Limiter(key_func=get_user_or_ip_key)
 
@@ -54,9 +69,9 @@ def init_rate_limiter(app: FastAPI):
         user_id = getattr(request.state, "user_id", None)
         
         if user_id:
-            logger.warning(f"Rate limit excedido para usuário: {user_id} - URL: {request.url.path}")
+            logger.warning(f"⚠️ Rate limit excedido para usuário: {user_id} - URL: {request.url.path}")
         else:
-            logger.warning(f"Rate limit excedido para IP: {client_ip} - URL: {request.url.path}")
+            logger.warning(f"⚠️ Rate limit excedido para IP: {client_ip} - URL: {request.url.path}")
         
         # 🔧 NOVO: Mensagem de erro com i18n
         language = getattr(request.state, "language", "pt")
@@ -67,7 +82,7 @@ def init_rate_limiter(app: FastAPI):
             content={"detail": detail}
         )
     
-    logger.debug("Rate limit handler configurado")
+    logger.debug("📊 Rate limit handler configurado")
 
 
 # Limites por endpoint (requisições por minuto)
@@ -83,18 +98,20 @@ LIMITS = {
 def get_limit(endpoint: str) -> str:
     """Retorna o limite configurado para um endpoint específico"""
     limit = LIMITS.get(endpoint, LIMITS["default"])
-    logger.debug(f"Limite retornado para endpoint {endpoint}: {limit}")
+    logger.debug(f"📊 Limite retornado para endpoint {endpoint}: {limit}")
     return limit
 
 
 """
 ================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
+✅ CORREÇÕES REALIZADAS NESTA VERSÃO (v2):
 ================================================================================
 1. 🔧 NOVO: get_user_or_ip_key() - prioriza user_id sobre IP
 2. 🔧 NOVO: limiter usa get_user_or_ip_key em vez de get_remote_address
 3. 🔧 NOVO: i18n na mensagem de erro (RATE_LIMIT_EXCEEDED)
 4. 🔧 NOVO: Logs com user_id quando disponível
+5. 🔧 NOVO: get_user_rate_limit_key() para uso em rotas (ia.py)
+6. 🔧 NOVO: Exportação de limiter e get_user_rate_limit_key
 
 📌 CHAVES I18N REFERENCIADAS:
    - RATE_LIMIT_EXCEEDED → "Muitas requisições. Tente novamente mais tarde."

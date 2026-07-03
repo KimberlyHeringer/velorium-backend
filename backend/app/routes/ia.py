@@ -2,43 +2,23 @@
 Rotas de IA (Inteligência Artificial)
 Arquivo: backend/app/routes/ia.py
 
-🔧 CORRIGIDO (v3.2 - FINAL):
-- Convertidos centavos para reais no contexto da IA (to_cents/from_cents)
-- Protegido endpoint /perguntar (teste) apenas em desenvolvimento
-- Adicionada validação min_length=1 para pergunta
-- Removida função não utilizada montar_contexto_ia_anonimizado
+Funcionalidades:
+- POST /ia/chat: Chat com IA (com anonimização e cache)
+- POST /ia/feedback: Feedback do usuário sobre respostas
+- POST /ia/extract-from-text: Extrair dados financeiros de texto
+- POST /ia/perguntar: Endpoint de teste (apenas em desenvolvimento)
 
-🆕 MELHORIAS ADICIONADAS (v3):
-- 🔧 I18n completo com I18nHTTPException e get_message()
-- 🆕 Adicionado request: Request em todos os endpoints
-- 🆕 Adicionado rate limiting por usuário (user_id)
-- 🆕 Adicionado cache para respostas da IA (em memória)
-- 🆕 Adicionado feedback do usuário (útil/não útil)
-- 🆕 Adicionado logs de auditoria (history)
-- 🔧 REMOVIDO: raw_text da resposta (dados sensíveis)
-- 🆕 Adicionado campo audit_id nas respostas
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting por usuário (10/min chat, 20/min feedback, 20/min extract)
+- Cache em memória com limpeza periódica (TTL: 1 hora)
+- Logs de auditoria
+- Feedback do usuário (útil/não útil) com upsert
+- Validação de research_consent no feedback
+- Anonimização de dados
+- Remoção de raw_text (dados sensíveis)
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v3.1):
-- 🔧 CORRIGIDO: get_user_rate_limit_key agora recebe Request
-- 🔧 CORRIGIDO: save_feedback com upsert para evitar duplicatas
-- 🔧 DOCUMENTADO: ia_cache em memória (aceitável para MVP)
-
-🔧 CORREÇÕES DOS DESENVOLVEDORES (v3.2):
-- 🔧 MELHORADO: get_user_rate_limit_key com fallback para IP
-- 🔧 NOVO: Limpeza periódica do cache (evita memory leak)
-- 🔧 NOVO: Validação de research_consent no feedback
-- 🔧 CORRIGIDO: MAX_HISTORY_ENTRIES agora é usado no histórico
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Implementado cache em memória para reduzir custos da IA
-- ✅ Implementado feedback do usuário para melhorar a IA
-- ✅ Implementado logs de auditoria para rastreabilidade
-- ✅ Removido raw_text por questões de segurança/LGPD
-- ✅ Rate limiting por usuário (mais seguro que por IP)
-
-📋 LIMITAÇÕES CONHECIDAS:
-- Cache em memória: reinicia quando o servidor reinicia
-- Para produção com muitos usuários, considerar Redis
+Versão: v3.2 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -55,7 +35,6 @@ from app.utils.auth import get_current_user
 from app.models.user import UserResponse
 from app.services.ia_service import obter_resposta_ia_async
 from app.database import get_database
-from app.utils.rate_limiter import limiter
 from app.utils.logger import setup_logger
 from app.utils.validators import validate_object_id
 from app.utils.anonimizer import (
@@ -66,6 +45,11 @@ from app.utils.anonimizer import (
 from app.utils.currency import from_cents
 from bson import ObjectId
 
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import CACHE_TTL_SECONDS, MAX_HISTORY_ENTRIES
+from app.utils.rate_limiter import get_user_rate_limit_key
+from app.utils.audit import add_audit_log
+
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
@@ -75,18 +59,12 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/ia", tags=["IA"])
 
 
-# ========== CONSTANTES ==========
-CACHE_TTL_SECONDS = 3600  # 1 hora
-MAX_HISTORY_ENTRIES = 1000  # Limite de histórico por usuário
-
-
 # ========== CACHE EM MEMÓRIA ==========
 class IACache:
     """
-    🆕 Cache em memória para respostas da IA.
+    Cache em memória para respostas da IA.
     Reduz custos e latência.
     
-    🔧 MELHORADO: Limpeza periódica para evitar memory leak.
     Limitações: reinicia quando o servidor reinicia.
     Para produção, considerar Redis.
     """
@@ -102,7 +80,7 @@ class IACache:
     
     async def _cleanup_loop(self):
         """
-        🔧 NOVO: Limpeza periódica do cache (a cada hora).
+        Limpeza periódica do cache (a cada hora).
         Remove entradas expiradas para evitar memory leak.
         """
         while True:
@@ -133,7 +111,6 @@ class IACache:
         if not entry:
             return None
         
-        # Verifica se expirou
         if datetime.now(timezone.utc) > entry["expires_at"]:
             del self._cache[key]
             return None
@@ -163,7 +140,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     resposta: str
-    audit_id: str  # 🆕 ID para feedback
+    audit_id: str
 
 
 class ExtractTextRequest(BaseModel):
@@ -176,7 +153,7 @@ class ExtractTextResponse(BaseModel):
     merchant: Optional[str] = None
     suggested_category: Optional[str] = None
     confidence: float = 0.0
-    # raw_text: str  # 🔧 REMOVIDO - dados sensíveis
+    # raw_text: str  # REMOVIDO - dados sensíveis
 
 
 class FeedbackType(str, Enum):
@@ -192,25 +169,9 @@ class FeedbackRequest(BaseModel):
 
 # ========== FUNÇÕES AUXILIARES ==========
 
-# 🔧 MELHORADO: Fallback para IP
-def get_user_rate_limit_key(request: Request) -> str:
-    """
-    🔧 MELHORADO: Gera chave de rate limiting por usuário ou IP.
-    """
-    user_id = getattr(request.state, "user_id", None)
-    if user_id:
-        return f"ia:user:{user_id}"
-    
-    # Fallback para IP (se disponível)
-    client_ip = request.client.host if request.client else "unknown"
-    return f"ia:ip:{client_ip}"
-
-
 async def montar_contexto_ia_completo_anonimizado(current_user: UserResponse, db, conversation_history: str = "") -> str:
     """
     Monta o contexto com dados ANONIMIZADOS do usuário (research_consent = true)
-    🔧 REGRA 3.4: Remove nome, email, valores exatos
-    🔧 CORRIGIDO: Converte centavos para reais antes de enviar para IA
     """
     profile = await db.user_profiles.find_one({"user_id": current_user.id})
     
@@ -243,7 +204,6 @@ async def montar_contexto_ia_completo_anonimizado(current_user: UserResponse, db
         profile_data=profile
     )
     
-    # 🔧 Fallback seguro para score_range
     score_range = anonymized_data.get('score_range', 'não disponível')
     top_categories = ', '.join(anonymized_data.get('top_categories', ['nenhuma registrada']))
     total_expense_range = anonymized_data.get('total_expense_range', 'não disponível')
@@ -276,27 +236,9 @@ Orientações:
 """
 
 
-async def add_audit_log(db, user_id: str, action: str, details: dict) -> str:
-    """
-    🆕 Adiciona entrada no log de auditoria da IA.
-    Retorna o ID do log para referência.
-    """
-    log_entry = {
-        "user_id": user_id,
-        "action": action,
-        "details": details,
-        "created_at": datetime.now(timezone.utc),
-        "ip": None,  # Pode ser adicionado se necessário
-        "user_agent": None
-    }
-    
-    result = await db.ia_audit_logs.insert_one(log_entry)
-    return str(result.inserted_id)
-
-
 async def save_feedback(db, audit_id: str, feedback: str, comment: str = None):
     """
-    🆕 Salva o feedback do usuário sobre a resposta da IA.
+    Salva o feedback do usuário sobre a resposta da IA.
     🔧 CORRIGIDO: Upsert para evitar duplicatas.
     """
     existing = await db.ia_feedback.find_one({"audit_id": audit_id})
@@ -336,8 +278,6 @@ async def chat(
     """Chat com a IA - versão com anonimização e cache"""
     
     language = getattr(request.state, "language", "pt")
-    
-    # 🔧 Armazena user_id no state para o rate limiting
     request.state.user_id = str(current_user.id)
     
     validate_object_id(current_user.id, "user_id")
@@ -360,7 +300,6 @@ async def chat(
             request=request
         )
     
-    # 🔍 Buscar histórico da conversa (usando MAX_HISTORY_ENTRIES)
     conversation_history = []
     if research_consent:
         history_cursor = db.chat_history.find(
@@ -394,7 +333,6 @@ async def chat(
             logger.debug(f"📊 Usando contexto genérico para usuário {current_user.id} (sem consentimento)")
             contexto = await montar_contexto_ia_sem_consentimento()
         
-        # 🆕 Verifica cache
         context_hash = hashlib.md5(contexto.encode()).hexdigest()
         cached_response = ia_cache.get(str(current_user.id), chat_request.pergunta, context_hash)
         
@@ -410,7 +348,6 @@ async def chat(
             from_cache = False
             ia_cache.set(str(current_user.id), chat_request.pergunta, context_hash, resposta)
         
-        # 🆕 Salvar na conversa
         if research_consent:
             await db.chat_history.insert_one({
                 "user_id": current_user.id,
@@ -420,7 +357,6 @@ async def chat(
                 "created_at": datetime.now(timezone.utc)
             })
         
-        # 🆕 Log de auditoria
         audit_id = await add_audit_log(
             db,
             str(current_user.id),
@@ -457,14 +393,11 @@ async def submit_feedback(
     db = Depends(get_database)
 ):
     """
-    🆕 Recebe feedback do usuário sobre a resposta da IA.
+    Recebe feedback do usuário sobre a resposta da IA.
     """
     language = getattr(request.state, "language", "pt")
-    
-    # 🔧 Armazena user_id no state para o rate limiting
     request.state.user_id = str(current_user.id)
     
-    # 🔧 Valida research_consent
     user_doc = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user_doc:
         raise NotFoundException(
@@ -477,7 +410,6 @@ async def submit_feedback(
             request=request
         )
     
-    # Valida se o audit_id existe
     audit_log = await db.ia_audit_logs.find_one({
         "_id": ObjectId(feedback_data.audit_id),
         "user_id": str(current_user.id)
@@ -489,7 +421,6 @@ async def submit_feedback(
             request=request
         )
     
-    # Salva o feedback (com upsert)
     await save_feedback(
         db,
         feedback_data.audit_id,
@@ -517,13 +448,8 @@ async def extract_from_text(
 ):
     """
     Extrai dados financeiros de um texto (notificação, screenshot, etc.)
-    Usa IA para identificar valor, estabelecimento, categoria.
-    🔧 REGRA 3.5: Leitura de Notificações
-    🔧 REMOVIDO: raw_text da resposta (dados sensíveis)
     """
     language = getattr(request.state, "language", "pt")
-    
-    # 🔧 Armazena user_id no state para o rate limiting
     request.state.user_id = str(current_user.id)
     
     try:
@@ -562,7 +488,6 @@ Responda APENAS com JSON no formato:
             
             data = json.loads(clean_response.strip())
             
-            # 🆕 Log de auditoria (sem raw_text)
             await add_audit_log(
                 db,
                 str(current_user.id),
@@ -582,13 +507,11 @@ Responda APENAS com JSON no formato:
                 merchant=data.get('merchant'),
                 suggested_category=data.get('suggested_category'),
                 confidence=data.get('confidence', 0.5)
-                # raw_text removido
             )
         except json.JSONDecodeError as e:
             logger.error(f"❌ Erro ao parsear resposta da IA: {resposta} - Erro: {e}")
             return ExtractTextResponse(
                 confidence=0.0
-                # raw_text removido
             )
         
     except Exception as e:
@@ -596,7 +519,6 @@ Responda APENAS com JSON no formato:
         import traceback
         logger.debug(traceback.format_exc())
         
-        # 🆕 Log de auditoria do erro
         await add_audit_log(
             db,
             str(current_user.id),
@@ -616,7 +538,6 @@ Responda APENAS com JSON no formato:
 
 # ========== ENDPOINT DE TESTE (APENAS EM DESENVOLVIMENTO) ==========
 
-# 🔧 CORRIGIDO: Protegido apenas para ambiente de desenvolvimento
 if os.getenv("ENVIRONMENT", "development") != "production" and os.getenv("DEBUG", "false").lower() == "true":
     class PerguntaRequestTeste(BaseModel):
         prompt_context: str
@@ -633,41 +554,29 @@ if os.getenv("ENVIRONMENT", "development") != "production" and os.getenv("DEBUG"
         return ChatResponse(resposta=resposta, audit_id="test")
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO (v3.2):
-================================================================================
-1. 🆕 I18n completo com I18nHTTPException e get_message()
-2. 🆕 Adicionado request: Request em todos os endpoints
-3. 🆕 Rate limiting por usuário (user_id)
-4. 🆕 Cache em memória para respostas da IA (reduz custos)
-5. 🆕 Feedback do usuário (útil/não útil)
-6. 🆕 Logs de auditoria (history)
-7. 🔧 REMOVIDO: raw_text da resposta (dados sensíveis)
-8. 🆕 Adicionado campo audit_id nas respostas
-9. 🔧 CORRIGIDO: get_user_rate_limit_key agora recebe Request
-10. 🔧 CORRIGIDO: save_feedback com upsert para evitar duplicatas
-11. 🔧 DOCUMENTADO: ia_cache em memória (aceitável para MVP)
-12. 🔧 MELHORADO: get_user_rate_limit_key com fallback para IP
-13. 🔧 NOVO: Limpeza periódica do cache (evita memory leak)
-14. 🔧 NOVO: Validação de research_consent no feedback
-15. 🔧 CORRIGIDO: MAX_HISTORY_ENTRIES agora é usado no histórico
-
-📌 CHAVES I18N UTILIZADAS:
-   - ERROR_USER_NOT_FOUND → "Usuário não encontrado"
-   - ERROR_TERMS_NOT_ACCEPTED → "Para usar o assistente..."
-   - ERROR_IA_REQUEST_FAILED → "Não foi possível processar..."
-   - SUCCESS_FEEDBACK_RECEIVED → "Feedback recebido com sucesso"
-   - ERROR_AUDIT_NOT_FOUND → "Interação não encontrada"
-   - ERROR_RESEARCH_CONSENT_REQUIRED → "Consentimento de pesquisa necessário"
-
-📋 DECISÕES DOCUMENTADAS:
-   - ✅ Cache em memória: reduz custos da IA (aceitável para MVP)
-   - ✅ Feedback do usuário: melhora a IA
-   - ✅ Logs de auditoria: rastreabilidade
-   - ✅ Rate limiting por usuário: mais seguro
-   - ✅ raw_text removido: segurança/LGPD
-
-✅ STATUS: PRONTO PARA PRODUÇÃO
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting por usuário (10/min chat, 20/min feedback, 20/min extract)
+#   - Cache em memória com limpeza periódica (TTL: 1 hora)
+#   - Logs de auditoria
+#   - Feedback do usuário com upsert
+#   - Validação de research_consent no feedback
+#   - Anonimização de dados
+#   - Remoção de raw_text (dados sensíveis)
+#   - fallback para IP no rate limiting
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Redis para cache (substituir cache em memória)
+#   - Cache com fallback para MongoDB
+#   - Rate limiting por usuário com Redis
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Rate limiting, cache, feedback, auditoria (30/06/2026)
+#   - v3.1: Correções de get_user_rate_limit_key, save_feedback (01/07/2026)
+#   - v3.2: Refatoração - constantes, rate_limiter, audit (02/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

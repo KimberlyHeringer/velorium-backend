@@ -2,42 +2,31 @@
 Rotas de Conquistas do Usuário (sincronização)
 Arquivo: backend/app/routes/achievements.py
 
-🔧 CORRIGIDO (v2):
-- Substituído HTTPException por I18nHTTPException
-- Adicionado suporte a internacionalização
-- Usa get_message() para mensagens de sucesso
-- Adicionado request: Request nos endpoints
-- 🔧 CORRIGIDO: Usa convert_objectid_to_str em vez de format_mongo_doc
-- 🔧 CORRIGIDO: Query de duplicação no create com year/month None
-- 🔧 CORRIGIDO: Query de duplicação no sync com year/month None
-- 🔧 CORRIGIDO: Mensagens de sync com pluralização
-- 🔧 CORRIGIDO: Removido try/except desnecessário no delete
+Funcionalidades:
+- GET /achievements: Listar conquistas com paginação e filtros (type, year, month)
+- POST /achievements: Criar conquista individual (com validação de duplicação)
+- POST /achievements/sync: Sincronizar múltiplas conquistas (batch + bulk insert)
+- GET /achievements/{id}: Buscar conquista específica
+- DELETE /achievements/{id}: Remover conquista
 
-🆕 MELHORIAS ADICIONADAS (v3):
-- Adicionado limite de batch no sync (MAX_SYNC_BATCH = 100)
-- Adicionado filtros opcionais no GET (type, year, month)
-- Substituído insert_one em loop por insert_many (bulk insert)
-- Adicionado rate limiting no sync (10/minuto)
-- Adicionado validação de tipo com AchievementType (enum)
-- Adicionado logging estruturado com emojis
-- Adicionado documentação inline com decisões
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting no sync (10/minuto)
+- Limite de batch (MAX_SYNC_BATCH = 100)
+- Bulk insert para performance
+- Filtros avançados no GET (type, year, month)
+- Validação de tipo de conquista
 
-📋 DECISÕES DOCUMENTADAS:
-- ✅ NÃO implementado transação MongoDB (Free Tier não suporta)
-- ✅ NÃO implementado validação extra de type (Pydantic já valida)
-- ✅ Implementado limite de batch para prevenir abuso
-- ✅ Implementado bulk insert para performance
-- ✅ Implementado rate limiting para proteção
+Versão: v4.1 (corrigido)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from typing import List, Optional
 from datetime import datetime, timezone
 from bson import ObjectId
-import os
 
 from app.database import get_database
-from app.models.achievement import AchievementCreate, AchievementResponse
+from app.models.achievement import AchievementCreate, AchievementResponse, TIPOS_VALIDOS
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
@@ -45,11 +34,8 @@ from app.utils.validators import validate_object_id, convert_objectid_to_str
 from app.utils.logger import setup_logger
 from app.utils.rate_limiter import limiter
 
-# ========== CONFIGURAÇÃO ==========
-MAX_SYNC_BATCH = int(os.getenv("MAX_SYNC_BATCH", "100"))
-"""Número máximo de conquistas permitidas por requisição de sync.
-   Valor padrão: 100 (configurável via .env)
-   Motivo: Prevenir abuso e lentidão no servidor."""
+# ========== NOVOS IMPORTS ==========
+from app.core.constants import MAX_SYNC_BATCH
 
 # ========== I18N ==========
 from app.utils.i18n import get_message
@@ -82,17 +68,20 @@ async def get_achievements(
     Retorna todas as conquistas do usuário com paginação e filtros opcionais.
     
     Filtros disponíveis:
-    - type: Filtrar por tipo de conquista (ex: "first_transaction", "savings_goal")
+    - type: Filtrar por tipo de conquista (validado contra TIPOS_VALIDOS)
     - year: Filtrar por ano (ex: 2025)
     - month: Filtrar por mês (ex: 6 para junho)
-    
-    🔧 MELHORIA v3: Adicionados filtros opcionais para melhorar a UX.
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
     
-    # 🔧 Adiciona filtros opcionais à query
+    # 🔧 CORRIGIDO: Validação de type
     if type:
+        if type not in TIPOS_VALIDOS:
+            raise ValidationException(
+                message_key="ERROR_INVALID_ACHIEVEMENT_TYPE",
+                request=request
+            )
         query["type"] = type
     if year is not None:
         query["year"] = year
@@ -122,14 +111,11 @@ async def create_achievement(
     Cria uma nova conquista para o usuário atual.
     
     🔧 CORRIGIDO: Query de duplicação com condições para year/month None.
-    ✅ Decisão: Se year ou month forem None, não incluir na query de duplicação.
     """
     ach_dict = ach_data.model_dump()
     ach_dict["user_id"] = str(current_user.id)
     ach_dict["date"] = datetime.now(timezone.utc)
     
-    # 🔧 Query dinâmica para verificar duplicação
-    # year e month são opcionais - só incluir se existirem
     query = {"user_id": str(current_user.id), "type": ach_data.type}
     if ach_data.year is not None:
         query["year"] = ach_data.year
@@ -168,13 +154,9 @@ async def sync_achievements(
     - Limite de batch (MAX_SYNC_BATCH) para prevenir abuso
     - Bulk insert (insert_many) para melhor performance
     - Rate limiting (10/minuto) para proteger o servidor
-    
-    📋 DECISÃO: Transação NÃO implementada pois o MongoDB Atlas Free Tier
-    não suporta transações multi-documento. O frontend pode re-sync se falhar.
     """
     user_id = str(current_user.id)
     
-    # 🔧 VALIDAÇÃO: Limite de batch
     if len(achievements) > MAX_SYNC_BATCH:
         logger.warning(f"⚠️ Batch excedeu limite: {len(achievements)} > {MAX_SYNC_BATCH} para usuário {user_id}")
         raise ValidationException(
@@ -185,7 +167,6 @@ async def sync_achievements(
     achievements_to_insert = []
     
     for ach in achievements:
-        # 🔧 Query dinâmica para verificar duplicação
         query = {"user_id": user_id, "type": ach.type}
         if ach.year is not None:
             query["year"] = ach.year
@@ -204,14 +185,12 @@ async def sync_achievements(
     
     inserted = 0
     if achievements_to_insert:
-        # 🔧 MELHORIA: Bulk insert em vez de insert_one em loop
         result = await db.achievements.insert_many(achievements_to_insert)
         inserted = len(result.inserted_ids)
         logger.info(f"✅ {inserted} conquistas inseridas em bulk para usuário {user_id}")
     
     language = getattr(request.state, "language", "pt")
     
-    # 🔧 Mensagem com pluralização
     if inserted == 0:
         message = get_message("ACHIEVEMENT_SYNC_NONE", language)
     elif inserted == 1:
@@ -291,29 +270,26 @@ async def delete_achievement(
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
-# ✅ Substituído HTTPException por I18nHTTPException
-# ✅ Usa ValidationException para erros de validação
-# ✅ Usa NotFoundException para recursos não encontrados
-# ✅ Usa ConflictException para conflitos (duplicação)
-# ✅ Mensagens de sucesso com get_message()
-# ✅ Suporte a i18n via request.state.language
-# ✅ Verificação de duplicação antes de criar conquista
-# ✅ Sync com year + month (int) em vez de month (string)
-# ✅ 🔧 Usa convert_objectid_to_str em vez de format_mongo_doc
-# ✅ 🔧 Query de duplicação com condições para year/month None
-# ✅ 🔧 Mensagens de sync com pluralização
-# ✅ 🔧 Delete simplificado (sem try/except redundante)
-# ✅ 🔧 Get simplificado (sem try/except redundante)
-# ✅ 🆕 Limite de batch no sync (MAX_SYNC_BATCH = 100)
-# ✅ 🆕 Filtros opcionais no GET (type, year, month)
-# ✅ 🆕 Bulk insert (insert_many) para melhor performance
-# ✅ 🆕 Rate limiting no sync (10/minuto)
-# ✅ 🆕 Logs estruturados com emojis
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting no sync (10/min)
+#   - Limite de batch (MAX_SYNC_BATCH = 100)
+#   - Bulk insert para performance
+#   - Filtros por type, year, month
+#   - Pluralização nas mensagens de sync
+#   - Verificação de duplicação antes de criar/sync
+#   - Validação de type contra TIPOS_VALIDOS no GET
 #
-# 📋 DECISÕES DE NÃO IMPLEMENTAÇÃO:
-# ❌ Transação MongoDB: Free Tier não suporta (M10+ necessário)
-#    Alternativa: Frontend pode re-sync se falhar
-# ❌ Validação extra de type: Já validado pelo Pydantic (AchievementCreate)
-#    Alternativa: Manter validação no modelo, não no router
+# ❌ Não implementado (Pós-MVP):
+#   - Transação MongoDB: Free Tier não suporta (M10+ necessário)
+#     Alternativa: Frontend pode re-sync se falhar
+#   - Validação extra de type no sync: Já validado pelo Pydantic no AchievementCreate
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções de query (25/05/2026)
+#   - v3: Batch limit, bulk insert, filtros (30/06/2026)
+#   - v4: Refatoração - MAX_SYNC_BATCH movido para core/constants.py (02/07/2026)
+#   - v4.1: Validação de type no GET (02/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

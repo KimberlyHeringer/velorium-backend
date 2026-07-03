@@ -2,42 +2,23 @@
 Rotas de Metas Financeiras (Goals)
 Arquivo: backend/app/routes/goals.py
 
-🔧 CORRIGIDO (v3.2 - FINAL):
-- Substituído format_doc por format_mongo_doc (Seção 2.2)
-- MODIFICADO: Regra 2.8 - Adicionado logger completo
-- MODIFICADO: Regra 2.10 - Usa validate_object_id em vez de validação manual
-- MODIFICADO: Regra 2.11 - Conversão de moeda para centavos (to_cents/from_cents)
+Funcionalidades:
+- GET /goals: Listar metas com paginação, filtros e ordenação
+- POST /goals: Criar meta financeira
+- GET /goals/{id}: Buscar meta específica
+- PUT /goals/{id}: Atualizar meta
+- DELETE /goals/{id}: Remover meta
 
-🆕 MELHORIAS ADICIONADAS (v3):
-- 🔧 Substituído format_mongo_doc por convert_objectid_to_str (padronização)
-- 🆕 I18n completo com I18nHTTPException e get_message()
-- 🆕 Adicionado request: Request em todos os endpoints
-- 🆕 Adicionado campos calculados: progress_percentage e remaining_amount
-- 🆕 Adicionada validação current <= target
-- 🆕 Adicionado rate limiting (create: 30/min, update: 20/min, delete: 10/min)
+Principais features:
+- I18n completo com suporte a 4 idiomas
+- Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
+- Campos calculados (progress_percentage, remaining_amount)
+- Validação current <= target
+- Filtros por status (completed) e categoria
+- Ordenação personalizada (sort_by, sort_order)
+- SEM history e SEM TTL (modo individual)
 
-🔧 CORREÇÕES DO DESENVOLVEDOR (v3.1):
-- 🔧 REMOVIDO: unit do goal_dict (campo não existe no modelo)
-- 🆕 Adicionado sort_by e sort_order no GET (consistência com outras rotas)
-- 🆕 Adicionado sort_field_mapping para ordenação
-
-🆕 MELHORIAS ADICIONADAS (v3.2):
-- 🆕 Adicionado filtro por categoria no GET
-- 🆕 Adicionada validação de categoria (já no modelo, reforçada no router)
-
-📋 DECISÕES DOCUMENTADAS:
-- ✅ Implementado campos calculados para facilitar frontend
-- ✅ Implementado validação de consistência (current <= target)
-- ✅ Implementado filtro por categoria no GET
-- ✅ Mantido padrão de i18n em todas as mensagens
-- ✅ Usa convert_objectid_to_str em vez de format_mongo_doc
-- ❌ SEM updated_by (modo individual não precisa)
-- ❌ SEM history (modo individual não precisa)
-- ❌ SEM TTL para histórico (não temos histórico)
-- ❌ SEM deadline (Pós-MVP - mudaria o modelo)
-
-📋 LIMITAÇÕES CONHECIDAS:
-- Transações MongoDB: O Atlas Free Tier não suporta transações multi-documento.
+Versão: v3.2 (refatorado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -55,6 +36,9 @@ from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 from app.utils.rate_limiter import limiter
 
+# ========== NOVOS IMPORTS ==========
+from app.utils.validators_extras import add_calculated_fields
+
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
@@ -62,34 +46,6 @@ from app.utils.i18n import get_message
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/goals", tags=["Metas"])
-
-
-# ========== FUNÇÕES AUXILIARES ==========
-
-def add_calculated_fields(goal: dict) -> dict:
-    """
-    🆕 Adiciona campos calculados à meta.
-    - progress_percentage: Percentual concluído (0-100)
-    - remaining_amount: Valor restante para atingir a meta
-    """
-    if not goal:
-        return goal
-    
-    result = goal.copy()
-    
-    target = result.get("target", 0)
-    current = result.get("current", 0)
-    
-    # 🔧 progress_percentage (já limitado a 100% com min())
-    if target > 0:
-        result["progress_percentage"] = min((current / target) * 100, 100)
-    else:
-        result["progress_percentage"] = 0
-    
-    # 🔧 remaining_amount
-    result["remaining_amount"] = max(target - current, 0)
-    
-    return result
 
 
 # ========== ENDPOINTS ==========
@@ -100,7 +56,7 @@ async def list_goals(
     page: int = Query(1, ge=1, description="Número da página"),
     limit: int = Query(20, ge=1, le=100, description="Itens por página"),
     completed: Optional[bool] = Query(None, description="Filtrar por concluídas"),
-    category: Optional[str] = Query(None, description="Filtrar por categoria"),  # 🆕
+    category: Optional[str] = Query(None, description="Filtrar por categoria"),
     sort_by: str = Query("created_at", description="Campo para ordenação (created_at, target, current, completed, category)"),
     sort_order: str = Query("desc", regex="^(asc|desc)$", description="Ordem (asc/desc)"),
     current_user: UserResponse = Depends(get_current_user),
@@ -108,10 +64,6 @@ async def list_goals(
 ):
     """
     Lista as metas do usuário com paginação, filtros e ordenação.
-    
-    🆕 v3.2: Adicionado:
-    - Filtro por categoria (category)
-    - Ordenação por categoria
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
@@ -119,11 +71,9 @@ async def list_goals(
     if completed is not None:
         query["completed"] = completed
     
-    # 🆕 Filtro por categoria
     if category:
         query["category"] = category
     
-    # 🆕 Ordenação personalizada
     sort_field_mapping = {
         "created_at": "created_at",
         "target": "target",
@@ -161,18 +111,15 @@ async def create_goal(
     db=Depends(get_database)
 ):
     """Cria uma nova meta"""
-    # 🔧 Converter target e current para centavos (int)
     target_cents = to_cents(goal.target)
     current_cents = to_cents(goal.current)
     
-    # 🆕 Validação: current não pode ser maior que target
     if current_cents > target_cents:
         raise ValidationException(
             message_key="ERROR_GOAL_CURRENT_EXCEEDS_TARGET",
             request=request
         )
     
-    # 🔧 CORRIGIDO: Remove unit (não existe no modelo)
     goal_dict = {
         "user_id": str(current_user.id),
         "name": goal.name,
@@ -192,7 +139,6 @@ async def create_goal(
             created["target"] = from_cents(created["target"])
         if "current" in created:
             created["current"] = from_cents(created["current"])
-        # 🆕 Adiciona campos calculados
         created = add_calculated_fields(created)
     
     logger.info(f"✅ Meta criada: '{goal.name}' para usuário {current_user.id}")
@@ -224,7 +170,6 @@ async def get_goal(
         goal["target"] = from_cents(goal["target"])
     if "current" in goal:
         goal["current"] = from_cents(goal["current"])
-    # 🆕 Adiciona campos calculados
     goal = add_calculated_fields(goal)
     
     logger.debug(f"📊 Meta recuperada: {goal_id} para usuário {current_user.id}")
@@ -261,7 +206,6 @@ async def update_goal(
             request=request
         )
     
-    # Converter target e current para centavos se presentes
     if "target" in update_data:
         update_data["target"] = to_cents(update_data["target"])
     if "current" in update_data:
@@ -269,11 +213,9 @@ async def update_goal(
     
     update_data["updated_at"] = datetime.now(timezone.utc)
     
-    # Calcular novo target e current (usando valores existentes ou novos)
     new_target = update_data.get("target", existing["target"])
     new_current = update_data.get("current", existing["current"])
     
-    # 🆕 Validação: current não pode ser maior que target
     if new_current > new_target:
         raise ValidationException(
             message_key="ERROR_GOAL_CURRENT_EXCEEDS_TARGET",
@@ -294,7 +236,6 @@ async def update_goal(
             updated["target"] = from_cents(updated["target"])
         if "current" in updated:
             updated["current"] = from_cents(updated["current"])
-        # 🆕 Adiciona campos calculados
         updated = add_calculated_fields(updated)
     
     logger.info(f"✅ Meta atualizada: {goal_id} para usuário {current_user.id}")
@@ -329,34 +270,29 @@ async def delete_goal(
     return {"message": get_message("SUCCESS_GOAL_DELETED", language), "success": True}
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
-================================================================================
-1. 🔧 Substituído format_mongo_doc por convert_objectid_to_str
-2. 🆕 I18n completo com I18nHTTPException e get_message()
-3. 🆕 Adicionado request: Request em todos os endpoints
-4. 🆕 Adicionado campos calculados: progress_percentage e remaining_amount
-5. 🆕 Adicionada validação current <= target
-6. 🆕 Adicionado rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-7. 🆕 Adicionada função add_calculated_fields()
-8. 🆕 Adicionado sort_by e sort_order no GET
-9. 🆕 Adicionado sort_field_mapping
-10. 🔧 REMOVIDO: unit do goal_dict (campo não existe no modelo)
-11. 🆕 Adicionado filtro por categoria no GET
-
-📌 CHAVES I18N UTILIZADAS:
-   - ERROR_GOAL_NOT_FOUND → "Meta não encontrada"
-   - ERROR_NO_DATA_TO_UPDATE → "Nenhum dado para atualizar"
-   - SUCCESS_GOAL_DELETED → "Meta deletada com sucesso"
-   - ERROR_GOAL_CURRENT_EXCEEDS_TARGET → "Valor atual não pode ser maior que o valor alvo"
-
-📋 DECISÕES DOCUMENTADAS:
-   - ❌ SEM updated_by (modo individual não precisa)
-   - ❌ SEM history (modo individual não precisa)
-   - ❌ SEM TTL para histórico (não temos histórico)
-   - ❌ SEM deadline (Pós-MVP - mudaria o modelo)
-
-✅ STATUS: PRONTO PARA PRODUÇÃO
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - I18n completo (4 idiomas)
+#   - Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
+#   - Campos calculados (progress_percentage, remaining_amount)
+#   - Validação current <= target
+#   - Filtros por status (completed) e categoria
+#   - Ordenação personalizada (sort_by, sort_order)
+#   - SEM history (modo individual não precisa)
+#   - SEM TTL (não temos histórico)
+#   - SEM deadline (Pós-MVP)
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
+#   - deadline (mudaria o modelo)
+#   - updated_by e history (modo individual não precisa)
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: I18n e correções (25/05/2026)
+#   - v3: Rate limiting, filtros, ordenação, campos calculados (30/06/2026)
+#   - v3.1: Remoção de unit, sort_by (01/07/2026)
+#   - v3.2: Refatoração - add_calculated_fields movido para utils/validators_extras.py (02/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO
