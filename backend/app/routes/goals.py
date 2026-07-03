@@ -34,7 +34,7 @@ from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import convert_objectid_to_str, validate_object_id
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
-from app.utils.rate_limiter import limiter
+from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 
 # ========== NOVOS IMPORTS ==========
 from app.utils.validators_extras import add_calculated_fields

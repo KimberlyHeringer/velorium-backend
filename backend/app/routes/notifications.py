@@ -44,7 +44,7 @@ from app.services.ia_service import obter_resposta_ia_async
 
 # ========== NOVOS IMPORTS ==========
 from app.core.constants import INACTIVE_TOKEN_DAYS, EXPO_API_URL
-from app.utils.rate_limiter import get_user_rate_limit_key
+from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 from app.utils.notifications import send_push_notification
 
 # ========== I18N ==========

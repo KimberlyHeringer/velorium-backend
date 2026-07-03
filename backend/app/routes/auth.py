@@ -43,7 +43,7 @@ from app.utils.auth import (
     oauth2_scheme,
     refresh_access_token
 )
-from app.utils.rate_limiter import limiter
+from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 from app.utils.logger import setup_logger
 
 # ========== NOVOS IMPORTS ==========

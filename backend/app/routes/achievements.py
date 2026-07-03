@@ -32,7 +32,7 @@ from app.utils.auth import get_current_user
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import validate_object_id, convert_objectid_to_str
 from app.utils.logger import setup_logger
-from app.utils.rate_limiter import limiter
+from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 
 # ========== NOVOS IMPORTS ==========
 from app.core.constants import MAX_SYNC_BATCH
