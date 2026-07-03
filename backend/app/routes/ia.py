@@ -47,7 +47,7 @@ from bson import ObjectId
 
 # ========== NOVOS IMPORTS ==========
 from app.core.constants import CACHE_TTL_SECONDS, MAX_HISTORY_ENTRIES
-from app.utils.rate_limiter import get_user_rate_limit_key
+from app.utils.rate_limiter import limiter, get_user_rate_limit_key  # ← CORRIGIDO: adicionado limiter
 from app.utils.audit import add_audit_log
 
 # ========== I18N ==========
