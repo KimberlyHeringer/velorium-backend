@@ -12,6 +12,7 @@ Funcionalidade: Centraliza validações e funções auxiliares usadas em múltip
         validate_interest_rate,
         validate_quantity,
         validate_price,
+        validate_password_strength,
         add_calculated_fields,
         prepare_investment_response,
         prepare_investment_for_db
@@ -20,6 +21,7 @@ Funcionalidade: Centraliza validações e funções auxiliares usadas em múltip
     validate_installments(installments, request)
     validate_amount(amount, request)
     validate_interest_rate(rate, request)
+    validate_password_strength(password)
     add_calculated_fields(goal)
     prepare_investment_response(investment)
     prepare_investment_for_db(data)
@@ -30,6 +32,7 @@ Funcionalidade: Centraliza validações e funções auxiliares usadas em múltip
     - validate_interest_rate(): Valida que interest_rate está entre 0-100%
     - validate_quantity(): Valida que quantity > 0
     - validate_price(): Valida que price > 0
+    - validate_password_strength(): Valida força da senha (3/4 critérios)
     - add_calculated_fields(): Adiciona campos calculados à meta
     - prepare_investment_response(): Prepara investimento para resposta
     - prepare_investment_for_db(): Prepara investimento para banco de dados
@@ -37,6 +40,7 @@ Funcionalidade: Centraliza validações e funções auxiliares usadas em múltip
 
 from fastapi import Request
 from decimal import Decimal
+import re
 
 from app.core.constants import MAX_INSTALLMENTS, MIN_INTEREST_RATE, MAX_INTEREST_RATE
 from app.utils.exceptions import ValidationException
@@ -204,6 +208,51 @@ def validate_price(
 
 
 # ================================================================
+# VALIDAÇÃO DE SENHA
+# ================================================================
+
+def validate_password_strength(password: str) -> None:
+    """
+    Valida a força da senha (pelo menos 3 dos 4 critérios).
+    
+    Critérios:
+    - Mínimo 8 caracteres
+    - Letra maiúscula
+    - Letra minúscula
+    - Número
+    - Caractere especial
+    
+    Args:
+        password: Senha a ser validada
+    
+    Raises:
+        ValueError: Se a senha não atender aos critérios
+    
+    Exemplo:
+        >>> validate_password_strength("Senha@123")  # ✅ Válido
+        >>> validate_password_strength("senha123")   # ❌ Inválido (sem maiúscula e especial)
+    """
+    if len(password) < 8:
+        raise ValueError("A senha deve ter pelo menos 8 caracteres")
+    
+    criteria = 0
+    if re.search(r"[A-Z]", password):
+        criteria += 1
+    if re.search(r"[a-z]", password):
+        criteria += 1
+    if re.search(r"\d", password):
+        criteria += 1
+    if re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        criteria += 1
+    
+    if criteria < 3:
+        raise ValueError(
+            'A senha deve conter pelo menos 3 dos seguintes: '
+            'letra maiúscula, letra minúscula, número, caractere especial'
+        )
+
+
+# ================================================================
 # FUNÇÕES AUXILIARES PARA METAS
 # ================================================================
 
@@ -341,6 +390,7 @@ def prepare_investment_for_db(data: dict) -> dict:
 # ✅ Validação de taxas de juros (0-100%)
 # ✅ Validação de quantidade (> 0)
 # ✅ Validação de preço (> 0)
+# ✅ Validação de senha (3/4 critérios)
 # ✅ Campos calculados para metas (progress_percentage, remaining_amount)
 # ✅ Preparação de investimentos para resposta (centavos → reais)
 # ✅ Preparação de investimentos para banco (reais → centavos com Decimal)
