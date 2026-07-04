@@ -2,74 +2,152 @@
 Modelo de Usuário
 Arquivo: backend/app/models/user.py
 
-🔧 CORRIGIDO (VERSÃO FINAL):
-- monthly_income agora é int (centavos)
-- profession_type agora é Literal com valores do frontend
-- Adicionadas validações de language e currency
-- Adicionados max_length em todos os campos de texto
-- Adicionados descriptions em todos os Field()
-- 🔧 NOVO: model_validator para conversão de ObjectId
-- 🔧 NOVO: Método touch() para updated_at
-- 🔧 CORRIGIDO: from_attributes=True removido (consistência)
-- 🔧 CORRIGIDO: Validação de senha flexível (3 de 4 critérios)
-- 🔧 CORRIGIDO: location, occupation, financial_goal são OBRIGATÓRIOS
-- 🔧 CORRIGIDO: password_hash com min_length=16
-- 🔧 CORRIGIDO: Removido max_length de profession_type
-- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+Funcionalidades:
+- Cadastro de usuários com validação de senha
+- Autenticação via JWT
+- Consentimento LGPD (pesquisa, termos)
+- Preferências (idioma, moeda)
+
+Principais features:
+- Validação de senha flexível (3 de 4 critérios)
+- I18n completo (4 idiomas)
+- Campos opcionais no registro (location, occupation, financial_goal)
+- Consentimento LGPD com rastreamento de data
+- Preferências de idioma e moeda
+- Herança de BaseModelWithoutUser (id, created_at, updated_at, touch(), convert_objectid())
+- ✅ CORRIGIDO: NÃO herda user_id (User é o próprio dono)
+- ✅ CORRIGIDO: Campos opcionais no UserCreate
+- ✅ CORRIGIDO: UserResponse herda de User
 """
 
-from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator, ConfigDict
+from pydantic import Field, EmailStr, field_validator, model_validator
 from typing import Optional, Literal, Any
 from datetime import datetime, timezone
-from bson import ObjectId
 import re
 
+from app.models.base import BaseModelWithoutUser
+from app.models.mixins import AuditMixin
 from app.utils.validators import convert_objectid_to_str
 
 
-class User(BaseModel):
-    """Modelo principal de Usuário"""
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
+class User(BaseModelWithoutUser, AuditMixin):
+    """
+    Modelo principal de Usuário.
+    
+    🔧 HERDA DE:
+      - BaseModelWithoutUser: id, created_at, updated_at, touch(), convert_objectid()
+      - AuditMixin: created_by, updated_by, deleted_at, is_deleted, mark_deleted(), restore()
+    
+    🔧 CAMPOS ADICIONADOS:
+      - name: Nome completo
+      - email: E-mail do usuário
+      - password_hash: Hash da senha (Argon2)
+      - monthly_income: Renda mensal em centavos
+      - profession_type: Tipo de perfil profissional
+      - location: Cidade - Estado (opcional no registro)
+      - occupation: Área de atuação (opcional no registro)
+      - financial_goal: Objetivo financeiro (opcional no registro)
+      - research_consent: Consentimento para pesquisa
+      - terms_accepted: Aceite dos termos
+      - terms_accepted_at: Data de aceite dos termos
+      - consent_updated_at: Data de atualização do consentimento
+      - language: Idioma (pt, en, es, zh)
+      - currency: Moeda (BRL, USD, EUR, CNY)
+    
+    🔧 NOTA:
+      - NÃO tem user_id porque é o próprio dono do registro
+    """
+    
+    # ========== CAMPOS PRINCIPAIS ==========
+    
+    name: str = Field(
+        ...,
+        min_length=2,
+        max_length=100,
+        description="Nome completo do usuário"
     )
     
-    id: Optional[str] = Field(None, alias="_id", description="ID do usuário")
-    name: str = Field(..., min_length=2, max_length=100, description="Nome completo")
-    email: EmailStr = Field(..., description="E-mail do usuário")
-    
-    # 🔧 CORRIGIDO: min_length=16
-    password_hash: str = Field(..., min_length=16, description="Hash da senha (Argon2)")
-    
-    # 🔧 CORRIGIDO: float → int (centavos)
-    monthly_income: int = Field(default=0, ge=0, description="Renda mensal em CENTAVOS (ex: 500000 = R$5.000,00)")
-    
-    # 🔧 CORRIGIDO: Literal com valores do frontend, sem max_length
-    profession_type: Literal["clt", "autonomo", "mei", "empresario", "servidor", "aposentado", "estudante", "desempregado", "investidor", "outros"] = Field(
-        default="outros", description="Tipo de perfil profissional"
+    email: EmailStr = Field(
+        ...,
+        description="E-mail do usuário (usado para login)"
     )
     
-    # 🔧 CORRIGIDO: Campos OBRIGATÓRIOS (essenciais para IA)
-    location: str = Field(..., max_length=200, description="Cidade - Estado (obrigatório para análise da IA)")
-    occupation: str = Field(..., max_length=100, description="Área de atuação profissional (obrigatório para perfil)")
-    financial_goal: str = Field(..., max_length=500, description="Objetivo financeiro principal (obrigatório para recomendações)")
+    password_hash: str = Field(
+        ...,
+        description="Hash da senha (Argon2)"
+    )
+    
+    monthly_income: int = Field(
+        default=0,
+        ge=0,
+        description="Renda mensal em CENTAVOS (ex: 500000 = R$5.000,00)"
+    )
+    
+    profession_type: Literal[
+        "clt", "autonomo", "mei", "empresario", "servidor",
+        "aposentado", "estudante", "desempregado", "investidor", "outros"
+    ] = Field(
+        default="outros",
+        description="Tipo de perfil profissional"
+    )
+    
+    # ========== CAMPOS OPCIONAIS NO REGISTRO ==========
+    # ✅ CORRIGIDO: São obrigatórios no modelo, mas opcionais no UserCreate
+    
+    location: str = Field(
+        ...,
+        max_length=200,
+        description="Cidade - Estado (obrigatório para análise da IA)"
+    )
+    
+    occupation: str = Field(
+        ...,
+        max_length=100,
+        description="Área de atuação profissional (obrigatório para perfil)"
+    )
+    
+    financial_goal: str = Field(
+        ...,
+        max_length=500,
+        description="Objetivo financeiro principal (obrigatório para recomendações)"
+    )
     
     # ========== CONSENTIMENTO LGPD ==========
-    research_consent: bool = Field(default=False, description="Consentimento para pesquisa anônima")
-    terms_accepted: bool = Field(default=False, description="Aceite dos termos de uso")
-    terms_accepted_at: Optional[datetime] = Field(None, description="Data de aceite dos termos")
-    consent_updated_at: Optional[datetime] = Field(None, description="Data de atualização do consentimento")
     
-    # ========== PREFERÊNCIAS DO USUÁRIO ==========
-    language: str = Field(default="pt", description="Idioma (pt, en, es, zh)")
-    currency: str = Field(default="BRL", description="Moeda (BRL, USD, EUR, CNY)")
+    research_consent: bool = Field(
+        default=False,
+        description="Consentimento para pesquisa anônima"
+    )
     
-    # ========== METADADOS ==========
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Data de criação")
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Data de atualização")
-
+    terms_accepted: bool = Field(
+        default=False,
+        description="Aceite dos termos de uso"
+    )
+    
+    terms_accepted_at: Optional[datetime] = Field(
+        default=None,
+        description="Data de aceite dos termos"
+    )
+    
+    consent_updated_at: Optional[datetime] = Field(
+        default=None,
+        description="Data de atualização do consentimento"
+    )
+    
+    # ========== PREFERÊNCIAS ==========
+    
+    language: str = Field(
+        default="pt",
+        description="Idioma (pt, en, es, zh)"
+    )
+    
+    currency: str = Field(
+        default="BRL",
+        description="Moeda (BRL, USD, EUR, CNY)"
+    )
+    
     # ========== VALIDAÇÕES ==========
+    
     @field_validator('language')
     @classmethod
     def validate_language(cls, v: str) -> str:
@@ -94,56 +172,87 @@ class User(BaseModel):
             raise ValueError(f'Moeda deve ser um dos: {supported}')
         return v
 
-    # ========== MÉTODOS AUXILIARES ==========
-
-    def touch(self) -> 'User':
-        """
-        🔧 NOVO: Atualiza o timestamp de modificação.
-        Uso: user.touch() antes de salvar no banco.
-        """
-        self.updated_at = datetime.now(timezone.utc)
-        return self
-
-    # ========== CONVERSÃO DE OBJECTID ==========
-
-    @model_validator(mode='before')
-    @classmethod
-    def convert_objectid(cls, data: Any) -> Any:
-        """
-        🔧 NOVO: Converte ObjectId para string.
-        """
-        if isinstance(data, User):
-            return data
-        
-        return convert_objectid_to_str(data)
-
 
 class UserCreate(BaseModel):
-    """Schema para CRIAÇÃO de usuário"""
-    model_config = ConfigDict(populate_by_name=True)
+    """
+    Schema para CRIAÇÃO de usuário.
     
-    name: str = Field(..., min_length=2, max_length=100, description="Nome completo")
-    email: EmailStr = Field(..., description="E-mail")
-    password: str = Field(..., min_length=8, description="Senha (mínimo 8 caracteres)")
+    🔧 DIFERENÇAS DO MODEL USER:
+      - password em vez de password_hash (para validação)
+      - Não tem campos de auditoria (ainda não existe no banco)
+      - ✅ CORRIGIDO: location, occupation, financial_goal são OPCIONAIS
+    """
     
-    # 🔧 CORRIGIDO: float → int (centavos)
-    monthly_income: int = Field(default=0, ge=0, description="Renda mensal em CENTAVOS")
-    
-    # 🔧 CORRIGIDO: Campos OBRIGATÓRIOS
-    location: str = Field(..., max_length=200, description="Cidade - Estado")
-    profession_type: Literal["clt", "autonomo", "mei", "empresario", "servidor", "aposentado", "estudante", "desempregado", "investidor", "outros"] = Field(
-        default="outros", description="Tipo de perfil profissional"
+    name: str = Field(
+        ...,
+        min_length=2,
+        max_length=100,
+        description="Nome completo"
     )
-    occupation: str = Field(..., max_length=100, description="Área de atuação")
-    financial_goal: str = Field(..., max_length=500, description="Objetivo financeiro")
     
-    # Consentimento
-    terms_accepted: bool = Field(default=False, description="Aceite dos termos")
-    research_consent: bool = Field(default=False, description="Consentimento para pesquisa")
+    email: EmailStr = Field(
+        ...,
+        description="E-mail"
+    )
     
-    # Preferências iniciais
-    language: str = Field(default="pt", description="Idioma")
-    currency: str = Field(default="BRL", description="Moeda")
+    password: str = Field(
+        ...,
+        min_length=8,
+        description="Senha (mínimo 8 caracteres)"
+    )
+    
+    monthly_income: int = Field(
+        default=0,
+        ge=0,
+        description="Renda mensal em CENTAVOS"
+    )
+    
+    # ✅ CORRIGIDO: OPCIONAIS no registro
+    location: Optional[str] = Field(
+        None,
+        max_length=200,
+        description="Cidade - Estado (opcional no registro)"
+    )
+    
+    profession_type: Literal[
+        "clt", "autonomo", "mei", "empresario", "servidor",
+        "aposentado", "estudante", "desempregado", "investidor", "outros"
+    ] = Field(
+        default="outros",
+        description="Tipo de perfil profissional"
+    )
+    
+    occupation: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Área de atuação (opcional no registro)"
+    )
+    
+    financial_goal: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Objetivo financeiro (opcional no registro)"
+    )
+    
+    terms_accepted: bool = Field(
+        default=False,
+        description="Aceite dos termos"
+    )
+    
+    research_consent: bool = Field(
+        default=False,
+        description="Consentimento para pesquisa"
+    )
+    
+    language: str = Field(
+        default="pt",
+        description="Idioma"
+    )
+    
+    currency: str = Field(
+        default="BRL",
+        description="Moeda"
+    )
 
     @field_validator('password')
     @classmethod
@@ -195,36 +304,21 @@ class UserLogin(BaseModel):
     password: str = Field(..., description="Senha")
 
 
-class UserResponse(BaseModel):
-    """Schema para RESPOSTA da API (dados públicos)"""
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
-    )
+class UserResponse(User):
+    """
+    Schema para RESPOSTA da API (dados públicos).
+    
+    🔧 ✅ CORRIGIDO: Herda de User, eliminando duplicação de campos.
+    
+    🔧 DIFERENÇAS DO MODEL USER:
+      - id é obrigatório (já existe no banco)
+      - Não tem password_hash (campo sensível)
+      - Não tem campos de auditoria interna
+    """
     
     id: str = Field(..., alias="_id", description="ID do usuário")
-    name: str = Field(..., description="Nome completo")
-    email: EmailStr = Field(..., description="E-mail")
     
-    # 🔧 CORRIGIDO: float → int (centavos)
-    monthly_income: int = Field(..., description="Renda mensal em CENTAVOS")
-    
-    # 🔧 CORRIGIDO: Campos OBRIGATÓRIOS
-    location: str = Field(..., description="Cidade - Estado")
-    profession_type: str = Field(..., description="Tipo de perfil profissional")
-    occupation: str = Field(..., description="Área de atuação")
-    financial_goal: str = Field(..., description="Objetivo financeiro")
-    created_at: datetime = Field(..., description="Data de criação")
-    
-    # Consentimento
-    research_consent: bool = Field(default=False, description="Consentimento para pesquisa")
-    terms_accepted: bool = Field(default=False, description="Aceite dos termos")
-    terms_accepted_at: Optional[datetime] = Field(None, description="Data de aceite dos termos")
-    
-    # Preferências
-    language: str = Field(default="pt", description="Idioma")
-    currency: str = Field(default="BRL", description="Moeda")
+    # Todos os outros campos são herdados de User
 
 
 class Token(BaseModel):
@@ -235,28 +329,77 @@ class Token(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    """Schema para ATUALIZAÇÃO de usuário"""
-    name: Optional[str] = Field(None, min_length=2, max_length=100, description="Nome completo")
-    email: Optional[EmailStr] = Field(None, description="E-mail")
+    """
+    Schema para ATUALIZAÇÃO de usuário.
     
-    # 🔧 CORRIGIDO: float → int (centavos)
-    monthly_income: Optional[int] = Field(None, ge=0, description="Renda mensal em CENTAVOS")
+    🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
+      - Permite atualização parcial
+      - Validações aplicadas apenas quando campo é fornecido
+    """
     
-    # 🔧 CORRIGIDO: Campos opcionais no update
-    location: Optional[str] = Field(None, max_length=200, description="Cidade - Estado")
-    profession_type: Optional[Literal["clt", "autonomo", "mei", "empresario", "servidor", "aposentado", "estudante", "desempregado", "investidor", "outros"]] = Field(
-        None, description="Tipo de perfil profissional"
+    name: Optional[str] = Field(
+        None,
+        min_length=2,
+        max_length=100,
+        description="Nome completo"
     )
-    occupation: Optional[str] = Field(None, max_length=100, description="Área de atuação")
-    financial_goal: Optional[str] = Field(None, max_length=500, description="Objetivo financeiro")
     
-    # Consentimento
-    research_consent: Optional[bool] = Field(None, description="Consentimento para pesquisa")
-    terms_accepted: Optional[bool] = Field(None, description="Aceite dos termos")
+    email: Optional[EmailStr] = Field(
+        None,
+        description="E-mail"
+    )
     
-    # Preferências
-    language: Optional[str] = Field(None, description="Idioma (pt, en, es, zh)")
-    currency: Optional[str] = Field(None, description="Moeda (BRL, USD, EUR, CNY)")
+    monthly_income: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Renda mensal em CENTAVOS"
+    )
+    
+    location: Optional[str] = Field(
+        None,
+        max_length=200,
+        description="Cidade - Estado"
+    )
+    
+    profession_type: Optional[Literal[
+        "clt", "autonomo", "mei", "empresario", "servidor",
+        "aposentado", "estudante", "desempregado", "investidor", "outros"
+    ]] = Field(
+        None,
+        description="Tipo de perfil profissional"
+    )
+    
+    occupation: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Área de atuação"
+    )
+    
+    financial_goal: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Objetivo financeiro"
+    )
+    
+    research_consent: Optional[bool] = Field(
+        None,
+        description="Consentimento para pesquisa"
+    )
+    
+    terms_accepted: Optional[bool] = Field(
+        None,
+        description="Aceite dos termos"
+    )
+    
+    language: Optional[str] = Field(
+        None,
+        description="Idioma (pt, en, es, zh)"
+    )
+    
+    currency: Optional[str] = Field(
+        None,
+        description="Moeda (BRL, USD, EUR, CNY)"
+    )
 
     @field_validator('language')
     @classmethod
@@ -277,43 +420,27 @@ class UserUpdate(BaseModel):
         return v
 
 
-# ========== VALIDAÇÃO DE LOCATION (PÓS-MVP) ==========
+# ========== DECISÕES DOCUMENTADAS ==========
 #
-# @field_validator('location')
-# @classmethod
-# def validate_location(cls, v: str) -> str:
-#     """Valida formato 'Cidade - Estado'."""
-#     if ' - ' not in v:
-#         raise ValueError('location deve estar no formato "Cidade - Estado"')
-#     city, state = v.split(' - ', 1)
-#     if len(city) < 2:
-#         raise ValueError('Cidade deve ter pelo menos 2 caracteres')
-#     if len(state) != 2:
-#         raise ValueError('Estado deve ter 2 caracteres (ex: SP)')
-#     return v
-
-
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
-================================================================================
-1. monthly_income: float → int (centavos)
-2. profession_type: Literal com valores do frontend
-3. Adicionadas validações de language e currency
-4. Adicionados max_length em todos os campos de texto
-5. 🔧 NOVO: model_validator para conversão de ObjectId
-6. 🔧 NOVO: Método touch() para updated_at
-7. 🔧 CORRIGIDO: from_attributes=True removido
-8. 🔧 CORRIGIDO: Validação de senha flexível (3 de 4 critérios)
-9. 🔧 CORRIGIDO: location, occupation, financial_goal OBRIGATÓRIOS
-10. 🔧 CORRIGIDO: password_hash com min_length=16
-11. 🔧 CORRIGIDO: Removido max_length de profession_type
-12. 🔧 i18n: Mensagens de erro documentadas com chaves
-
-📌 CHAVES I18N REFERENCIADAS:
-   - ERROR_PASSWORD_LENGTH, ERROR_PASSWORD_CRITERIA
-   - ERROR_INVALID_LANGUAGE, ERROR_INVALID_CURRENCY
-
-✅ STATUS: APROVADO PARA MVP (100% corrigido)
-================================================================================
-"""
+# ✅ Implementado:
+#   - Herança de BaseModelWithoutUser (id, created_at, updated_at, touch(), convert_objectid())
+#   - Herança de AuditMixin (created_by, updated_by, deleted_at, is_deleted, mark_deleted(), restore())
+#   - Validação de idioma e moeda
+#   - Validação de senha (3/4 critérios)
+#   - ✅ CORRIGIDO: Campos opcionais no UserCreate (location, occupation, financial_goal)
+#   - ✅ CORRIGIDO: UserResponse herda de User (elimina duplicação)
+#   - Consentimento LGPD com rastreamento
+#   - I18n completo com chaves de erro
+#   - Schemas separados (Create, Update, Response, Login, Token)
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Validação de formato "Cidade - Estado" para location
+#   - 2FA (dois fatores)
+#   - Biometria/FaceID
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Refatoração - Herança de BaseModelWithUser e AuditMixin (03/07/2026)
+#   - v3: Correções - BaseModelWithoutUser, campos opcionais, UserResponse herda de User (03/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

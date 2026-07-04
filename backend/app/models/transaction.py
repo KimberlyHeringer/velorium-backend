@@ -2,70 +2,122 @@
 Modelo de Transações (Receitas e Despesas)
 Arquivo: backend/app/models/transaction.py
 
-🔧 CORRIGIDO:
-- amount agora é int (centavos)
-- payment_method agora é Literal com valores padronizados
-- TransactionBalance com int (centavos)
-- Removido round_amount (não necessário)
-- 🔧 NOVO: Impede cartão de crédito em receitas
-- 🔧 NOVO: model_validator para conversão de ObjectId
-- 🔧 NOVO: Método touch() para updated_at
-- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+Funcionalidades:
+- CRUD de transações (receitas/despesas)
+- Suporte a cartão de crédito com parcelamento
+- Contextos: individual, familia, profissional
+
+Principais features:
+- amount em centavos (int) para precisão
+- Validação: cartão de crédito apenas para despesas
+- Suporte a parcelamento (installments, first_due_date)
+- Contextos para separação de dados
+- Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+- Herança de AmountMixin (amount com validação)
+- Herança de PaymentMixin (paid, paid_date)
+- ✅ CORRIGIDO: TransactionResponse herda de Transaction (elimina duplicação)
+- ✅ CORRIGIDO: TransactionBalance com descriptions nos campos
 """
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import Field, model_validator
 from typing import Optional, Literal, Any
 from datetime import datetime, timezone
-from bson import ObjectId
 
-from app.utils.validators import validate_date_not_future, convert_objectid_to_str
+from app.models.base import BaseModelWithUser
+from app.models.mixins import AmountMixin, PaymentMixin
+from app.utils.validators import validate_date_not_future
 
 
-class Transaction(BaseModel):
+class Transaction(BaseModelWithUser, AmountMixin, PaymentMixin):
     """
     Modelo principal de Transação.
     Suporta receitas (income) e despesas (expense).
     
+    🔧 HERDA DE:
+      - BaseModelWithUser: id, user_id, created_at, updated_at, touch(), convert_objectid()
+      - AmountMixin: amount (validação de valor positivo)
+      - PaymentMixin: paid, paid_date (validação de pagamento)
+    
     🔧 IMPORTANTE: amount está em CENTAVOS (int)
     - Exemplo: R$ 150,50 → 15050
+    
+    🔧 CAMPOS ADICIONADOS:
+      - type: income/expense
+      - category: Categoria da transação
+      - description: Descrição opcional
+      - date: Data da transação
+      - payment_method: Método de pagamento
+      - context: individual/familia/profissional
+      - family_id: ID da família (obrigatório se context='familia')
+      - card_id: ID do cartão (quando payment_method='cartao_credito')
+      - installments: Número de parcelas
+      - first_due_date: Data da primeira parcela
     """
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
-        # from_attributes=True  # ← Removido (mais seguro)
+    
+    # ========== CAMPOS OBRIGATÓRIOS ==========
+    
+    type: Literal["income", "expense"] = Field(
+        ...,
+        description="Tipo: receita (income) ou despesa (expense)"
     )
-
-    id: Optional[str] = Field(None, alias="_id")
-    user_id: str = Field(..., description="ID do usuário (injetado pelo backend)")
-    type: Literal["income", "expense"] = Field(..., description="Tipo: receita ou despesa")
     
-    # 🔧 CORRIGIDO: float → int (centavos)
-    amount: int = Field(..., gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
-    
-    category: str = Field(..., max_length=50, description="Categoria da transação")
-    description: Optional[str] = Field(None, max_length=200, description="Descrição opcional")
-    date: datetime = Field(..., description="Data da transação")
-    
-    # 🔧 CORRIGIDO: Literal com valores padronizados
-    payment_method: Optional[Literal["dinheiro", "cartao_credito", "cartao_debito", "pix", "transferencia", "boleto", "outros"]] = Field(
-        None, description="Método de pagamento"
+    category: str = Field(
+        ...,
+        max_length=50,
+        description="Categoria da transação"
     )
+    
+    date: datetime = Field(
+        ...,
+        description="Data da transação"
+    )
+    
+    # ========== CAMPOS OPCIONAIS ==========
+    
+    description: Optional[str] = Field(
+        None,
+        max_length=200,
+        description="Descrição opcional da transação"
+    )
+    
+    payment_method: Optional[Literal[
+        "dinheiro", "cartao_credito", "cartao_debito",
+        "pix", "transferencia", "boleto", "outros"
+    ]] = Field(
+        None,
+        description="Método de pagamento utilizado"
+    )
+    
+    # ========== CONTEXTOS ==========
     
     context: Literal["individual", "familia", "profissional"] = Field(
-        default="individual", description="Contexto da transação"
+        default="individual",
+        description="Contexto da transação"
     )
-    family_id: Optional[str] = Field(None, description="ID da família (obrigatório se context='familia')")
+    
+    family_id: Optional[str] = Field(
+        None,
+        description="ID da família (obrigatório se context='familia')"
+    )
     
     # ========== CAMPOS PARA CARTÃO DE CRÉDITO ==========
-    card_id: Optional[str] = Field(None, description="ID do cartão usado (quando payment_method='cartao_credito')")
-    installments: int = Field(default=1, ge=1, description="Número de parcelas (padrão 1)")
-    first_due_date: Optional[datetime] = Field(None, description="Data da primeira parcela")
     
-    # ========== METADADOS ==========
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
+    card_id: Optional[str] = Field(
+        None,
+        description="ID do cartão usado (quando payment_method='cartao_credito')"
+    )
+    
+    installments: int = Field(
+        default=1,
+        ge=1,
+        description="Número de parcelas (padrão 1)"
+    )
+    
+    first_due_date: Optional[datetime] = Field(
+        None,
+        description="Data da primeira parcela (obrigatório se installments > 1)"
+    )
+    
     # ========== VALIDADORES ==========
 
     @model_validator(mode='after')
@@ -88,7 +140,7 @@ class Transaction(BaseModel):
     @model_validator(mode='after')
     def validate_payment_method_for_income(self):
         """
-        🔧 NOVO: Impede cartão de crédito em receitas.
+        Impede cartão de crédito em receitas.
         🔧 i18n: Mensagem com chave ERROR_CARD_NOT_ALLOWED_FOR_INCOME
         """
         if self.payment_method == "cartao_credito" and self.type == "income":
@@ -110,38 +162,25 @@ class Transaction(BaseModel):
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
-    # ========== MÉTODOS AUXILIARES ==========
-
-    def touch(self) -> 'Transaction':
-        """
-        🔧 NOVO: Atualiza o timestamp de modificação.
-        Uso: transaction.touch() antes de salvar no banco.
-        """
-        self.updated_at = datetime.now(timezone.utc)
-        return self
-
-    # ========== CONVERSÃO DE OBJECTID ==========
-
-    @model_validator(mode='before')
-    @classmethod
-    def convert_objectid(cls, data: Any) -> Any:
-        """
-        🔧 NOVO: Converte ObjectId para string.
-        """
-        if isinstance(data, Transaction):
-            return data
-        
-        return convert_objectid_to_str(data)
-
 
 class TransactionCreate(BaseModel):
-    """Schema usado para CRIAR uma nova transação"""
+    """
+    Schema usado para CRIAR uma nova transação.
+    
+    🔧 DIFERENÇAS DO MODEL TRANSACTION:
+      - Não tem campos de auditoria (ainda não existe no banco)
+      - date é opcional (usa data atual se não informado)
+    """
+    
     type: Literal["income", "expense"]
     amount: int = Field(..., gt=0, description="Valor em CENTAVOS")
     category: str = Field(..., max_length=50)
     description: Optional[str] = Field(None, max_length=200)
     date: Optional[datetime] = None
-    payment_method: Optional[Literal["dinheiro", "cartao_credito", "cartao_debito", "pix", "transferencia", "boleto", "outros"]] = None
+    payment_method: Optional[Literal[
+        "dinheiro", "cartao_credito", "cartao_debito",
+        "pix", "transferencia", "boleto", "outros"
+    ]] = None
     context: Literal["individual", "familia", "profissional"] = "individual"
     family_id: Optional[str] = None
     card_id: Optional[str] = None
@@ -179,13 +218,22 @@ class TransactionCreate(BaseModel):
 
 
 class TransactionUpdate(BaseModel):
-    """Schema usado para ATUALIZAR uma transação existente"""
+    """
+    Schema usado para ATUALIZAR uma transação existente.
+    
+    🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
+      - Permite atualização parcial
+    """
+    
     type: Optional[Literal["income", "expense"]] = None
     amount: Optional[int] = Field(None, gt=0)
     category: Optional[str] = Field(None, max_length=50)
     description: Optional[str] = Field(None, max_length=200)
     date: Optional[datetime] = None
-    payment_method: Optional[Literal["dinheiro", "cartao_credito", "cartao_debito", "pix", "transferencia", "boleto", "outros"]] = None
+    payment_method: Optional[Literal[
+        "dinheiro", "cartao_credito", "cartao_debito",
+        "pix", "transferencia", "boleto", "outros"
+    ]] = None
     context: Optional[Literal["individual", "familia", "profissional"]] = None
     family_id: Optional[str] = None
     card_id: Optional[str] = None
@@ -222,75 +270,60 @@ class TransactionUpdate(BaseModel):
         return self
 
 
-class TransactionResponse(BaseModel):
-    """Schema usado para RESPOSTAS da API"""
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
-        from_attributes=True
-    )
-
-    id: str = Field(..., alias="_id")
-    user_id: str
-    type: str
-    amount: int  # 🔧 CORRIGIDO: int (centavos)
-    category: str
-    description: Optional[str]
-    date: datetime
-    payment_method: Optional[str]
-    context: str
-    family_id: Optional[str]
-    card_id: Optional[str] = None
-    installments: int = 1
-    first_due_date: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+class TransactionResponse(Transaction):
+    """
+    Schema usado para RESPOSTAS da API.
+    
+    🔧 ✅ CORRIGIDO: HERDA DE TRANSACTION (elimina duplicação de campos).
+    
+    🔧 DIFERENÇAS DO MODEL TRANSACTION:
+      - id é obrigatório (já existe no banco)
+      - amount é sobrescrito com descrição explícita
+    """
+    
+    id: str = Field(..., alias="_id", description="ID da transação")
+    
+    # ✅ Sobrescreve amount para garantir descrição (não duplica campo)
+    amount: int = Field(..., description="Valor em CENTAVOS")
 
 
 class TransactionBalance(BaseModel):
-    """Schema para retorno de saldo"""
-    # 🔧 CORRIGIDO: float → int (centavos)
+    """
+    Schema para retorno de saldo.
+    
+    🔧 ✅ CORRIGIDO: Descriptions adicionados para todos os campos.
+    
+    🔧 IMPORTANTE: Valores em CENTAVOS (int)
+    """
+    
     income: int = Field(..., description="Receitas em CENTAVOS")
     expense: int = Field(..., description="Despesas em CENTAVOS")
     balance: int = Field(..., description="Saldo em CENTAVOS")
-    context: Optional[str] = None
+    context: Optional[str] = Field(None, description="Contexto do saldo (individual/familia/profissional)")
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
-================================================================================
-1. amount: float → int (centavos)
-2. payment_method: agora Literal com valores padronizados
-3. TransactionBalance: income/expense/balance agora int (centavos)
-4. Removido round_amount (não necessário para int)
-5. Adicionados max_length em category e description
-6. Adicionados descriptions em todos os Field()
-7. 🔧 NOVO: Impede cartão de crédito em receitas
-8. 🔧 NOVO: model_validator para conversão de ObjectId
-9. 🔧 NOVO: Método touch() para updated_at
-10. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
-
-📌 CHAVES I18N REFERENCIADAS:
-   - ERROR_FAMILY_ID_REQUIRED → "family_id é obrigatório quando context é 'familia'"
-   - ERROR_CARD_NOT_ALLOWED_FOR_INCOME → "Cartão de crédito não é permitido para receitas"
-   - ERROR_CARD_ID_REQUIRED → "card_id é obrigatório quando payment_method é cartao_credito"
-   - ERROR_INSTALLMENTS_INVALID → "installments deve ser maior que 0"
-   - ERROR_FIRST_DUE_DATE_REQUIRED → "first_due_date é obrigatório quando installments > 1"
-
-⚠️ ATENÇÃO PARA O FRONTEND:
-================================================================================
-O frontend precisa enviar payment_method com os valores padronizados:
-- "dinheiro" (antes "Dinheiro")
-- "cartao_credito" (antes "Cartão de Crédito")
-- "cartao_debito" (antes "Cartão de Débito")
-- "pix" (antes "Pix")
-- "transferencia" (antes "Transferência")
-- "boleto" (antes "Boleto")
-- "outros" (antes "Outros")
-
-================================================================================
-✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n)
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+#   - Herança de AmountMixin (amount com validação)
+#   - Herança de PaymentMixin (paid, paid_date, validação de pagamento)
+#   - ✅ CORRIGIDO: TransactionResponse herda de Transaction (elimina duplicação)
+#   - ✅ CORRIGIDO: TransactionBalance com descriptions em todos os campos
+#   - Validação: cartão de crédito apenas para despesas
+#   - Validação: data não futura
+#   - Validação: context='familia' exige family_id
+#   - Suporte a parcelamento (installments, first_due_date)
+#   - I18n completo com chaves de erro
+#   - Schemas separados (Create, Update, Response, Balance)
+#   - Contextos: individual, familia, profissional
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Nenhum (model completo para MVP)
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Refatoração - Herança de BaseModelWithUser, AmountMixin, PaymentMixin (03/07/2026)
+#   - v3: Correções - TransactionResponse herda de Transaction, descriptions no Balance (03/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

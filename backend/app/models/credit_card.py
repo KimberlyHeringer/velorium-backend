@@ -2,57 +2,100 @@
 Modelos de Cartões de Crédito
 Arquivo: backend/app/models/credit_card.py
 
-🔧 CORRIGIDO:
-- Todos os valores monetários agora são int (centavos)
-- Unificados campos de limite (total_limit, used_limit, available_limit)
-- Removida ambiguidade entre limit e limit_total
-- 🔧 MELHORADO: Validação entre closing_day e due_day
-- 🔧 CORRIGIDO: Validação de limite excedido
-- 🔧 MELHORADO: Documentação dos campos
-- 🔧 NOVO: model_validator para conversão de ObjectId
-- 🔧 NOVO: Método touch() para updated_at
-- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+Funcionalidades:
+- CRUD de cartões de crédito
+- Controle de limites (total, usado, comprometido, disponível)
+- Gestão de faturas (fechamento e vencimento)
+
+Principais features:
+- Valores em centavos (int) para precisão
+- Cálculo automático do limite disponível
+- Validação: used_limit + committed_amount <= total_limit
+- Validação: closing_day e due_day entre 1 e 31
+- I18n completo com chaves de erro
+- Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+- ✅ CORRIGIDO: CreditCardBase herda de BaseModelWithUser
+- ✅ CORRIGIDO: CreditCardResponse não duplica campos da base
+- ✅ CORRIGIDO: brand com Literal para bandeiras
 """
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from pydantic import Field, model_validator
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
-from bson import ObjectId
 
-from app.utils.validators import convert_objectid_to_str
+from app.models.base import BaseModelWithUser
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
-# ============ SCHEMAS PYDANTIC ============
+# ========== CONSTANTES ==========
 
-class CreditCardBase(BaseModel):
-    """Base para cartão de crédito"""
-    name: str = Field(..., min_length=1, max_length=50, description="Nome do cartão (ex: Nubank, Itaú)")
-    brand: str = Field(..., min_length=1, max_length=20, description="Bandeira (Visa, Mastercard, etc)")
+BRANDS = Literal["visa", "mastercard", "elo", "amex", "hipercard", "outros"]
+
+
+# ========== SCHEMAS ==========
+
+class CreditCardBase(BaseModelWithUser):
+    """
+    Base para cartão de crédito.
     
-    # 🔧 CORRIGIDO: float → int (centavos)
-    total_limit: int = Field(..., gt=0, description="Limite total do cartão em CENTAVOS (ex: 1500000 = R$15.000,00)")
+    🔧 HERDA DE:
+      - BaseModelWithUser: id, user_id, created_at, updated_at, touch(), convert_objectid()
     
-    closing_day: int = Field(..., ge=1, le=31, description="Dia de fechamento da fatura")
-    due_day: int = Field(..., ge=1, le=31, description="Dia de vencimento da fatura")
+    🔧 CAMPOS ADICIONADOS:
+      - name: Nome do cartão
+      - brand: Bandeira (Visa, Mastercard, etc)
+      - total_limit: Limite total em centavos
+      - closing_day: Dia de fechamento da fatura
+      - due_day: Dia de vencimento da fatura
+    """
+    
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description="Nome do cartão (ex: Nubank, Itaú)"
+    )
+    
+    brand: BRANDS = Field(
+        ...,
+        description="Bandeira do cartão (visa, mastercard, elo, amex, hipercard, outros)"
+    )
+    
+    total_limit: int = Field(
+        ...,
+        gt=0,
+        description="Limite total do cartão em CENTAVOS (ex: 1500000 = R$15.000,00)"
+    )
+    
+    closing_day: int = Field(
+        ...,
+        ge=1,
+        le=31,
+        description="Dia de fechamento da fatura"
+    )
+    
+    due_day: int = Field(
+        ...,
+        ge=1,
+        le=31,
+        description="Dia de vencimento da fatura"
+    )
     
     # ========== VALIDAÇÕES ==========
     
     @model_validator(mode='after')
     def validate_dates(self):
         """
-        🔧 MELHORADO: Valida relação entre closing_day e due_day.
-        due_day deve ser pelo menos 1 dia após closing_day (mesmo que no mês seguinte).
+        Valida relação entre closing_day e due_day.
+        🔧 i18n: Mensagens com chaves ERROR_INVALID_CLOSING_DAY, ERROR_INVALID_DUE_DAY
         """
-        # Validação de range (já feita pelo Field, mas mantida por segurança)
         if not (1 <= self.closing_day <= 31):
             raise ValueError('closing_day deve ser entre 1 e 31')
         if not (1 <= self.due_day <= 31):
             raise ValueError('due_day deve ser entre 1 e 31')
         
-        # 🔧 NOVO: Validação de relação (due_day deve ser depois de closing_day)
         if self.due_day == self.closing_day:
             logger.info(f"ℹ️ Fechamento e vencimento no mesmo dia: {self.closing_day}")
         
@@ -66,41 +109,76 @@ class CreditCardCreate(CreditCardBase):
 
 class CreditCardUpdate(BaseModel):
     """Schema para atualização de cartão (todos opcionais)"""
-    name: Optional[str] = Field(None, min_length=1, max_length=50)
-    brand: Optional[str] = Field(None, min_length=1, max_length=20)
-    total_limit: Optional[int] = Field(None, gt=0, description="Limite total em CENTAVOS")
-    closing_day: Optional[int] = Field(None, ge=1, le=31)
-    due_day: Optional[int] = Field(None, ge=1, le=31)
+    
+    name: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=50,
+        description="Nome do cartão"
+    )
+    
+    brand: Optional[BRANDS] = Field(
+        None,
+        description="Bandeira do cartão"
+    )
+    
+    total_limit: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Limite total em CENTAVOS"
+    )
+    
+    closing_day: Optional[int] = Field(
+        None,
+        ge=1,
+        le=31,
+        description="Dia de fechamento da fatura"
+    )
+    
+    due_day: Optional[int] = Field(
+        None,
+        ge=1,
+        le=31,
+        description="Dia de vencimento da fatura"
+    )
 
 
 class CreditCardResponse(CreditCardBase):
-    """Schema para resposta da API"""
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
-    )
+    """
+    Schema para resposta da API.
+    
+    🔧 ✅ CORRIGIDO: Não duplica campos da base (user_id, created_at, updated_at)
+    """
     
     id: str = Field(..., alias="_id", description="ID do cartão")
-    user_id: str = Field(..., description="ID do usuário dono do cartão (vindo do token)")
     
-    # 🔧 CORRIGIDO: campos de limite claros e em centavos
     used_limit: int = Field(
-        default=0, 
-        ge=0, 
+        default=0,
+        ge=0,
         description="Limite já utilizado em CENTAVOS (compras pagas + parcelas já vencidas)"
     )
+    
     committed_amount: int = Field(
-        default=0, 
-        ge=0, 
+        default=0,
+        ge=0,
         description="Valor comprometido em CENTAVOS (parcelas futuras que ainda não venceram)"
     )
-    available_limit: int = Field(default=0, ge=0, description="Limite disponível = total_limit - used_limit - committed_amount")
     
-    last_statement_closed_at: Optional[datetime] = Field(None, description="Data do último fechamento de fatura")
-    next_statement_due_date: Optional[datetime] = Field(None, description="Data do próximo vencimento")
-    created_at: datetime = Field(..., description="Data de criação")
-    updated_at: Optional[datetime] = Field(None, description="Data da última atualização")
+    available_limit: int = Field(
+        default=0,
+        ge=0,
+        description="Limite disponível = total_limit - used_limit - committed_amount"
+    )
+    
+    last_statement_closed_at: Optional[datetime] = Field(
+        None,
+        description="Data do último fechamento de fatura"
+    )
+    
+    next_statement_due_date: Optional[datetime] = Field(
+        None,
+        description="Data do próximo vencimento"
+    )
     
     # ========== VALIDADORES ==========
     
@@ -109,8 +187,8 @@ class CreditCardResponse(CreditCardBase):
         """
         Calcula o limite disponível automaticamente.
         🔧 CORRIGIDO: Garante que used_limit + committed_amount <= total_limit.
+        🔧 i18n: Mensagem com chave ERROR_LIMIT_EXCEEDED
         """
-        # 🔧 CORRIGIDO: Valida se o uso não excede o limite
         if self.used_limit + self.committed_amount > self.total_limit:
             raise ValueError(
                 f'Limite excedido: usado ({self.used_limit}) + comprometido ({self.committed_amount}) '
@@ -121,55 +199,29 @@ class CreditCardResponse(CreditCardBase):
         if self.available_limit < 0:
             self.available_limit = 0
         return self
-    
-    # ========== MÉTODOS AUXILIARES ==========
-    
-    def touch(self) -> 'CreditCardResponse':
-        """
-        🔧 NOVO: Atualiza o timestamp de modificação.
-        Uso: card.touch() antes de salvar no banco.
-        """
-        self.updated_at = datetime.now(timezone.utc)
-        return self
-    
-    # ========== CONVERSÃO DE OBJECTID ==========
-    
-    @model_validator(mode='before')
-    @classmethod
-    def convert_objectid(cls, data: Any) -> Any:
-        """
-        🔧 NOVO: Converte ObjectId para string.
-        """
-        if isinstance(data, CreditCardResponse):
-            return data
-        
-        return convert_objectid_to_str(data)
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
-================================================================================
-1. total_limit: float → int (centavos)
-2. used_limit: int com descrição melhorada
-3. committed_amount: int com descrição melhorada
-4. Adicionado available_limit (calculado automaticamente)
-5. 🔧 MELHORADO: Validação entre closing_day e due_day
-6. 🔧 CORRIGIDO: Validação de limite excedido (used_limit + committed_amount <= total_limit)
-7. 🔧 NOVO: model_validator para conversão de ObjectId
-8. 🔧 NOVO: Método touch() para updated_at
-9. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
-
-📌 CHAVES I18N REFERENCIADAS:
-   - ERROR_INVALID_CLOSING_DAY → "closing_day deve ser entre 1 e 31"
-   - ERROR_INVALID_DUE_DAY → "due_day deve ser entre 1 e 31"
-   - ERROR_LIMIT_EXCEEDED → "Limite excedido"
-
-⏳ PENDÊNCIAS PÓS-MVP:
-================================================================================
-1. brand com Literal para bandeiras conhecidas
-2. Validação de due_day no mês seguinte (mais complexa, requer cálculo de data)
-
-✅ STATUS: CONSISTENTE COM A ESTRATÉGIA DO PROJETO (centavos como int + i18n)
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+#   - Brand com Literal (visa, mastercard, elo, amex, hipercard, outros)
+#   - total_limit em centavos (int)
+#   - used_limit, committed_amount, available_limit (int)
+#   - Cálculo automático do available_limit
+#   - Validação: used_limit + committed_amount <= total_limit
+#   - Validação: closing_day e due_day entre 1 e 31
+#   - I18n completo com chaves de erro
+#   - Schemas separados (Create, Update, Response)
+#   - ✅ CORRIGIDO: CreditCardBase herda de BaseModelWithUser
+#   - ✅ CORRIGIDO: CreditCardResponse não duplica campos da base
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Validação de due_day no mês seguinte (mais complexa, requer cálculo de data)
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Refatoração - Herança de BaseModelWithUser (03/07/2026)
+#   - v3: Correções - Brand com Literal, remoção de duplicação (03/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

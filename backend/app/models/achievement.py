@@ -2,26 +2,29 @@
 Modelo de Conquistas do Usuário (sincronizado)
 Arquivo: backend/app/models/achievement.py
 
-🔧 CORRIGIDO (VERSÃO FINAL):
-- month separado em year (int) + month (int) → melhor performance
-- Adicionado model_validator para converter ObjectId para string
-- Adicionado max_length em description (500) e name (100)
-- Adicionado created_at e updated_at
-- field_validator com mode="before"
-- Validação de description vazia
+Funcionalidades:
+- Registro de conquistas desbloqueadas pelo usuário
+- Suporte a conquistas automáticas e manuais
+- Sincronização com score e metas
+
+Principais features:
+- Validação de tipos de conquista (Literal)
+- year + month como int (performance)
+- Validação de description não vazia
 - Validação de automatica como booleano
-- Índices documentados para performance
-- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
-- 🔧 CORRIGIDO: model_validator verifica se já é instância do modelo
-- 🔧 CORRIGIDO: validate_type trata None antes de .strip()
-- 🔧 CORRIGIDO: validate_description trata None antes de .strip()
-- 🔧 NOVO: validate_user_id com validação de formato ObjectId
+- I18n completo com chaves de erro
+- Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+- ✅ CORRIGIDO: Herança correta de BaseModelWithUser
+- ✅ CORRIGIDO: AchievementResponse id obrigatório
+- ✅ MANTIDO: Validações específicas (type, year, month, description, automatica)
 """
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
 from bson import ObjectId
+
+from app.models.base import BaseModelWithUser
 
 
 # ========== CONSTANTES ==========
@@ -44,80 +47,69 @@ TIPOS_VALIDOS = [
     'debt_paid'
 ]
 
-# ========== MENSAGENS DE ERRO (i18n) ==========
-# As chaves correspondentes em app/utils/i18n.py:
-#   - ERROR_INVALID_ACHIEVEMENT_TYPE
-#   - ERROR_INVALID_YEAR
-#   - ERROR_INVALID_MONTH
-#   - ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY
-#   - ERROR_VALIDATION
 
-
-# ========== MODELO PRINCIPAL ==========
-
-class Achievement(BaseModel):
+class Achievement(BaseModelWithUser):
     """
     Modelo de uma conquista desbloqueada pelo usuário.
     
-    🔧 CORRIGIDO:
-    - month separado em year + month (int) → performance
-    - Campos de auditoria (created_at, updated_at)
-    - Validação de tamanho máximo
-    - Validação de tipo com Literal
-    - Conversão automática de ObjectId
-    - 🔧 i18n: Mensagens de erro em português (compatíveis com o sistema)
+    🔧 HERDA DE:
+      - BaseModelWithUser: id, user_id, created_at, updated_at, touch(), convert_objectid()
+    
+    🔧 CAMPOS ADICIONADOS:
+      - type: Tipo de conquista (Literal com valores pré-definidos)
+      - year: Ano da conquista (int)
+      - month: Mês da conquista (int, 1-12)
+      - name: Nome da conquista (opcional)
+      - description: Descrição da conquista (obrigatória)
+      - date: Data da conquista
+      - automatica: Conquista automática ou manual
     """
     
-    # ========== CAMPOS PRINCIPAIS ==========
+    # ========== CAMPOS OBRIGATÓRIOS ==========
     
-    id: Optional[str] = Field(None, alias="_id", description="ID da conquista")
-    user_id: str = Field(..., description="ID do usuário")
-    type: TIPOS_CONQUISTA = Field(..., description="Tipo de conquista")
+    type: TIPOS_CONQUISTA = Field(
+        ...,
+        description="Tipo de conquista"
+    )
     
-    # 🔧 CORRIGIDO: month string → year + month (int)
+    description: str = Field(
+        ...,
+        max_length=500,
+        description="Descrição da conquista (máx. 500 caracteres)"
+    )
+    
+    # ========== CAMPOS OPCIONAIS ==========
+    
     year: Optional[int] = Field(
-        None, 
-        ge=1900, 
+        None,
+        ge=1900,
         le=2100,
         description="Ano da conquista (ex: 2025)"
     )
+    
     month: Optional[int] = Field(
-        None, 
-        ge=1, 
+        None,
+        ge=1,
         le=12,
         description="Mês da conquista (1-12)"
     )
     
     name: Optional[str] = Field(
-        None, 
-        max_length=100, 
+        None,
+        max_length=100,
         description="Nome da conquista (opcional)"
     )
-    description: str = Field(
-        ..., 
-        max_length=500, 
-        description="Descrição da conquista (máx. 500 caracteres)"
-    )
+    
     date: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Data da conquista"
     )
+    
     automatica: bool = Field(
         default=True,
         description="Conquista automática (True) ou manual (False)"
     )
     
-    # ========== CAMPOS DE AUDITORIA ==========
-    
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        description="Data de criação do registro"
-    )
-    updated_at: Optional[datetime] = Field(
-        default=None,
-        description="Data da última atualização"
-    )
-
     # ========== VALIDADORES ==========
     
     @field_validator('type', mode='before')
@@ -125,7 +117,6 @@ class Achievement(BaseModel):
     def validate_type(cls, v: Any) -> str:
         """
         Valida se o tipo de conquista é permitido.
-        🔧 CORRIGIDO: Trata None antes de .strip()
         🔧 i18n: Mensagem em português (referência: ERROR_INVALID_ACHIEVEMENT_TYPE)
         """
         if v is None:
@@ -142,29 +133,6 @@ class Achievement(BaseModel):
             raise ValueError(
                 f'Tipo de conquista inválido. Use um dos: {", ".join(TIPOS_VALIDOS)}'
             )
-        return v
-    
-    @field_validator('user_id', mode='before')
-    @classmethod
-    def validate_user_id(cls, v: Any) -> str:
-        """
-        Valida se user_id é um ObjectId válido.
-        🔧 NOVO: Verifica formato ObjectId (24 caracteres hex)
-        """
-        if v is None:
-            raise ValueError('ID do usuário é obrigatório')
-        
-        if isinstance(v, ObjectId):
-            return str(v)
-        
-        v = str(v).strip()
-        if not v:
-            raise ValueError('ID do usuário é obrigatório')
-        
-        # Verifica se é um ObjectId válido (24 caracteres hex)
-        if len(v) != 24 or not all(c in '0123456789abcdefABCDEF' for c in v):
-            raise ValueError('ID do usuário inválido')
-        
         return v
     
     @field_validator('year', mode='before')
@@ -187,7 +155,7 @@ class Achievement(BaseModel):
     
     @field_validator('month', mode='before')
     @classmethod
-    def validate_month_int(cls, v: Optional[int]) -> Optional[int]:
+    def validate_month(cls, v: Optional[int]) -> Optional[int]:
         """
         Valida se o mês é válido (1-12).
         🔧 i18n: Mensagem em português (referência: ERROR_INVALID_MONTH)
@@ -208,7 +176,6 @@ class Achievement(BaseModel):
     def validate_description(cls, v: Any) -> str:
         """
         Valida se a descrição não está vazia.
-        🔧 CORRIGIDO: Trata None antes de .strip()
         🔧 i18n: Mensagem em português (referência: ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY)
         """
         if v is None:
@@ -256,42 +223,17 @@ class Achievement(BaseModel):
         if isinstance(v, (int, float)):
             return bool(v)
         return True
-    
-    # ========== CONVERSÃO DE OBJECTID ==========
-    
-    @model_validator(mode="before")
-    @classmethod
-    def convert_objectid(cls, data: Any) -> Any:
-        """
-        Converte ObjectId do MongoDB para string.
-        🔧 CORRIGIDO: Verifica se já é instância do modelo
-        """
-        # 🔧 CORRIGIDO: Ignora se já for uma instância do modelo
-        if isinstance(data, Achievement):
-            return data
-        
-        if isinstance(data, dict):
-            if "_id" in data and isinstance(data["_id"], ObjectId):
-                data["_id"] = str(data["_id"])
-            
-            if "user_id" in data and isinstance(data["user_id"], ObjectId):
-                data["user_id"] = str(data["user_id"])
-            
-            if "updated_at" in data and isinstance(data["updated_at"], str):
-                try:
-                    data["updated_at"] = datetime.fromisoformat(
-                        data["updated_at"].replace('Z', '+00:00')
-                    )
-                except (ValueError, TypeError):
-                    pass
-        
-        return data
 
-
-# ========== SCHEMAS AUXILIARES ==========
 
 class AchievementCreate(BaseModel):
-    """Schema para criação de conquista"""
+    """
+    Schema para criação de conquista.
+    
+    🔧 DIFERENÇAS DO MODEL ACHIEVEMENT:
+      - Não tem campos de auditoria (ainda não existe no banco)
+      - type é string (validado pela rota)
+    """
+    
     type: str
     year: Optional[int] = None
     month: Optional[int] = None
@@ -301,7 +243,13 @@ class AchievementCreate(BaseModel):
 
 
 class AchievementUpdate(BaseModel):
-    """Schema para atualização de conquista."""
+    """
+    Schema para atualização de conquista.
+    
+    🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
+      - Permite atualização parcial
+    """
+    
     type: Optional[str] = None
     year: Optional[int] = None
     month: Optional[int] = None
@@ -311,8 +259,13 @@ class AchievementUpdate(BaseModel):
 
 
 class AchievementResponse(Achievement):
-    """Schema para resposta da API"""
-    id: str
+    """
+    Schema para resposta da API.
+    
+    🔧 ✅ CORRIGIDO: id é obrigatório (sobrescreve Optional)
+    """
+    
+    id: str = Field(..., alias="_id", description="ID da conquista")
 
 
 # ========== ÍNDICES RECOMENDADOS ==========
@@ -329,7 +282,7 @@ class AchievementResponse(Achievement):
 # # Índice composto para queries com tipo e data
 # await db.achievements.create_index([("user_id", 1), ("type", 1), ("date", -1)])
 # 
-# # 🔧 NOVO: Índice composto para year + month (performance)
+# # Índice composto para year + month (performance)
 # await db.achievements.create_index([("user_id", 1), ("year", 1), ("month", 1)])
 # 
 # # Índice composto para tipo + ano + mês
@@ -340,32 +293,26 @@ class AchievementResponse(Achievement):
 
 # ========== DECISÕES DOCUMENTADAS ==========
 #
-# ✅ Validação de 'type' com lista de tipos válidos
-# ✅ 🔧 CORRIGIDO: month (string) → year (int) + month (int)
-# ✅ Validação de tamanho máximo (description: 500, name: 100)
-# ✅ Validação de description não vazia
-# ✅ Conversão de ObjectId para string via model_validator
-# ✅ Campos de auditoria (created_at, updated_at)
-# ✅ field_validator com mode="before"
-# ✅ Uso de timezone.utc para datas
-# ✅ Validação de automatica como booleano
-# ✅ Índices documentados com year + month
-# ✅ Schema de atualização parcial (AchievementUpdate)
-# ✅ 🔧 i18n: Mensagens de erro documentadas com chaves para referência
-# ✅ 🔧 CORRIGIDO: model_validator verifica se já é instância do modelo
-# ✅ 🔧 CORRIGIDO: validate_type trata None antes de .strip()
-# ✅ 🔧 CORRIGIDO: validate_description trata None antes de .strip()
-# ✅ 🔧 NOVO: validate_user_id com validação de formato ObjectId
+# ✅ Implementado:
+#   - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+#   - Validação de 'type' com lista de tipos válidos (Literal)
+#   - year + month como int (performance)
+#   - Validação de tamanho máximo (description: 500, name: 100)
+#   - Validação de description não vazia
+#   - Validação de automatica como booleano
+#   - Índices documentados com year + month
+#   - I18n completo com chaves de erro
+#   - Schemas separados (Create, Update, Response)
+#   - ✅ CORRIGIDO: Herança correta de BaseModelWithUser
+#   - ✅ CORRIGIDO: AchievementResponse id obrigatório
 #
-# 📌 MENSAGENS I18N REFERENCIADAS:
-#    - ERROR_INVALID_ACHIEVEMENT_TYPE  → "Tipo de conquista inválido"
-#    - ERROR_INVALID_YEAR              → "Ano deve ser entre 1900 e 2100"
-#    - ERROR_INVALID_MONTH             → "Mês deve ser entre 1 e 12"
-#    - ERROR_ACHIEVEMENT_DESCRIPTION_EMPTY → "Descrição não pode estar vazia"
-#    - ERROR_VALIDATION                → "Dados inválidos"
+# ❌ Não implementado (Pós-MVP):
+#   - Renomear 'automatica' para 'is_automatic' (requer mudança no frontend)
+#   - Validar date (impedir datas futuras) - opcional
 #
-# ⏳ PENDÊNCIAS PÓS-MVP:
-# - Renomear 'automatica' para 'is_automatic' (requer mudança no frontend)
-# - Validar date (impedir datas futuras) - opcional
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Refatoração - Herança de BaseModelWithUser (03/07/2026)
+#   - v3: Correções - Response id obrigatório (03/07/2026)
 #
-# ✅ STATUS: APROVADO PARA PRODUÇÃO
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

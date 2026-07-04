@@ -2,98 +2,174 @@
 Modelo de Investimento para MongoDB
 Arquivo: backend/app/models/investment.py
 
-🔧 CORRIGIDO:
-- Valores monetários agora são int (centavos)
-- Quantidade em centésimos (precisão)
-- Adicionados campos de rendimento e venda
-- Corrigido Config para Pydantic v2
-- Adicionadas validações de consistência
-- 🔧 NOVO: Validação amount = quantity × price
-- 🔧 CORRIGIDO: current_value consistency com warning
-- 🔧 NOVO: model_validator para conversão de ObjectId
-- 🔧 NOVO: Método touch() para updated_at
-- 🔧 i18n: Mensagens de erro documentadas com chaves para referência
+Funcionalidades:
+- Registro de investimentos (renda fixa, ações, FIIs, cripto)
+- Controle de preço de compra e valor atual
+- Suporte a venda e dividendos
+- Cálculo automático de rentabilidade
+
+Principais features:
+- Valores em centavos (int) para precisão
+- Quantidade em centésimos (ex: 1,5 ações → 150)
+- Campos calculados: current_value_calculated, profit_loss_calculated, return_percentage_calculated
+- Validação: amount = quantity × price
+- Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+- Herança de AmountMixin (amount com validação)
+- ✅ CORRIGIDO: Herança correta de BaseModelWithUser
+- ✅ CORRIGIDO: InvestmentResponse id obrigatório (já estava)
 """
 
 from datetime import datetime, timezone
 from typing import Optional, Literal, Any
-from pydantic import BaseModel, Field, ConfigDict, computed_field, model_validator
-from bson import ObjectId
+from pydantic import Field, computed_field, model_validator
 
-from app.utils.validators import convert_objectid_to_str
+from app.models.base import BaseModelWithUser
+from app.models.mixins import AmountMixin
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
-class Investment(BaseModel):
+class Investment(BaseModelWithUser, AmountMixin):
     """
-    Modelo de investimento para o MongoDB
+    Modelo de investimento para o MongoDB.
+    
+    🔧 HERDA DE:
+      - BaseModelWithUser: id, user_id, created_at, updated_at, touch(), convert_objectid()
+      - AmountMixin: amount (validação de valor positivo)
     
     🔧 IMPORTANTE: Valores monetários estão em CENTAVOS (int)
     - Exemplo: R$ 1.500,50 → 150050
     - Quantidade em CENTÉSIMOS (ex: 1,5 ações → 150)
+    
+    🔧 CAMPOS ADICIONADOS:
+      - name: Nome do investimento
+      - broker: Corretora
+      - category: Categoria do investimento
+      - current_value: Valor atual em centavos
+      - purchase_price_per_unit: Preço de compra por unidade
+      - current_price_per_unit: Preço atual por unidade
+      - quantity: Quantidade em centésimos
+      - purchase_date: Data da compra
+      - profit_loss: Lucro/prejuízo em centavos
+      - return_percentage: Percentual de retorno
+      - dividends_received: Dividendos recebidos
+      - last_dividend_date: Último dividendo
+      - sold: Foi vendido?
+      - sold_date: Data da venda
+      - sold_value: Valor da venda
+      - fees: Taxas pagas
+      - notes: Observações
+      - automatic_update: Buscar preço automaticamente?
     """
     
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
+    # ========== CAMPOS OBRIGATÓRIOS ==========
+    
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Nome do investimento"
     )
     
-    # ========== IDENTIFICAÇÃO ==========
-    id: Optional[str] = Field(None, alias="_id")
-    user_id: str = Field(..., description="ID do usuário (injetado pelo backend)")
-    
-    # ========== INFORMAÇÕES BÁSICAS ==========
-    name: str = Field(..., min_length=1, max_length=100, description="Nome do investimento")
-    broker: Optional[str] = Field(None, max_length=50, description="Corretora")
     category: Literal["renda_fixa", "acoes", "fiis", "cripto", "outros"] = Field(
-        ..., description="Categoria do investimento"
+        ...,
+        description="Categoria do investimento"
     )
     
-    # ========== VALORES MONETÁRIOS (centavos) ==========
-    amount: int = Field(..., gt=0, description="Valor investido em CENTAVOS (ex: 150050 = R$1.500,50)")
-    current_value: Optional[int] = Field(None, ge=0, description="Valor atual em CENTAVOS")
+    purchase_date: datetime = Field(
+        ...,
+        description="Data da compra"
+    )
+    
+    # ========== CAMPOS OPCIONAIS ==========
+    
+    broker: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Corretora"
+    )
+    
+    current_value: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Valor atual em CENTAVOS"
+    )
+    
     purchase_price_per_unit: Optional[int] = Field(
-        None, ge=0, description="Preço de compra por unidade em CENTAVOS"
+        None,
+        ge=0,
+        description="Preço de compra por unidade em CENTAVOS"
     )
+    
     current_price_per_unit: Optional[int] = Field(
-        None, ge=0, description="Preço atual por unidade em CENTAVOS"
+        None,
+        ge=0,
+        description="Preço atual por unidade em CENTAVOS"
     )
     
-    # ========== QUANTIDADE (centésimos) ==========
-    quantity: int = Field(default=0, ge=0, description="Quantidade em CENTÉSIMOS (ex: 150 = 1,5 ações)")
+    quantity: int = Field(
+        default=0,
+        ge=0,
+        description="Quantidade em CENTÉSIMOS (ex: 150 = 1,5 ações)"
+    )
     
-    # ========== DATAS ==========
-    purchase_date: datetime = Field(..., description="Data da compra")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    profit_loss: Optional[int] = Field(
+        None,
+        description="Lucro/prejuízo em CENTAVOS"
+    )
     
-    # ========== RENDIMENTO ==========
-    profit_loss: Optional[int] = Field(None, description="Lucro/prejuízo em CENTAVOS")
-    return_percentage: Optional[float] = Field(None, description="Percentual de retorno (ex: 15.5 = 15,5%)")
+    return_percentage: Optional[float] = Field(
+        None,
+        description="Percentual de retorno (ex: 15.5 = 15,5%)"
+    )
     
-    # ========== DIVIDENDOS (futuro) ==========
-    dividends_received: Optional[int] = Field(None, ge=0, description="Dividendos recebidos em CENTAVOS")
-    last_dividend_date: Optional[datetime] = Field(None, description="Último dividendo recebido")
+    dividends_received: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Dividendos recebidos em CENTAVOS"
+    )
     
-    # ========== VENDA ==========
-    sold: bool = Field(default=False, description="Investimento foi vendido?")
-    sold_date: Optional[datetime] = Field(None, description="Data da venda")
-    sold_value: Optional[int] = Field(None, ge=0, description="Valor da venda em CENTAVOS")
+    last_dividend_date: Optional[datetime] = Field(
+        None,
+        description="Último dividendo recebido"
+    )
     
-    # ========== TAXAS ==========
-    fees: Optional[int] = Field(None, ge=0, description="Taxas pagas em CENTAVOS")
+    sold: bool = Field(
+        default=False,
+        description="Investimento foi vendido?"
+    )
     
-    # ========== OBSERVAÇÕES ==========
-    notes: Optional[str] = Field(None, max_length=500, description="Observações")
+    sold_date: Optional[datetime] = Field(
+        None,
+        description="Data da venda"
+    )
     
-    # ========== CONFIGURAÇÃO AUTOMÁTICA ==========
-    automatic_update: bool = Field(default=False, description="Buscar preço automaticamente via API")
+    sold_value: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Valor da venda em CENTAVOS"
+    )
+    
+    fees: Optional[int] = Field(
+        None,
+        ge=0,
+        description="Taxas pagas em CENTAVOS"
+    )
+    
+    notes: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Observações"
+    )
+    
+    automatic_update: bool = Field(
+        default=False,
+        description="Buscar preço automaticamente via API"
+    )
     
     # ========== VALIDAÇÕES ==========
-    
+
     @model_validator(mode='after')
     def validate_quantity_and_price(self):
         """
@@ -119,7 +195,7 @@ class Investment(BaseModel):
     @model_validator(mode='after')
     def validate_amount_consistency(self):
         """
-        🔧 CORRIGIDO: Valida que amount seja consistente com quantity e purchase_price_per_unit.
+        Valida que amount seja consistente com quantity e purchase_price_per_unit.
         🔧 i18n: Mensagem com chave ERROR_INVESTMENT_AMOUNT_INCONSISTENT
         """
         if self.quantity > 0 and self.purchase_price_per_unit is not None:
@@ -134,7 +210,7 @@ class Investment(BaseModel):
     @model_validator(mode='after')
     def validate_current_value_consistency(self):
         """
-        🔧 CORRIGIDO: Loga warning em vez de ajustar automaticamente.
+        Loga warning em vez de ajustar automaticamente.
         """
         if self.current_price_per_unit is not None and self.quantity > 0:
             expected_value = (self.quantity * self.current_price_per_unit) // 100
@@ -193,33 +269,17 @@ class Investment(BaseModel):
         if profit is not None and self.amount > 0:
             return round((profit / self.amount) * 100, 2)
         return None
-    
-    # ========== MÉTODOS AUXILIARES ==========
-    
-    def touch(self) -> 'Investment':
-        """
-        🔧 NOVO: Atualiza o timestamp de modificação.
-        Uso: investment.touch() antes de salvar no banco.
-        """
-        self.updated_at = datetime.now(timezone.utc)
-        return self
-    
-    # ========== CONVERSÃO DE OBJECTID ==========
-    
-    @model_validator(mode='before')
-    @classmethod
-    def convert_objectid(cls, data: Any) -> Any:
-        """
-        🔧 NOVO: Converte ObjectId para string.
-        """
-        if isinstance(data, Investment):
-            return data
-        
-        return convert_objectid_to_str(data)
 
 
 class InvestmentCreate(BaseModel):
-    """Schema para criação de investimento"""
+    """
+    Schema para criação de investimento.
+    
+    🔧 DIFERENÇAS DO MODEL INVESTMENT:
+      - Não tem campos de auditoria (ainda não existe no banco)
+      - amount é obrigatório
+    """
+    
     name: str = Field(..., min_length=1, max_length=100)
     broker: Optional[str] = Field(None, max_length=50)
     amount: int = Field(..., gt=0, description="Valor em CENTAVOS")
@@ -242,7 +302,13 @@ class InvestmentCreate(BaseModel):
 
 
 class InvestmentUpdate(BaseModel):
-    """Schema para atualização de investimento"""
+    """
+    Schema para atualização de investimento.
+    
+    🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
+      - Permite atualização parcial
+    """
+    
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     broker: Optional[str] = Field(None, max_length=50)
     amount: Optional[int] = Field(None, gt=0)
@@ -270,57 +336,37 @@ class InvestmentUpdate(BaseModel):
 
 
 class InvestmentResponse(Investment):
-    """Schema para resposta da API"""
-    id: str = Field(..., description="ID do investimento")
+    """
+    Schema para resposta da API.
+    
+    🔧 ✅ CORRIGIDO: id é obrigatório (sobrescreve Optional)
+    """
+    
+    id: str = Field(..., alias="_id", description="ID do investimento")
 
 
-# ========== BROKER COM LITERAL (PÓS-MVP) ==========
+# ========== DECISÕES DOCUMENTADAS ==========
 #
-# from typing import Literal
-# BROKERS = Literal["XP", "Nubank", "BTG", "Itaú", "Bradesco", "Inter", "Outros"]
-# broker: Optional[BROKERS] = Field(None, description="Corretora")
-
-
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTE ARQUIVO:
-================================================================================
-1. amount: float → int (centavos)
-2. current_value: float → int (centavos)
-3. purchase_price_per_unit: int (centavos) - ADICIONADO
-4. current_price_per_unit: int (centavos) - ADICIONADO
-5. quantity: float → int (centésimos)
-6. profit_loss: int (centavos) - ADICIONADO
-7. return_percentage: float - ADICIONADO
-8. sold, sold_date, sold_value - ADICIONADOS
-9. broker, fees - ADICIONADOS
-10. dividends_received, last_dividend_date - ADICIONADOS
-11. automatic_update - ADICIONADO
-12. Config → ConfigDict (Pydantic v2)
-13. computed_fields para cálculos automáticos
-14. Validações de consistência (quantity/price, sold, current_value)
-15. max_length em todos os campos de texto
-16. descriptions em todos os Field()
-17. 🔧 NOVO: Validação amount = quantity × price
-18. 🔧 CORRIGIDO: current_value consistency com warning
-19. 🔧 NOVO: model_validator para conversão de ObjectId
-20. 🔧 NOVO: Método touch() para updated_at
-21. 🔧 NOVO: Validação de sold_date não futuro
-22. 🔧 i18n: Mensagens de erro documentadas com chaves para referência
-
-📌 CHAVES I18N REFERENCIADAS:
-   - ERROR_INVESTMENT_PRICE_REQUIRED → "purchase_price_per_unit é obrigatório quando quantity > 0"
-   - ERROR_INVESTMENT_SOLD_DATE_REQUIRED → "sold_date é obrigatório quando sold=True"
-   - ERROR_INVESTMENT_SOLD_VALUE_REQUIRED → "sold_value é obrigatório quando sold=True"
-   - ERROR_INVESTMENT_AMOUNT_INCONSISTENT → "Valor investido inconsistente com quantidade × preço"
-   - ERROR_INVESTMENT_SOLD_WITHOUT_AMOUNT → "Não é possível vender um investimento com valor zero"
-   - ERROR_INVESTMENT_SOLD_DATE_FUTURE → "sold_date não pode ser no futuro"
-
-⏳ PENDÊNCIAS PÓS-MVP:
-================================================================================
-1. broker com Literal para corretoras conhecidas
-
-================================================================================
-✅ ESTE ARQUIVO ESTÁ 100% COMPLETO E CORRIGIDO
-================================================================================
-"""
+# ✅ Implementado:
+#   - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+#   - Herança de AmountMixin (amount com validação)
+#   - Valores monetários em centavos (int)
+#   - Quantidade em centésimos (int)
+#   - Campos calculados: current_value_calculated, profit_loss_calculated, return_percentage_calculated
+#   - Validação: amount = quantity × price
+#   - Validação: current_value consistency com warning
+#   - Validação: sold_date não futuro
+#   - I18n completo com chaves de erro
+#   - Schemas separados (Create, Update, Response)
+#   - ✅ CORRIGIDO: Herança correta de BaseModelWithUser
+#   - ✅ CORRIGIDO: InvestmentResponse id obrigatório
+#
+# ❌ Não implementado (Pós-MVP):
+#   - broker com Literal para corretoras conhecidas
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Refatoração - Herança de BaseModelWithUser, AmountMixin (03/07/2026)
+#   - v3: Correções - Response id obrigatório (03/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO

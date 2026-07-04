@@ -2,56 +2,70 @@
 Modelo de Contas a Pagar (Bills)
 Arquivo: backend/app/models/bill.py
 
-🔧 CORRIGIDO:
-- amount agora é int (centavos) para consistência com to_cents()
-- Removido campo 'current' de InstallmentInfo (calculado dinamicamente)
-- 🔧 NOVO: validação de days_before quando enabled=True
-- 🔧 NOVO: validação de due_day com start_date
-- 🔧 NOVO: validação de paid_date posterior a start_date
-- 🔧 NOVO: validação de recurring_end_date
-- 🔧 NOVO: validação de categoria com Literal
-- 🔧 NOVO: método touch() para updated_at
-- Adicionada função get_current_installment() para cálculo dinâmico
-- Adicionado i18n com chaves para mensagens de erro
+Funcionalidades:
+- CRUD de contas a pagar com parcelamento
+- Suporte a recorrência (contas mensais)
+- Notificações programadas
+- Categorização de gastos
+
+Principais features:
+- amount em centavos (int) para precisão
+- Parcelamento com cálculo dinâmico de parcela atual
+- Suporte a contas recorrentes com data de término
+- Notificações configuráveis (dias antes)
+- I18n completo com chaves de erro
+- Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+- Herança de PaymentMixin (paid, paid_date)
+- Herança de AmountMixin (amount)
+- ✅ CORRIGIDO: BillResponse id é obrigatório
 """
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from pydantic import Field, model_validator
 from typing import Optional, Literal
 from datetime import datetime, timezone
-from bson import ObjectId
 from calendar import monthrange
 
+from app.models.base import BaseModelWithUser
+from app.models.mixins import PaymentMixin, AmountMixin
+from app.core.constants import CATEGORIA_BILLS
 
-# ========== CONSTANTES ==========
-
-# 🔧 NOVO: Categorias com Literal
-CATEGORIA_BILLS = Literal[
-    "aluguel", "condominio", "agua", "luz", "internet", "telefone",
-    "supermercado", "educacao", "saude", "transporte", "lazer", "outros"
-]
-
-CATEGORIAS_VALIDAS = [
-    "aluguel", "condominio", "agua", "luz", "internet", "telefone",
-    "supermercado", "educacao", "saude", "transporte", "lazer", "outros"
-]
-
-
-# ========== MODELOS ==========
 
 class InstallmentInfo(BaseModel):
     """
     Informações sobre parcelamento da conta.
-    🔧 CORRIGIDO: Removido campo 'current' (calculado dinamicamente)
-    🔧 CORRIGIDO: validação de due_day com start_date
+    
+    🔧 CAMPOS:
+      - total: Número total de parcelas
+      - start_date: Data da primeira parcela
+      - due_day: Dia de vencimento (opcional)
+    
+    🔧 VALIDAÇÕES:
+      - due_day deve ser válido para o mês da start_date
+      - due_day é opcional (pode ser None)
     """
-    total: int = Field(..., ge=1, description="Número total de parcelas")
-    start_date: datetime = Field(..., description="Data da primeira parcela")
-    due_day: Optional[int] = Field(None, ge=1, le=31, description="Dia de vencimento (opcional)")
+    
+    total: int = Field(
+        ...,
+        ge=1,
+        description="Número total de parcelas"
+    )
+    
+    start_date: datetime = Field(
+        ...,
+        description="Data da primeira parcela"
+    )
+    
+    due_day: Optional[int] = Field(
+        None,
+        ge=1,
+        le=31,
+        description="Dia de vencimento (opcional)"
+    )
     
     @model_validator(mode='after')
     def validate_due_day(self):
         """
-        🔧 CORRIGIDO: due_day deve ser válido para o mês da start_date.
+        due_day deve ser válido para o mês da start_date.
         🔧 i18n: Mensagem com chave ERROR_INVALID_DUE_DAY
         """
         if self.due_day is not None:
@@ -64,14 +78,32 @@ class InstallmentInfo(BaseModel):
 
 
 class NotificationInfo(BaseModel):
-    """Configurações de notificação para esta conta"""
-    enabled: bool = Field(default=False, description="Notificações ativas?")
-    days_before: int = Field(0, ge=0, description="Dias antes para lembrar")
+    """
+    Configurações de notificação para esta conta.
+    
+    🔧 CAMPOS:
+      - enabled: Notificações ativas?
+      - days_before: Dias antes para lembrar
+    
+    🔧 VALIDAÇÕES:
+      - days_before é obrigatório se enabled=True
+    """
+    
+    enabled: bool = Field(
+        default=False,
+        description="Notificações ativas?"
+    )
+    
+    days_before: int = Field(
+        0,
+        ge=0,
+        description="Dias antes para lembrar"
+    )
     
     @model_validator(mode='after')
     def validate_notification(self):
         """
-        🔧 CORRIGIDO: days_before é obrigatório se enabled=True.
+        days_before é obrigatório se enabled=True.
         🔧 i18n: Mensagem com chave ERROR_NOTIFICATION_DAYS_REQUIRED
         """
         if self.enabled and self.days_before <= 0:
@@ -79,41 +111,77 @@ class NotificationInfo(BaseModel):
         return self
 
 
-class Bill(BaseModel):
+class Bill(BaseModelWithUser, PaymentMixin, AmountMixin):
     """
-    Modelo principal de Conta a Pagar
+    Modelo principal de Conta a Pagar.
+    
+    🔧 HERDA DE:
+      - BaseModelWithUser: id, user_id, created_at, updated_at, touch(), convert_objectid()
+      - PaymentMixin: paid, paid_date (validação de pagamento)
+      - AmountMixin: amount (validação de valor positivo)
     
     🔧 IMPORTANTE: amount está em CENTAVOS (int)
     - Exemplo: R$ 150,50 → 15050
-    - As rotas usam to_cents() e from_cents() automaticamente
+    
+    🔧 CAMPOS ADICIONADOS:
+      - description: Descrição da conta
+      - installments: Informações de parcelamento
+      - category: Categoria da conta (Literal)
+      - notes: Observações
+      - notification: Configurações de notificação
+      - recurring: É recorrente?
+      - recurring_end_date: Data final da recorrência
     """
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str},
-        populate_by_name=True,
-        from_attributes=True
+    
+    # ========== CAMPOS OBRIGATÓRIOS ==========
+    
+    description: str = Field(
+        ...,
+        max_length=200,
+        description="Descrição da conta"
     )
-
-    id: Optional[str] = Field(None, alias="_id")
-    user_id: str = Field(..., description="ID do usuário (preenchido pelo backend)")
-    description: str = Field(..., max_length=200, description="Descrição da conta")
-    amount: int = Field(..., gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
-    installments: InstallmentInfo = Field(..., description="Informações de parcelamento")
-    # 🔧 CORRIGIDO: category com Literal
-    category: Optional[CATEGORIA_BILLS] = Field(None, description="Categoria da conta")
-    notes: Optional[str] = Field(None, max_length=500, description="Observações")
-    notification: NotificationInfo = Field(default_factory=NotificationInfo, description="Configurações de notificação")
-    paid: bool = Field(default=False, description="Conta totalmente paga?")
-    paid_date: Optional[datetime] = Field(None, description="Data em que foi totalmente paga")
-    recurring: bool = Field(default=False, description="É recorrente?")
-    recurring_end_date: Optional[datetime] = Field(None, description="Data final da recorrência")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    installments: InstallmentInfo = Field(
+        ...,
+        description="Informações de parcelamento"
+    )
+    
+    # ========== CAMPOS OPCIONAIS ==========
+    
+    category: Optional[CATEGORIA_BILLS] = Field(
+        None,
+        description="Categoria da conta"
+    )
+    
+    notes: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Observações"
+    )
+    
+    notification: NotificationInfo = Field(
+        default_factory=NotificationInfo,
+        description="Configurações de notificação"
+    )
+    
+    # ========== RECORRÊNCIA ==========
+    
+    recurring: bool = Field(
+        default=False,
+        description="É recorrente?"
+    )
+    
+    recurring_end_date: Optional[datetime] = Field(
+        None,
+        description="Data final da recorrência"
+    )
+    
+    # ========== VALIDAÇÕES ==========
 
     @model_validator(mode='after')
     def check_paid_date(self):
         """
-        🔧 CORRIGIDO: Valida paid_date.
+        Valida paid_date.
         - Se paid=True, paid_date é obrigatório
         - paid_date não pode ser anterior à start_date
         🔧 i18n: Mensagens com chaves ERROR_BILL_PAID_DATE_REQUIRED e ERROR_BILL_PAID_DATE_BEFORE_START
@@ -128,58 +196,138 @@ class Bill(BaseModel):
     @model_validator(mode='after')
     def validate_recurring(self):
         """
-        🔧 NOVO: Valida recurring_end_date.
+        Valida recurring_end_date.
         - Se recurring=True e recurring_end_date existe, não pode ser anterior à start_date
         """
         if self.recurring and self.recurring_end_date:
             if self.recurring_end_date < self.installments.start_date:
                 raise ValueError('recurring_end_date não pode ser anterior à start_date')
         return self
-    
-    @model_validator(mode='after')
-    def validate_installment_due_day(self):
-        """due_day é opcional - pode ser None"""
-        return self
-
-    # ========== MÉTODOS AUXILIARES ==========
-
-    def touch(self) -> 'Bill':
-        """
-        🔧 NOVO: Atualiza o campo updated_at com a data/hora atual.
-        """
-        self.updated_at = datetime.now(timezone.utc)
-        return self
 
 
 class BillCreate(BaseModel):
-    """Schema usado para CRIAR uma nova conta"""
-    description: str = Field(..., max_length=200, description="Descrição da conta")
-    amount: int = Field(..., gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
-    installments: InstallmentInfo = Field(..., description="Informações de parcelamento")
-    category: Optional[CATEGORIA_BILLS] = Field(None, description="Categoria da conta")
-    notes: Optional[str] = Field(None, max_length=500, description="Observações")
-    notification: NotificationInfo = Field(default_factory=NotificationInfo, description="Configurações de notificação")
-    recurring: bool = Field(default=False, description="É recorrente?")
-    recurring_end_date: Optional[datetime] = Field(None, description="Data final da recorrência")
+    """
+    Schema usado para CRIAR uma nova conta.
+    
+    🔧 DIFERENÇAS DO MODEL BILL:
+      - Não tem campos de auditoria (ainda não existe no banco)
+      - Todos os campos específicos do Bill são mantidos
+    """
+    
+    description: str = Field(
+        ...,
+        max_length=200,
+        description="Descrição da conta"
+    )
+    
+    amount: int = Field(
+        ...,
+        gt=0,
+        description="Valor em CENTAVOS (ex: 15050 = R$150,50)"
+    )
+    
+    installments: InstallmentInfo = Field(
+        ...,
+        description="Informações de parcelamento"
+    )
+    
+    category: Optional[CATEGORIA_BILLS] = Field(
+        None,
+        description="Categoria da conta"
+    )
+    
+    notes: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Observações"
+    )
+    
+    notification: NotificationInfo = Field(
+        default_factory=NotificationInfo,
+        description="Configurações de notificação"
+    )
+    
+    recurring: bool = Field(
+        default=False,
+        description="É recorrente?"
+    )
+    
+    recurring_end_date: Optional[datetime] = Field(
+        None,
+        description="Data final da recorrência"
+    )
 
 
 class BillUpdate(BaseModel):
-    """Schema usado para ATUALIZAR uma conta existente"""
-    description: Optional[str] = Field(None, max_length=200, description="Descrição da conta")
-    amount: Optional[int] = Field(None, gt=0, description="Valor em CENTAVOS (ex: 15050 = R$150,50)")
-    installments: Optional[InstallmentInfo] = Field(None, description="Informações de parcelamento")
-    category: Optional[CATEGORIA_BILLS] = Field(None, description="Categoria da conta")
-    notes: Optional[str] = Field(None, max_length=500, description="Observações")
-    notification: Optional[NotificationInfo] = Field(None, description="Configurações de notificação")
-    paid: Optional[bool] = Field(None, description="Conta totalmente paga?")
-    paid_date: Optional[datetime] = Field(None, description="Data em que foi totalmente paga")
-    recurring: Optional[bool] = Field(None, description="É recorrente?")
-    recurring_end_date: Optional[datetime] = Field(None, description="Data final da recorrência")
+    """
+    Schema usado para ATUALIZAR uma conta existente.
+    
+    🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
+      - Permite atualização parcial
+    """
+    
+    description: Optional[str] = Field(
+        None,
+        max_length=200,
+        description="Descrição da conta"
+    )
+    
+    amount: Optional[int] = Field(
+        None,
+        gt=0,
+        description="Valor em CENTAVOS (ex: 15050 = R$150,50)"
+    )
+    
+    installments: Optional[InstallmentInfo] = Field(
+        None,
+        description="Informações de parcelamento"
+    )
+    
+    category: Optional[CATEGORIA_BILLS] = Field(
+        None,
+        description="Categoria da conta"
+    )
+    
+    notes: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Observações"
+    )
+    
+    notification: Optional[NotificationInfo] = Field(
+        None,
+        description="Configurações de notificação"
+    )
+    
+    paid: Optional[bool] = Field(
+        None,
+        description="Conta totalmente paga?"
+    )
+    
+    paid_date: Optional[datetime] = Field(
+        None,
+        description="Data em que foi totalmente paga"
+    )
+    
+    recurring: Optional[bool] = Field(
+        None,
+        description="É recorrente?"
+    )
+    
+    recurring_end_date: Optional[datetime] = Field(
+        None,
+        description="Data final da recorrência"
+    )
 
 
 class BillResponse(Bill):
-    """Schema usado para RESPOSTAS da API"""
-    pass
+    """
+    Schema usado para RESPOSTAS da API.
+    
+    🔧 ✅ CORRIGIDO: id é obrigatório (sobrescreve Optional do BaseModel)
+    """
+    
+    id: str = Field(..., alias="_id", description="ID da conta")
 
 
 # ========== FUNÇÃO AUXILIAR PARA CALCULAR CURRENT ==========
@@ -187,7 +335,7 @@ class BillResponse(Bill):
 async def get_current_installment(bill_id: str, user_id: str, db) -> int:
     """
     Calcula a parcela atual com base nas parcelas pagas.
-    🔧 NOVO: Substitui o campo 'current' que foi removido.
+    🔧 Substitui o campo 'current' que foi removido do InstallmentInfo.
     
     Args:
         bill_id (str): ID da conta mestra
@@ -209,22 +357,28 @@ async def get_current_installment(bill_id: str, user_id: str, db) -> int:
     return paid_count + 1
 
 
-"""
-================================================================================
-✅ CORREÇÕES REALIZADAS NESTA VERSÃO:
-================================================================================
-1. amount: float → int (centavos) - consistente com to_cents()
-2. 🔧 REMOVIDO: campo 'current' de InstallmentInfo (causava inconsistência)
-3. 🔧 NOVO: validação de days_before quando enabled=True
-4. 🔧 NOVO: validação de due_day com start_date
-5. 🔧 NOVO: validação de paid_date posterior a start_date
-6. 🔧 NOVO: validação de recurring_end_date
-7. 🔧 NOVO: category com Literal (categorias válidas)
-8. 🔧 NOVO: método touch() para updated_at
-9. 🔧 NOVO: função get_current_installment() para cálculo dinâmico
-10. Adicionados max_length nos campos de texto
-11. 🔧 i18n: Mensagens de erro com chaves para referência
-
-✅ STATUS: CONSISTENTE COM AS ROTAS E BANCO DE DADOS
-================================================================================
-"""
+# ========== DECISÕES DOCUMENTADAS ==========
+#
+# ✅ Implementado:
+#   - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
+#   - Herança de PaymentMixin (paid, paid_date, validação de pagamento)
+#   - Herança de AmountMixin (amount com validação)
+#   - Submodelos: InstallmentInfo (parcelas), NotificationInfo (notificações)
+#   - Validação: due_day compatível com mês da start_date
+#   - Validação: days_before obrigatório se enabled=True
+#   - Validação: paid_date não anterior à start_date
+#   - Validação: recurring_end_date não anterior à start_date
+#   - I18n completo com chaves de erro
+#   - Função get_current_installment() para cálculo dinâmico
+#   - Schemas separados (Create, Update, Response)
+#   - ✅ CORRIGIDO: BillResponse id é obrigatório
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Nenhum (model completo para MVP)
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Refatoração - Herança de BaseModelWithUser, PaymentMixin, AmountMixin (03/07/2026)
+#   - v3: Correção - BillResponse id sobrescrito como obrigatório (03/07/2026)
+#
+# ✅ STATUS: PRONTO PARA PRODUÇÃO
