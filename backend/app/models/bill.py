@@ -20,7 +20,7 @@ Principais features:
 - ✅ CORRIGIDO: BillResponse id é obrigatório
 """
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Literal
 from datetime import datetime, timezone
 from calendar import monthrange

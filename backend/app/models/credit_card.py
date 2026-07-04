@@ -19,7 +19,7 @@ Principais features:
 - ✅ CORRIGIDO: brand com Literal para bandeiras
 """
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
 

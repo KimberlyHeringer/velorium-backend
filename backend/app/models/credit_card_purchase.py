@@ -22,7 +22,7 @@ Principais features:
 - ✅ CORRIGIDO: Importação circular removida (usa utils/installments.py)
 """
 
-from pydantic import Field, model_validator, field_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Any, List
 from datetime import datetime, timezone
 

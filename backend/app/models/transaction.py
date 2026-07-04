@@ -19,7 +19,7 @@ Principais features:
 - ✅ CORRIGIDO: TransactionBalance com descriptions nos campos
 """
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Literal, Any
 from datetime import datetime, timezone
 
