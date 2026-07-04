@@ -18,7 +18,7 @@ Principais features:
 - ✅ CORRIGIDO: GoalResponse id obrigatório
 """
 
-from pydantic import Field, model_validator, computed_field
+from pydantic import BaseModel, Field, model_validator, computed_field
 from typing import Optional, Any
 
 from app.models.base import BaseModelWithUser
