@@ -16,7 +16,7 @@ Principais features:
 - ✅ CORRIGIDO: validate_date_not_future agora valida strings também
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 

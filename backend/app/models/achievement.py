@@ -19,7 +19,7 @@ Principais features:
 - ✅ MANTIDO: Validações específicas (type, year, month, description, automatica)
 """
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
 from bson import ObjectId

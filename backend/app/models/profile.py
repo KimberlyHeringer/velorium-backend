@@ -17,7 +17,7 @@ Principais features:
 - Schemas separados (Create, Response)
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List, Literal, Any
 
 from app.models.base import BaseModelWithUser
