@@ -4,6 +4,7 @@ Utilitários de Autenticação (JWT, Hash, Blacklist)
 Arquivo: backend/app/utils/auth.py
 
 🔧 MODIFICADO: Regra 2.8 - Adicionado logger para rastreamento de eventos de autenticação
+🔧 CORRIGIDO: get_current_user remove password_hash antes de criar UserResponse
 """
 
 from jose import jwt, JWTError
@@ -201,6 +202,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
     """
     Dependency que valida o token e retorna o usuário atual.
     Retorna UserResponse (SEM password_hash) para segurança.
+    
+    🔧 CORRIGIDO: Remove password_hash antes de criar UserResponse.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -219,8 +222,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
         logger.warning(f"Usuário não encontrado para token: {token_data.user_id}")
         raise credentials_exception
     
-    # Converter para UserResponse (exclui password_hash automaticamente)
+    # 🔧 CORRIGIDO: Remove password_hash antes de criar UserResponse
     user["_id"] = str(user["_id"])
+    user.pop("password_hash", None)  # ← LINHA ADICIONADA
+    
     logger.debug(f"Usuário autenticado: {user['email']} (ID: {user['_id']})")
     return UserResponse(**user)
 
