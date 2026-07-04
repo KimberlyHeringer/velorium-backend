@@ -6,7 +6,7 @@ Funcionalidade: Centraliza todas as constantes usadas em múltiplos arquivos.
 Facilita manutenção e evita duplicação.
 
 🔧 USO:
-    from app.core.constants import MAX_HISTORY_ENTRIES, MAX_INSTALLMENTS, PAYMENT_METHOD_CREDIT_CARD
+    from app.core.constants import MAX_HISTORY_ENTRIES, MAX_INSTALLMENTS, PAYMENT_METHOD_CREDIT_CARD, CATEGORIA_BILLS
     
     if installments > MAX_INSTALLMENTS:
         raise ValidationException(...)
@@ -23,10 +23,12 @@ Facilita manutenção e evita duplicação.
     - CSV Export (CSV_MAX_EXPORT)
     - Delete Token (DELETE_TOKEN_EXPIRY_HOURS)
     - Transações (PAYMENT_METHOD_CREDIT_CARD)
+    - Categorias de contas a pagar (CATEGORIA_BILLS)
 """
 
 import os
 import logging
+from typing import Literal  # ← ADICIONADO
 
 # ========== CONFIGURAÇÃO DE LOG ==========
 logger = logging.getLogger(__name__)
@@ -157,6 +159,17 @@ PAYMENT_METHOD_CREDIT_CARD = "cartao_credito"
 
 
 # ================================================================
+# CATEGORIAS DE CONTAS A PAGAR (BILLS)  ← NOVO
+# ================================================================
+
+CATEGORIA_BILLS = Literal[
+    "aluguel", "condominio", "agua", "luz", "internet", "telefone",
+    "supermercado", "educacao", "saude", "transporte", "lazer", "outros"
+]
+"""Categorias válidas para contas a pagar (Literal)."""
+
+
+# ================================================================
 # DECISÕES DOCUMENTADAS
 # ================================================================
 #
@@ -169,6 +182,7 @@ PAYMENT_METHOD_CREDIT_CARD = "cartao_credito"
 # ✅ EXPO_API_URL adicionado
 # ✅ MAX_INSTALLMENTS_DAYS_WARNING adicionado
 # ✅ PAYMENT_METHOD_CREDIT_CARD adicionado (corrige ImportError)
+# ✅ CATEGORIA_BILLS adicionado (corrige ImportError no bill.py)
 # ✅ BALANCE_CACHE_TTL_SECONDS já existente
 # ✅ CACHE_TTL_SECONDS já existente
 #
