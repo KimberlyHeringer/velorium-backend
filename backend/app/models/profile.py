@@ -12,6 +12,7 @@ Principais features:
 - Campos monetários em centavos (int) para precisão
 - Validação: "nenhuma" não pode aparecer com outras metas
 - Validação: sonho "outro" exige descrição
+- ✅ CORRIGIDO: next_year_goal_value só é obrigatório se houver metas ativas (não "nenhuma")
 - I18n completo com chaves de erro
 - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
 - Schemas separados (Create, Response)
@@ -192,10 +193,13 @@ class UserProfile(BaseModelWithUser, AuditMixin):
     @model_validator(mode='after')
     def validate_next_year_value(self):
         """
-        Se next_year_goals não estiver vazio, next_year_goal_value é obrigatório.
-        🔧 i18n: Mensagem com chave ERROR_PROFILE_NEXT_YEAR_VALUE_REQUIRED
+        🔧 CORRIGIDO: Apenas valida se next_year_goals contém metas ativas (não "nenhuma").
         """
-        if self.next_year_goals and self.next_year_goal_value is None:
+        # Filtra apenas metas que não sejam "nenhuma"
+        active_goals = [g for g in self.next_year_goals if g != "nenhuma"]
+        
+        # Se houver metas ativas, next_year_goal_value é obrigatório
+        if active_goals and self.next_year_goal_value is None:
             raise ValueError('next_year_goal_value é obrigatório quando há metas definidas')
         return self
 
@@ -278,7 +282,11 @@ class UserProfileCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_next_year_value(self):
-        if self.next_year_goals and self.next_year_goal_value is None:
+        """
+        🔧 CORRIGIDO: Apenas valida se next_year_goals contém metas ativas (não "nenhuma").
+        """
+        active_goals = [g for g in self.next_year_goals if g != "nenhuma"]
+        if active_goals and self.next_year_goal_value is None:
             raise ValueError('next_year_goal_value é obrigatório quando há metas definidas')
         return self
 
@@ -304,6 +312,7 @@ class UserProfileResponse(UserProfile):
 #   - Validação: "nenhuma" não pode aparecer com outras metas
 #   - Validação: sonho "outro" exige descrição
 #   - Validação: dream_value e next_year_goal_value em centavos
+#   - ✅ CORRIGIDO: next_year_goal_value só é obrigatório se houver metas ativas
 #   - I18n completo com chaves de erro
 #   - Schemas separados (Create, Response)
 #
@@ -314,5 +323,6 @@ class UserProfileResponse(UserProfile):
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
 #   - v2: Refatoração - Herança de BaseModelWithUser e AuditMixin (03/07/2026)
+#   - v3: Correção - next_year_goal_value só obrigatório se houver metas ativas (04/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
