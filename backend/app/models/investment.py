@@ -21,7 +21,7 @@ Principais features:
 
 from datetime import datetime, timezone
 from typing import Optional, Literal, Any
-from pydantic import Field, computed_field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator  # ← ADICIONAR BaseModel
 
 from app.models.base import BaseModelWithUser
 from app.models.mixins import AmountMixin

@@ -11,10 +11,11 @@ Principais features:
 - Verificação de instância para evitar loops
 - Delegação para a função centralizada do validators.py
 """
-
+from pydantic import model_validator  # ← ADICIONAR (se não tiver)
 from typing import Any
 
 from app.utils.validators import convert_objectid_to_str
+
 
 
 class ObjectIdMixin:
