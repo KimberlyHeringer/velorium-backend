@@ -18,6 +18,7 @@ Principais features:
 - ✅ CORRIGIDO: NÃO herda user_id (User é o próprio dono)
 - ✅ CORRIGIDO: Campos opcionais no UserCreate
 - ✅ CORRIGIDO: UserResponse herda de User
+- ✅ CORRIGIDO: password_hash excluído do UserResponse
 """
 
 from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
@@ -308,17 +309,23 @@ class UserResponse(User):
     """
     Schema para RESPOSTA da API (dados públicos).
     
-    🔧 ✅ CORRIGIDO: Herda de User, eliminando duplicação de campos.
+    🔧 ✅ CORRIGIDO: Exclui password_hash da resposta.
     
     🔧 DIFERENÇAS DO MODEL USER:
       - id é obrigatório (já existe no banco)
       - Não tem password_hash (campo sensível)
-      - Não tem campos de auditoria interna
+      - location, occupation, financial_goal são opcionais (caso não preenchidos)
     """
     
     id: str = Field(..., alias="_id", description="ID do usuário")
     
-    # Todos os outros campos são herdados de User
+    # 🔧 EXCLUI PASSWORD_HASH DA RESPOSTA
+    password_hash: None = None
+    
+    # 🔧 Torna campos opcionais para evitar erro se o usuário não preencheu
+    location: Optional[str] = None
+    occupation: Optional[str] = None
+    financial_goal: Optional[str] = None
 
 
 class Token(BaseModel):
@@ -429,6 +436,8 @@ class UserUpdate(BaseModel):
 #   - Validação de senha (3/4 critérios)
 #   - ✅ CORRIGIDO: Campos opcionais no UserCreate (location, occupation, financial_goal)
 #   - ✅ CORRIGIDO: UserResponse herda de User (elimina duplicação)
+#   - ✅ CORRIGIDO: password_hash excluído do UserResponse
+#   - ✅ CORRIGIDO: location, occupation, financial_goal opcionais no UserResponse
 #   - Consentimento LGPD com rastreamento
 #   - I18n completo com chaves de erro
 #   - Schemas separados (Create, Update, Response, Login, Token)
@@ -442,5 +451,6 @@ class UserUpdate(BaseModel):
 #   - v1: Versão inicial
 #   - v2: Refatoração - Herança de BaseModelWithUser e AuditMixin (03/07/2026)
 #   - v3: Correções - BaseModelWithoutUser, campos opcionais, UserResponse herda de User (03/07/2026)
+#   - v4: Correção - password_hash excluído do UserResponse, campos opcionais (04/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
