@@ -133,6 +133,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "IA_TIMEOUT": "IA demorou muito para responder",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar feedback, você precisa aceitar o consentimento de pesquisa. Acesse Configurações > Consentimento.",
         
+        # ============================================================
+        # 🆕 IA SERVICE - NOVAS CHAVES
+        # ============================================================
+        "IA_ERROR_GENERIC": "Desculpe, ocorreu um erro ao processar sua pergunta. Tente novamente mais tarde.",
+        "IA_ERROR_TIMEOUT": "A resposta está demorando mais que o esperado. Tente novamente em alguns instantes.",
+        "IA_OUT_OF_SCOPE": "Desculpe, só posso ajudar com perguntas sobre finanças pessoais. Posso ajudar com economia, investimentos ou planejamento financeiro?",
+        "IA_CACHE_HIT": "Usando resposta em cache",
+        
         # ---------- Transações ----------
         "ERROR_INSUFFICIENT_LIMIT": "Limite insuficiente. Disponível: R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "Transação não encontrada.",
@@ -303,6 +311,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_AUDIT_NOT_FOUND": "Interaction not found.",
         "IA_TIMEOUT": "AI took too long to respond",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "To send feedback, you need to accept the research consent. Go to Settings > Consent.",
+        
+        # ============================================================
+        # 🆕 IA SERVICE - NEW KEYS
+        # ============================================================
+        "IA_ERROR_GENERIC": "Sorry, an error occurred while processing your question. Please try again later.",
+        "IA_ERROR_TIMEOUT": "The response is taking longer than expected. Please try again in a moment.",
+        "IA_OUT_OF_SCOPE": "Sorry, I can only help with questions about personal finances. Can I help with savings, investments or financial planning?",
+        "IA_CACHE_HIT": "Using cached response",
         
         # ---------- Transactions ----------
         "ERROR_INSUFFICIENT_LIMIT": "Insufficient limit. Available: R$ {available:.2f}",
@@ -475,6 +491,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "IA_TIMEOUT": "La IA tardó demasiado en responder",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar comentarios, debe aceptar el consentimiento de investigación. Vaya a Configuración > Consentimiento.",
         
+        # ============================================================
+        # 🆕 IA SERVICE - NUEVAS CLAVES
+        # ============================================================
+        "IA_ERROR_GENERIC": "Lo sentimos, ocurrió un error al procesar tu pregunta. Por favor, intenta de nuevo más tarde.",
+        "IA_ERROR_TIMEOUT": "La respuesta está tardando más de lo esperado. Intenta de nuevo en unos instantes.",
+        "IA_OUT_OF_SCOPE": "Lo siento, solo puedo ayudar con preguntas sobre finanzas personales. ¿Puedo ayudar con ahorros, inversiones o planificación financiera?",
+        "IA_CACHE_HIT": "Usando respuesta en caché",
+        
         # ---------- Transacciones ----------
         "ERROR_INSUFFICIENT_LIMIT": "Límite insuficiente. Disponible: R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "Transacción no encontrada.",
@@ -646,6 +670,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "IA_TIMEOUT": "AI响应超时",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "要发送反馈，您需要接受研究同意。前往设置 > 同意。",
         
+        # ============================================================
+        # 🆕 IA SERVICE - 新键
+        # ============================================================
+        "IA_ERROR_GENERIC": "抱歉，处理您的问题时出错。请稍后再试。",
+        "IA_ERROR_TIMEOUT": "响应时间超过预期。请稍后再试。",
+        "IA_OUT_OF_SCOPE": "抱歉，我只能帮助回答有关个人财务的问题。我可以帮助储蓄、投资或财务规划吗？",
+        "IA_CACHE_HIT": "使用缓存响应",
+        
         # ---------- 交易 ----------
         "ERROR_INSUFFICIENT_LIMIT": "额度不足。可用：R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "未找到交易。",
@@ -791,5 +823,6 @@ def get_supported_languages() -> list:
 #   - score.py ✅
 #   - transactions.py ✅
 #   - user.py ✅ (preventivo)
+#   - 🆕 IA Service: IA_ERROR_GENERIC, IA_ERROR_TIMEOUT, IA_OUT_OF_SCOPE, IA_CACHE_HIT ✅
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

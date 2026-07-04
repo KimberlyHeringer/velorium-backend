@@ -24,11 +24,12 @@ Facilita manutenção e evita duplicação.
     - Delete Token (DELETE_TOKEN_EXPIRY_HOURS)
     - Transações (PAYMENT_METHOD_CREDIT_CARD)
     - Categorias de contas a pagar (CATEGORIA_BILLS)
+    - IA (GROQ_DEFAULT_MODEL, IA_TIMEOUT_SECONDS, IA_MAX_TOKENS, IA_TEMPERATURE, IA_CACHE_MAX_SIZE)  # 🆕 ADICIONADO
 """
 
 import os
 import logging
-from typing import Literal  # ← ADICIONADO
+from typing import Literal
 
 # ========== CONFIGURAÇÃO DE LOG ==========
 logger = logging.getLogger(__name__)
@@ -126,6 +127,24 @@ BALANCE_CACHE_TTL_SECONDS = 300  # 5 minutos
 # ================================================================
 
 CACHE_TTL_SECONDS = 3600  # 1 hora
+IA_CACHE_MAX_SIZE = 1000  # Número máximo de entradas no cache
+
+
+# ================================================================
+# IA (Groq) - 🆕 ADICIONADO
+# ================================================================
+
+GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+"""Modelo padrão da Groq. Pode ser sobrescrito via .env."""
+
+IA_TIMEOUT_SECONDS = int(os.getenv("IA_TIMEOUT_SECONDS", "30"))
+"""Timeout para chamadas à API da Groq em segundos."""
+
+IA_MAX_TOKENS = int(os.getenv("IA_MAX_TOKENS", "300"))
+"""Número máximo de tokens na resposta da IA."""
+
+IA_TEMPERATURE = float(os.getenv("IA_TEMPERATURE", "0.3"))
+"""Temperatura para respostas da IA (0.0 = mais direta, 1.0 = mais criativa)."""
 
 
 # ================================================================
@@ -159,7 +178,7 @@ PAYMENT_METHOD_CREDIT_CARD = "cartao_credito"
 
 
 # ================================================================
-# CATEGORIAS DE CONTAS A PAGAR (BILLS)  ← NOVO
+# CATEGORIAS DE CONTAS A PAGAR (BILLS)
 # ================================================================
 
 CATEGORIA_BILLS = Literal[
@@ -185,5 +204,10 @@ CATEGORIA_BILLS = Literal[
 # ✅ CATEGORIA_BILLS adicionado (corrige ImportError no bill.py)
 # ✅ BALANCE_CACHE_TTL_SECONDS já existente
 # ✅ CACHE_TTL_SECONDS já existente
+# ✅ 🆕 GROQ_DEFAULT_MODEL adicionado (configurável via .env)
+# ✅ 🆕 IA_TIMEOUT_SECONDS adicionado (configurável via .env)
+# ✅ 🆕 IA_MAX_TOKENS adicionado (configurável via .env)
+# ✅ 🆕 IA_TEMPERATURE adicionado (configurável via .env)
+# ✅ 🆕 IA_CACHE_MAX_SIZE adicionado
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

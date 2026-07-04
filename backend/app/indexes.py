@@ -21,6 +21,7 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para transactions (user_id + context + date, user_id + date + type, user_id + category)
 - 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
 - 🆕 NOVO: Índices para delete_requests (user_id)
+- 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
 """
 
 from app.utils.logger import setup_logger
@@ -43,10 +44,8 @@ async def create_indexes(db):
     # 1. USUÁRIOS
     # ================================================================
     try:
-        # 🔧 CORRIGIDO: Verifica se o índice já existe antes de criar
         existing_indexes = await db.users.index_information()
         
-        # Se o índice já existe com nome "email_1", remove para recriar com collation
         if "email_1" in existing_indexes:
             try:
                 await db.users.drop_index("email_1")
@@ -54,7 +53,6 @@ async def create_indexes(db):
             except Exception as drop_error:
                 logger.warning(f"⚠️ Não foi possível remover índice email_1: {drop_error}")
         
-        # Cria o índice com collation
         await db.users.create_index(
             [("email", 1)],
             unique=True,
@@ -85,7 +83,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 3. CONTAS A PAGAR (BILLS) - ATUALIZADO
+    # 3. CONTAS A PAGAR (BILLS)
     # ================================================================
     indexes = [
         ("bills", [("user_id", 1), ("paid", 1)]),
@@ -153,7 +151,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 8. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES) - ATUALIZADO
+    # 8. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES)
     # ================================================================
     indexes = [
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1)]),
@@ -265,7 +263,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice reset_token_expires: {e}", exc_info=True)
     
     # ================================================================
-    # 15. LOGS DE AUDITORIA DA IA (IA_AUDIT_LOGS) 🆕
+    # 15. LOGS DE AUDITORIA DA IA (IA_AUDIT_LOGS)
     # ================================================================
     try:
         await db.ia_audit_logs.create_index(
@@ -276,7 +274,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice ia_audit_logs: {e}", exc_info=True)
     
     # ================================================================
-    # 16. FEEDBACK DA IA (IA_FEEDBACK) 🆕
+    # 16. FEEDBACK DA IA (IA_FEEDBACK)
     # ================================================================
     try:
         await db.ia_feedback.create_index([("audit_id", 1)])
@@ -297,7 +295,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice ia_feedback.created_at: {e}", exc_info=True)
     
     # ================================================================
-    # 17. HISTÓRICO DE CHAT DA IA (CHAT_HISTORY) 🆕
+    # 17. HISTÓRICO DE CHAT DA IA (CHAT_HISTORY)
     # ================================================================
     try:
         await db.chat_history.create_index(
@@ -308,7 +306,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice chat_history: {e}", exc_info=True)
     
     # ================================================================
-    # 18. INVESTIMENTOS (INVESTMENTS) 🆕
+    # 18. INVESTIMENTOS (INVESTMENTS)
     # ================================================================
     try:
         await db.investments.create_index(
@@ -335,7 +333,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice investments.user_id + created_at: {e}", exc_info=True)
     
     # ================================================================
-    # 19. LOGS DE NOTIFICAÇÕES (NOTIFICATION_LOGS) 🆕
+    # 19. LOGS DE NOTIFICAÇÕES (NOTIFICATION_LOGS)
     # ================================================================
     try:
         await db.notification_logs.create_index([
@@ -356,7 +354,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice notification_logs.type + sent_at: {e}", exc_info=True)
     
     # ================================================================
-    # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS) 🆕
+    # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS)
     # ================================================================
     try:
         await db.delete_tokens.create_index(
@@ -377,7 +375,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice delete_tokens.token: {e}", exc_info=True)
     
     # ================================================================
-    # 21. SOLICITAÇÕES DE EXCLUSÃO (DELETE_REQUESTS) 🆕
+    # 21. SOLICITAÇÕES DE EXCLUSÃO (DELETE_REQUESTS)
     # ================================================================
     try:
         await db.delete_requests.create_index(
@@ -386,6 +384,34 @@ async def create_indexes(db):
         logger.info("✅ Índice delete_requests.user_id criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice delete_requests.user_id: {e}", exc_info=True)
+    
+    # ================================================================
+    # 22. MÉTRICAS DA IA (IA_METRICS) 🆕
+    # ================================================================
+    try:
+        await db.ia_metrics.create_index([
+            ("user_id", 1),
+            ("timestamp", -1)
+        ])
+        logger.info("✅ Índice ia_metrics.user_id + timestamp criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice ia_metrics.user_id + timestamp: {e}", exc_info=True)
+    
+    try:
+        await db.ia_metrics.create_index(
+            ("timestamp", -1)
+        )
+        logger.info("✅ Índice ia_metrics.timestamp criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice ia_metrics.timestamp: {e}", exc_info=True)
+    
+    try:
+        await db.ia_metrics.create_index(
+            ("user_id", 1)
+        )
+        logger.info("✅ Índice ia_metrics.user_id criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice ia_metrics.user_id: {e}", exc_info=True)
     
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
@@ -415,5 +441,6 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para transactions
 # ✅ 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
 # ✅ 🆕 NOVO: Índices para delete_requests (user_id)
+# ✅ 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
