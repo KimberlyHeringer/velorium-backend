@@ -20,7 +20,7 @@ Principais features:
 - ✅ CORRIGIDO: UserResponse herda de User
 """
 
-from pydantic import Field, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from typing import Optional, Literal, Any
 from datetime import datetime, timezone
 import re
