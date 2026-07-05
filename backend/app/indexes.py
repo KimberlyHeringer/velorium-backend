@@ -22,6 +22,7 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
 - 🆕 NOVO: Índices para delete_requests (user_id)
 - 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
+- 🆕 NOVO: Índice TTL para score_cache (cached_at)
 """
 
 from app.utils.logger import setup_logger
@@ -386,7 +387,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice delete_requests.user_id: {e}", exc_info=True)
     
     # ================================================================
-    # 22. MÉTRICAS DA IA (IA_METRICS) 🆕
+    # 22. MÉTRICAS DA IA (IA_METRICS)
     # ================================================================
     try:
         await db.ia_metrics.create_index([
@@ -412,6 +413,18 @@ async def create_indexes(db):
         logger.info("✅ Índice ia_metrics.user_id criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice ia_metrics.user_id: {e}", exc_info=True)
+    
+    # ================================================================
+    # 23. CACHE DE SCORE (SCORE_CACHE) 🆕
+    # ================================================================
+    try:
+        await db.score_cache.create_index(
+            [("cached_at", 1)],
+            expireAfterSeconds=3600  # 1 hora
+        )
+        logger.info("✅ Índice TTL para score_cache.cached_at criado (1 hora)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice score_cache.cached_at: {e}", exc_info=True)
     
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
@@ -442,5 +455,6 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
 # ✅ 🆕 NOVO: Índices para delete_requests (user_id)
 # ✅ 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
+# ✅ 🆕 NOVO: Índice TTL para score_cache (cached_at)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

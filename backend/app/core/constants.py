@@ -24,7 +24,8 @@ Facilita manutenção e evita duplicação.
     - Delete Token (DELETE_TOKEN_EXPIRY_HOURS)
     - Transações (PAYMENT_METHOD_CREDIT_CARD)
     - Categorias de contas a pagar (CATEGORIA_BILLS)
-    - IA (GROQ_DEFAULT_MODEL, IA_TIMEOUT_SECONDS, IA_MAX_TOKENS, IA_TEMPERATURE, IA_CACHE_MAX_SIZE)  # 🆕 ADICIONADO
+    - IA (GROQ_DEFAULT_MODEL, IA_TIMEOUT_SECONDS, IA_MAX_TOKENS, IA_TEMPERATURE, IA_CACHE_MAX_SIZE)
+    - Anonimizer (SCORE_RANGES, EXPENSE_RANGES)  # 🆕 ADICIONADO
 """
 
 import os
@@ -110,7 +111,7 @@ MAX_INSTALLMENTS_DAYS_WARNING = 3
 # SCORE
 # ================================================================
 
-SCORE_CACHE_TTL_SECONDS = 86400  # 24 horas
+SCORE_CACHE_TTL_SECONDS = 3600  # 1 hora
 SLOW_THRESHOLD = 2.0  # Segundos para considerar cálculo lento
 MAX_RETRIES = 3  # Número máximo de tentativas no worker
 
@@ -131,7 +132,7 @@ IA_CACHE_MAX_SIZE = 1000  # Número máximo de entradas no cache
 
 
 # ================================================================
-# IA (Groq) - 🆕 ADICIONADO
+# IA (Groq)
 # ================================================================
 
 GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -145,6 +146,29 @@ IA_MAX_TOKENS = int(os.getenv("IA_MAX_TOKENS", "300"))
 
 IA_TEMPERATURE = float(os.getenv("IA_TEMPERATURE", "0.3"))
 """Temperatura para respostas da IA (0.0 = mais direta, 1.0 = mais criativa)."""
+
+
+# ================================================================
+# ANONIMIZER - FAIXAS  # 🆕 ADICIONADO
+# ================================================================
+
+SCORE_RANGES = [
+    {"min": 0, "max": 20, "label": "0-20", "label_key": "SCORE_RANGE_0_20"},
+    {"min": 20, "max": 40, "label": "20-40", "label_key": "SCORE_RANGE_20_40"},
+    {"min": 40, "max": 60, "label": "40-60", "label_key": "SCORE_RANGE_40_60"},
+    {"min": 60, "max": 80, "label": "60-80", "label_key": "SCORE_RANGE_60_80"},
+    {"min": 80, "max": 101, "label": "80-100", "label_key": "SCORE_RANGE_80_100"},
+]
+"""Faixas para conversão de score numérico em categoria."""
+
+EXPENSE_RANGES = [
+    {"min": 0, "max": 100, "label": "0-100", "label_key": "EXPENSE_RANGE_0_100"},
+    {"min": 100, "max": 500, "label": "100-500", "label_key": "EXPENSE_RANGE_100_500"},
+    {"min": 500, "max": 1000, "label": "500-1000", "label_key": "EXPENSE_RANGE_500_1000"},
+    {"min": 1000, "max": 5000, "label": "1000-5000", "label_key": "EXPENSE_RANGE_1000_5000"},
+    {"min": 5000, "max": float('inf'), "label": "5000+", "label_key": "EXPENSE_RANGE_5000_PLUS"},
+]
+"""Faixas para conversão de gasto em categoria."""
 
 
 # ================================================================
@@ -204,10 +228,12 @@ CATEGORIA_BILLS = Literal[
 # ✅ CATEGORIA_BILLS adicionado (corrige ImportError no bill.py)
 # ✅ BALANCE_CACHE_TTL_SECONDS já existente
 # ✅ CACHE_TTL_SECONDS já existente
-# ✅ 🆕 GROQ_DEFAULT_MODEL adicionado (configurável via .env)
-# ✅ 🆕 IA_TIMEOUT_SECONDS adicionado (configurável via .env)
-# ✅ 🆕 IA_MAX_TOKENS adicionado (configurável via .env)
-# ✅ 🆕 IA_TEMPERATURE adicionado (configurável via .env)
-# ✅ 🆕 IA_CACHE_MAX_SIZE adicionado
+# ✅ GROQ_DEFAULT_MODEL adicionado (configurável via .env)
+# ✅ IA_TIMEOUT_SECONDS adicionado (configurável via .env)
+# ✅ IA_MAX_TOKENS adicionado (configurável via .env)
+# ✅ IA_TEMPERATURE adicionado (configurável via .env)
+# ✅ IA_CACHE_MAX_SIZE adicionado
+# ✅ 🆕 SCORE_RANGES adicionado (faixas de score para anonimização)
+# ✅ 🆕 EXPENSE_RANGES adicionado (faixas de gasto para anonimização)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
