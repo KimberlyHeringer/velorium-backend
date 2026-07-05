@@ -43,20 +43,26 @@ em todas as rotas do sistema.
     - TTL automático
     - Limite de entradas (MAX_HISTORY_ENTRIES)
     - Validações robustas
+    - 🔧 CORRIGIDO: Suporte a collection como string
+    - 🔧 CORRIGIDO: Verificação db.credit_cards
+    - 🔧 CORRIGIDO: Validação de user_id
+    - 🔧 CORRIGIDO: Verificação db is None
+    - 🔧 CORRIGIDO: i18n nos logs
 """
 
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 
 from app.core.constants import MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS
 from app.utils.logger import setup_logger
+from app.utils.i18n import get_message
 
 logger = setup_logger(__name__)
 
 
 async def add_audit_history(
-    collection,
+    collection: Union[str, Any],
     doc_id: str,
     action: str,
     user_id: str,
@@ -67,7 +73,7 @@ async def add_audit_history(
     Adiciona entrada no histórico de auditoria de qualquer documento.
     
     Args:
-        collection: Coleção do MongoDB
+        collection: Coleção do MongoDB (objeto ou nome da coleção como string)
         doc_id: ID do documento
         action: Ação realizada (create, update, delete, pay, unpay, etc.)
         user_id: ID do usuário que realizou a ação
@@ -87,7 +93,7 @@ async def add_audit_history(
         )
         
         await add_audit_history(
-            db.credit_cards,
+            "credit_cards",  # ← Suporte a string
             card_id,
             "create",
             str(current_user.id),
@@ -96,18 +102,35 @@ async def add_audit_history(
         )
     """
     # ========== Validações ==========
+    
+    # 🔧 CORRIGIDO: Se collection for string, busca a coleção
+    if isinstance(collection, str):
+        from app.database import get_database
+        db = get_database()
+        collection = db[collection]
+    
     if collection is None:
-        logger.error("❌ Collection não pode ser None em add_audit_history")
+        logger.error(f"❌ {get_message('AUDIT_COLLECTION_NONE', 'pt')}")
         return
     
     if not doc_id:
-        logger.error("❌ doc_id não pode ser vazio em add_audit_history")
+        logger.error(f"❌ {get_message('AUDIT_DOC_ID_EMPTY', 'pt')}")
         return
     
     try:
         ObjectId(doc_id)
     except Exception as e:
-        logger.error(f"❌ doc_id inválido em add_audit_history: {doc_id} - {e}")
+        logger.error(f"❌ {get_message('AUDIT_DOC_ID_INVALID', 'pt')}: {doc_id} - {e}")
+        return
+    
+    if not user_id:
+        logger.error(f"❌ {get_message('AUDIT_USER_ID_EMPTY', 'pt')}")
+        return
+    
+    try:
+        ObjectId(user_id)
+    except Exception as e:
+        logger.error(f"❌ {get_message('AUDIT_USER_ID_INVALID', 'pt')}: {user_id} - {e}")
         return
     
     if not details:
@@ -138,7 +161,7 @@ async def add_audit_history(
             }
         )
     except Exception as e:
-        logger.error(f"❌ Erro ao adicionar histórico de auditoria: {e}")
+        logger.error(f"❌ {get_message('AUDIT_ERROR_SAVING', 'pt')}: {e}")
 
 
 async def add_limit_history(
@@ -170,6 +193,16 @@ async def add_limit_history(
             "Atualização manual"
         )
     """
+    # 🔧 CORRIGIDO: Verifica se db é None
+    if db is None:
+        logger.error(f"❌ {get_message('AUDIT_DB_NONE', 'pt')}")
+        return
+    
+    # 🔧 CORRIGIDO: Verifica se a coleção credit_cards existe
+    if not hasattr(db, "credit_cards"):
+        logger.error(f"❌ Coleção credit_cards não encontrada")
+        return
+    
     details = {
         "old_limit": old_limit,
         "new_limit": new_limit,
@@ -195,7 +228,7 @@ async def add_audit_log(
     details: dict
 ) -> str:
     """
-    🆕 Adiciona entrada no log de auditoria da IA.
+    Adiciona entrada no log de auditoria da IA.
     Retorna o ID do log para referência.
     
     Args:
@@ -215,15 +248,99 @@ async def add_audit_log(
             {"question": chat_request.pergunta}
         )
     """
-    log_entry = {
-        "user_id": user_id,
-        "action": action,
-        "details": details,
-        "created_at": datetime.now(timezone.utc)
-    }
+    # 🔧 CORRIGIDO: Verificação db is None
+    if db is None:
+        logger.error(f"❌ {get_message('AUDIT_DB_NONE', 'pt')}")
+        return ""
     
-    result = await db.ia_audit_logs.insert_one(log_entry)
-    return str(result.inserted_id)
+    # 🔧 CORRIGIDO: Validação de user_id
+    if not user_id:
+        logger.error(f"❌ {get_message('AUDIT_USER_ID_EMPTY', 'pt')}")
+        return ""
+    
+    try:
+        ObjectId(user_id)
+    except Exception as e:
+        logger.error(f"❌ {get_message('AUDIT_USER_ID_INVALID', 'pt')}: {user_id} - {e}")
+        return ""
+    
+    if not details:
+        details = {"action": action, "timestamp": datetime.now(timezone.utc).isoformat()}
+    
+    try:
+        log_entry = {
+            "user_id": user_id,
+            "action": action,
+            "details": details,
+            "created_at": datetime.now(timezone.utc)
+        }
+        
+        result = await db.ia_audit_logs.insert_one(log_entry)
+        logger.debug(f"📝 Log de auditoria adicionado: {result.inserted_id}")
+        return str(result.inserted_id)
+    except Exception as e:
+        logger.error(f"❌ {get_message('AUDIT_ERROR_SAVING', 'pt')}: {e}")
+        return ""
+
+
+# ========== FUNÇÕES AUXILIARES (PÓS-MVP) ==========
+
+async def get_audit_history(
+    db,
+    doc_id: str,
+    collection_name: str,
+    page: int = 1,
+    limit: int = 20
+) -> list:
+    """
+    🔧 Pós-MVP: Busca histórico com paginação.
+    
+    Args:
+        db: Conexão com o banco de dados
+        doc_id: ID do documento
+        collection_name: Nome da coleção
+        page: Número da página
+        limit: Itens por página
+    
+    Returns:
+        list: Histórico paginado
+    """
+    collection = db[collection_name]
+    doc = await collection.find_one({"_id": ObjectId(doc_id)})
+    if not doc:
+        return []
+    
+    history = doc.get("history", [])
+    start = (page - 1) * limit
+    end = start + limit
+    return history[start:end]
+
+
+async def get_audit_history_by_action(
+    db,
+    doc_id: str,
+    collection_name: str,
+    action: str
+) -> list:
+    """
+    🔧 Pós-MVP: Busca histórico filtrado por ação.
+    
+    Args:
+        db: Conexão com o banco de dados
+        doc_id: ID do documento
+        collection_name: Nome da coleção
+        action: Ação a filtrar
+    
+    Returns:
+        list: Histórico filtrado
+    """
+    collection = db[collection_name]
+    doc = await collection.find_one({"_id": ObjectId(doc_id)})
+    if not doc:
+        return []
+    
+    history = doc.get("history", [])
+    return [h for h in history if h.get("action") == action]
 
 
 # ========== DECISÕES DOCUMENTADAS ==========
@@ -236,8 +353,23 @@ async def add_audit_log(
 # ✅ Logs estruturados
 # ✅ Função específica para limite de cartões (add_limit_history)
 # ✅ Função específica para IA (add_audit_log)
-# ✅ 🔧 CORRIGIDO: history_field agora é usado corretamente
-# ✅ 🔧 CORRIGIDO: add_limit_history agora existe no módulo
-# ✅ 🆕 add_audit_log adicionado para IA
+# ✅ 🔧 CORRIGIDO: Suporte a collection como string
+# ✅ 🔧 CORRIGIDO: Verificação db.credit_cards
+# ✅ 🔧 CORRIGIDO: Validação de user_id
+# ✅ 🔧 CORRIGIDO: Verificação db is None
+# ✅ 🔧 CORRIGIDO: i18n nos logs
+# ✅ 🔧 CORRIGIDO: add_audit_log com validações
+# ✅ 🆕 Função get_audit_history (pós-MVP)
+# ✅ 🆕 Função get_audit_history_by_action (pós-MVP)
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Buscar histórico paginado
+#   - Buscar histórico por ação
+#   - Filtrar histórico por data
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Refatoração com validações, i18n, db None (04/07/2026)
+#   - v3: Correções - collection como string, db.credit_cards (04/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
