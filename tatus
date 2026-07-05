@@ -1,0 +1,129 @@
+[1mdiff --git a/backend/app/core/constants.py b/backend/app/core/constants.py[m
+[1mindex 32f2fa5..4b42b43 100644[m
+[1m--- a/backend/app/core/constants.py[m
+[1m+++ b/backend/app/core/constants.py[m
+[36m@@ -24,7 +24,8 @@[m [mFacilita manutenção e evita duplicação.[m
+     - Delete Token (DELETE_TOKEN_EXPIRY_HOURS)[m
+     - Transações (PAYMENT_METHOD_CREDIT_CARD)[m
+     - Categorias de contas a pagar (CATEGORIA_BILLS)[m
+[31m-    - IA (GROQ_DEFAULT_MODEL, IA_TIMEOUT_SECONDS, IA_MAX_TOKENS, IA_TEMPERATURE, IA_CACHE_MAX_SIZE)  # 🆕 ADICIONADO[m
+[32m+[m[32m    - IA (GROQ_DEFAULT_MODEL, IA_TIMEOUT_SECONDS, IA_MAX_TOKENS, IA_TEMPERATURE, IA_CACHE_MAX_SIZE)[m
+[32m+[m[32m    - Anonimizer (SCORE_RANGES, EXPENSE_RANGES)  # 🆕 ADICIONADO[m
+ """[m
+ [m
+ import os[m
+[36m@@ -110,7 +111,7 @@[m [mMAX_INSTALLMENTS_DAYS_WARNING = 3[m
+ # SCORE[m
+ # ================================================================[m
+ [m
+[31m-SCORE_CACHE_TTL_SECONDS = 86400  # 24 horas[m
+[32m+[m[32mSCORE_CACHE_TTL_SECONDS = 3600  # 1 hora[m
+ SLOW_THRESHOLD = 2.0  # Segundos para considerar cálculo lento[m
+ MAX_RETRIES = 3  # Número máximo de tentativas no worker[m
+ [m
+[36m@@ -131,7 +132,7 @@[m [mIA_CACHE_MAX_SIZE = 1000  # Número máximo de entradas no cache[m
+ [m
+ [m
+ # ================================================================[m
+[31m-# IA (Groq) - 🆕 ADICIONADO[m
+[32m+[m[32m# IA (Groq)[m
+ # ================================================================[m
+ [m
+ GROQ_DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")[m
+[36m@@ -147,6 +148,29 @@[m [mIA_TEMPERATURE = float(os.getenv("IA_TEMPERATURE", "0.3"))[m
+ """Temperatura para respostas da IA (0.0 = mais direta, 1.0 = mais criativa)."""[m
+ [m
+ [m
+[32m+[m[32m# ================================================================[m
+[32m+[m[32m# ANONIMIZER - FAIXAS  # 🆕 ADICIONADO[m
+[32m+[m[32m# ================================================================[m
+[32m+[m
+[32m+[m[32mSCORE_RANGES = [[m
+[32m+[m[32m    {"min": 0, "max": 20, "label": "0-20", "label_key": "SCORE_RANGE_0_20"},[m
+[32m+[m[32m    {"min": 20, "max": 40, "label": "20-40", "label_key": "SCORE_RANGE_20_40"},[m
+[32m+[m[32m    {"min": 40, "max": 60, "label": "40-60", "label_key": "SCORE_RANGE_40_60"},[m
+[32m+[m[32m    {"min": 60, "max": 80, "label": "60-80", "label_key": "SCORE_RANGE_60_80"},[m
+[32m+[m[32m    {"min": 80, "max": 101, "label": "80-100", "label_key": "SCORE_RANGE_80_100"},[m
+[32m+[m[32m][m
+[32m+[m[32m"""Faixas para conversão de score numérico em categoria."""[m
+[32m+[m
+[32m+[m[32mEXPENSE_RANGES = [[m
+[32m+[m[32m    {"min": 0, "max": 100, "label": "0-100", "label_key": "EXPENSE_RANGE_0_100"},[m
+[32m+[m[32m    {"min": 100, "max": 500, "label": "100-500", "label_key": "EXPENSE_RANGE_100_500"},[m
+[32m+[m[32m    {"min": 500, "max": 1000, "label": "500-1000", "label_key": "EXPENSE_RANGE_500_1000"},[m
+[32m+[m[32m    {"min": 1000, "max": 5000, "label": "1000-5000", "label_key": "EXPENSE_RANGE_1000_5000"},[m
+[32m+[m[32m    {"min": 5000, "max": float('inf'), "label": "5000+", "label_key": "EXPENSE_RANGE_5000_PLUS"},[m
+[32m+[m[32m][m
+[32m+[m[32m"""Faixas para conversão de gasto em categoria."""[m
+[32m+[m
+[32m+[m
+ # ================================================================[m
+ # CSV EXPORT[m
+ # ================================================================[m
+[36m@@ -204,10 +228,12 @@[m [mCATEGORIA_BILLS = Literal[[m
+ # ✅ CATEGORIA_BILLS adicionado (corrige ImportError no bill.py)[m
+ # ✅ BALANCE_CACHE_TTL_SECONDS já existente[m
+ # ✅ CACHE_TTL_SECONDS já existente[m
+[31m-# ✅ 🆕 GROQ_DEFAULT_MODEL adicionado (configurável via .env)[m
+[31m-# ✅ 🆕 IA_TIMEOUT_SECONDS adicionado (configurável via .env)[m
+[31m-# ✅ 🆕 IA_MAX_TOKENS adicionado (configurável via .env)[m
+[31m-# ✅ 🆕 IA_TEMPERATURE adicionado (configurável via .env)[m
+[31m-# ✅ 🆕 IA_CACHE_MAX_SIZE adicionado[m
+[32m+[m[32m# ✅ GROQ_DEFAULT_MODEL adicionado (configurável via .env)[m
+[32m+[m[32m# ✅ IA_TIMEOUT_SECONDS adicionado (configurável via .env)[m
+[32m+[m[32m# ✅ IA_MAX_TOKENS adicionado (configurável via .env)[m
+[32m+[m[32m# ✅ IA_TEMPERATURE adicionado (configurável via .env)[m
+[32m+[m[32m# ✅ IA_CACHE_MAX_SIZE adicionado[m
+[32m+[m[32m# ✅ 🆕 SCORE_RANGES adicionado (faixas de score para anonimização)[m
+[32m+[m[32m# ✅ 🆕 EXPENSE_RANGES adicionado (faixas de gasto para anonimização)[m
+ #[m
+ # ✅ STATUS: PRONTO PARA PRODUÇÃO[m
+\ No newline at end of file[m
+[1mdiff --git a/backend/app/indexes.py b/backend/app/indexes.py[m
+[1mindex 0b83713..d5566f4 100644[m
+[1m--- a/backend/app/indexes.py[m
+[1m+++ b/backend/app/indexes.py[m
+[36m@@ -22,6 +22,7 @@[m [mArquivo: backend/app/indexes.py[m
+ - 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)[m
+ - 🆕 NOVO: Índices para delete_requests (user_id)[m
+ - 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)[m
+[32m+[m[32m- 🆕 NOVO: Índice TTL para score_cache (cached_at)[m
+ """[m
+ [m
+ from app.utils.logger import setup_logger[m
+[36m@@ -386,7 +387,7 @@[m [masync def create_indexes(db):[m
+         logger.warning(f"⚠️ Índice delete_requests.user_id: {e}", exc_info=True)[m
+     [m
+     # ================================================================[m
+[31m-    # 22. MÉTRICAS DA IA (IA_METRICS) 🆕[m
+[32m+[m[32m    # 22. MÉTRICAS DA IA (IA_METRICS)[m
+     # ================================================================[m
+     try:[m
+         await db.ia_metrics.create_index([[m
+[36m@@ -413,6 +414,18 @@[m [masync def create_indexes(db):[m
+     except Exception as e:[m
+         logger.warning(f"⚠️ Índice ia_metrics.user_id: {e}", exc_info=True)[m
+     [m
+[32m+[m[32m    # ================================================================[m
+[32m+[m[32m    # 23. CACHE DE SCORE (SCORE_CACHE) 🆕[m
+[32m+[m[32m    # ================================================================[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        await db.score_cache.create_index([m
+[32m+[m[32m            [("cached_at", 1)],[m
+[32m+[m[32m            expireAfterSeconds=3600  # 1 hora[m
+[32m+[m[32m        )[m
+[32m+[m[32m        logger.info("✅ Índice TTL para score_cache.cached_at criado (1 hora)")[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logger.warning(f"⚠️ Índice score_cache.cached_at: {e}", exc_info=True)[m
+[32m+[m[41m    [m
+     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")[m
+ [m
+ [m
+[36m@@ -442,5 +455,6 @@[m [masync def create_indexes(db):[m
+ # ✅ 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)[m
+ # ✅ 🆕 NOVO: Índices para delete_requests (user_id)[m
+ # ✅ 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)[m
+[32m+[m[32m# ✅ 🆕 NOVO: Índice TTL para score_cache (cached_at)[m
+ #[m
+ # ✅ STATUS: PRONTO PARA PRODUÇÃO[m
+\ No newline at end of file[m
