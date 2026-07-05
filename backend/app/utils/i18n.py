@@ -133,13 +133,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "IA_TIMEOUT": "IA demorou muito para responder",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar feedback, você precisa aceitar o consentimento de pesquisa. Acesse Configurações > Consentimento.",
         
-        # ============================================================
-        # 🆕 IA SERVICE - NOVAS CHAVES
-        # ============================================================
+        # ---------- IA Service ----------
         "IA_ERROR_GENERIC": "Desculpe, ocorreu um erro ao processar sua pergunta. Tente novamente mais tarde.",
         "IA_ERROR_TIMEOUT": "A resposta está demorando mais que o esperado. Tente novamente em alguns instantes.",
         "IA_OUT_OF_SCOPE": "Desculpe, só posso ajudar com perguntas sobre finanças pessoais. Posso ajudar com economia, investimentos ou planejamento financeiro?",
         "IA_CACHE_HIT": "Usando resposta em cache",
+        
+        # ---------- Score ----------
+        "SCORE_CALCULATED": "Score calculado com sucesso",
+        "SCORE_UPDATED": "Score atualizado com sucesso",
+        "SCORE_CACHE_HIT": "Score obtido do cache",
+        "SCORE_CACHE_MISS": "Score não encontrado no cache, calculando...",
+        "SCORE_CACHE_EXPIRED": "Cache expirado, recalculando...",
+        "SCORE_CACHE_SAVED": "Score salvo no cache",
+        "SCORE_CACHE_INVALIDATED": "Cache de score invalidado",
+        "SCORE_CACHE_ERROR": "Erro ao acessar cache do score",
+        "SCORE_VARIATION_LIMITED": "Variação limitada a ±5 pontos",
+        "SCORE_NO_USER": "Usuário não encontrado",
+        "SCORE_GOALS_ERROR": "Erro ao buscar metas",
+        "SCORE_CALCULATION_STARTED": "Iniciando cálculo de score",
         
         # ---------- Transações ----------
         "ERROR_INSUFFICIENT_LIMIT": "Limite insuficiente. Disponível: R$ {available:.2f}",
@@ -152,12 +164,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_BALANCE_RECALCULATED": "Saldo recalculado com sucesso.",
         "ERROR_BULK_LIMIT_EXCEEDED": "Limite de 100 transações por requisição excedido.",
         "ERROR_INVALID_CATEGORY": "Categoria inválida. Use: {categories}",
-        
-        # ---------- Score ----------
-        "ERROR_SCORE_CALCULATION_FAILED": "Erro ao calcular score financeiro. Tente novamente mais tarde",
-        "ERROR_SCORE_HISTORY_FAILED": "Erro ao buscar histórico de score",
-        "SCORE_CALCULATED": "Score calculado com sucesso",
-        "SCORE_HISTORY_NOT_FOUND": "Histórico de score não encontrado",
         
         # ---------- Notificações ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registrado com sucesso",
@@ -312,13 +318,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "IA_TIMEOUT": "AI took too long to respond",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "To send feedback, you need to accept the research consent. Go to Settings > Consent.",
         
-        # ============================================================
-        # 🆕 IA SERVICE - NEW KEYS
-        # ============================================================
+        # ---------- IA Service ----------
         "IA_ERROR_GENERIC": "Sorry, an error occurred while processing your question. Please try again later.",
         "IA_ERROR_TIMEOUT": "The response is taking longer than expected. Please try again in a moment.",
         "IA_OUT_OF_SCOPE": "Sorry, I can only help with questions about personal finances. Can I help with savings, investments or financial planning?",
         "IA_CACHE_HIT": "Using cached response",
+        
+        # ---------- Score ----------
+        "SCORE_CALCULATED": "Score calculated successfully",
+        "SCORE_UPDATED": "Score updated successfully",
+        "SCORE_CACHE_HIT": "Score retrieved from cache",
+        "SCORE_CACHE_MISS": "Score not found in cache, calculating...",
+        "SCORE_CACHE_EXPIRED": "Cache expired, recalculating...",
+        "SCORE_CACHE_SAVED": "Score saved to cache",
+        "SCORE_CACHE_INVALIDATED": "Score cache invalidated",
+        "SCORE_CACHE_ERROR": "Error accessing score cache",
+        "SCORE_VARIATION_LIMITED": "Variation limited to ±5 points",
+        "SCORE_NO_USER": "User not found",
+        "SCORE_GOALS_ERROR": "Error fetching goals",
+        "SCORE_CALCULATION_STARTED": "Starting score calculation",
         
         # ---------- Transactions ----------
         "ERROR_INSUFFICIENT_LIMIT": "Insufficient limit. Available: R$ {available:.2f}",
@@ -331,12 +349,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_BALANCE_RECALCULATED": "Balance recalculated successfully.",
         "ERROR_BULK_LIMIT_EXCEEDED": "Limit of 100 transactions per request exceeded.",
         "ERROR_INVALID_CATEGORY": "Invalid category. Use: {categories}",
-        
-        # ---------- Score ----------
-        "ERROR_SCORE_CALCULATION_FAILED": "Error calculating financial score. Please try again later",
-        "ERROR_SCORE_HISTORY_FAILED": "Error fetching score history",
-        "SCORE_CALCULATED": "Score calculated successfully",
-        "SCORE_HISTORY_NOT_FOUND": "Score history not found",
         
         # ---------- Notifications ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registered successfully",
@@ -491,13 +503,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "IA_TIMEOUT": "La IA tardó demasiado en responder",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "Para enviar comentarios, debe aceptar el consentimiento de investigación. Vaya a Configuración > Consentimiento.",
         
-        # ============================================================
-        # 🆕 IA SERVICE - NUEVAS CLAVES
-        # ============================================================
+        # ---------- IA Service ----------
         "IA_ERROR_GENERIC": "Lo sentimos, ocurrió un error al procesar tu pregunta. Por favor, intenta de nuevo más tarde.",
         "IA_ERROR_TIMEOUT": "La respuesta está tardando más de lo esperado. Intenta de nuevo en unos instantes.",
         "IA_OUT_OF_SCOPE": "Lo siento, solo puedo ayudar con preguntas sobre finanzas personales. ¿Puedo ayudar con ahorros, inversiones o planificación financiera?",
         "IA_CACHE_HIT": "Usando respuesta en caché",
+        
+        # ---------- Puntuación ----------
+        "SCORE_CALCULATED": "Puntuación calculada con éxito",
+        "SCORE_UPDATED": "Puntuación actualizada con éxito",
+        "SCORE_CACHE_HIT": "Puntuación obtenida de caché",
+        "SCORE_CACHE_MISS": "Puntuación no encontrada en caché, calculando...",
+        "SCORE_CACHE_EXPIRED": "Caché expirado, recalculando...",
+        "SCORE_CACHE_SAVED": "Puntuación guardada en caché",
+        "SCORE_CACHE_INVALIDATED": "Caché de puntuación invalidado",
+        "SCORE_CACHE_ERROR": "Error al acceder al caché de puntuación",
+        "SCORE_VARIATION_LIMITED": "Variación limitada a ±5 puntos",
+        "SCORE_NO_USER": "Usuario no encontrado",
+        "SCORE_GOALS_ERROR": "Error al buscar metas",
+        "SCORE_CALCULATION_STARTED": "Iniciando cálculo de puntuación",
         
         # ---------- Transacciones ----------
         "ERROR_INSUFFICIENT_LIMIT": "Límite insuficiente. Disponible: R$ {available:.2f}",
@@ -510,12 +534,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_BALANCE_RECALCULATED": "Saldo recalculado con éxito.",
         "ERROR_BULK_LIMIT_EXCEEDED": "Límite de 100 transacciones por solicitud excedido.",
         "ERROR_INVALID_CATEGORY": "Categoría inválida. Use: {categories}",
-        
-        # ---------- Puntuación ----------
-        "ERROR_SCORE_CALCULATION_FAILED": "Error al calcular la puntuación financiera. Intente más tarde",
-        "ERROR_SCORE_HISTORY_FAILED": "Error al obtener el historial de puntuación",
-        "SCORE_CALCULATED": "Puntuación calculada con éxito",
-        "SCORE_HISTORY_NOT_FOUND": "Historial de puntuación no encontrado",
         
         # ---------- Notificaciones ----------
         "SUCCESS_TOKEN_REGISTERED": "Token registrado con éxito",
@@ -670,13 +688,25 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "IA_TIMEOUT": "AI响应超时",
         "ERROR_RESEARCH_CONSENT_REQUIRED": "要发送反馈，您需要接受研究同意。前往设置 > 同意。",
         
-        # ============================================================
-        # 🆕 IA SERVICE - 新键
-        # ============================================================
+        # ---------- IA Service ----------
         "IA_ERROR_GENERIC": "抱歉，处理您的问题时出错。请稍后再试。",
         "IA_ERROR_TIMEOUT": "响应时间超过预期。请稍后再试。",
         "IA_OUT_OF_SCOPE": "抱歉，我只能帮助回答有关个人财务的问题。我可以帮助储蓄、投资或财务规划吗？",
         "IA_CACHE_HIT": "使用缓存响应",
+        
+        # ---------- 评分 ----------
+        "SCORE_CALCULATED": "评分计算成功",
+        "SCORE_UPDATED": "评分更新成功",
+        "SCORE_CACHE_HIT": "从缓存获取评分",
+        "SCORE_CACHE_MISS": "缓存中未找到评分，正在计算...",
+        "SCORE_CACHE_EXPIRED": "缓存已过期，正在重新计算...",
+        "SCORE_CACHE_SAVED": "评分已保存到缓存",
+        "SCORE_CACHE_INVALIDATED": "评分缓存已失效",
+        "SCORE_CACHE_ERROR": "访问评分缓存时出错",
+        "SCORE_VARIATION_LIMITED": "变化限制在±5分以内",
+        "SCORE_NO_USER": "未找到用户",
+        "SCORE_GOALS_ERROR": "获取目标时出错",
+        "SCORE_CALCULATION_STARTED": "开始计算评分",
         
         # ---------- 交易 ----------
         "ERROR_INSUFFICIENT_LIMIT": "额度不足。可用：R$ {available:.2f}",
@@ -689,12 +719,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_BALANCE_RECALCULATED": "余额重新计算成功。",
         "ERROR_BULK_LIMIT_EXCEEDED": "超出每请求100笔交易的限制。",
         "ERROR_INVALID_CATEGORY": "无效的分类。使用：{categories}",
-        
-        # ---------- 评分 ----------
-        "ERROR_SCORE_CALCULATION_FAILED": "计算财务评分时出错。请稍后再试",
-        "ERROR_SCORE_HISTORY_FAILED": "获取评分历史时出错",
-        "SCORE_CALCULATED": "评分计算成功",
-        "SCORE_HISTORY_NOT_FOUND": "未找到评分历史",
         
         # ---------- 通知 ----------
         "SUCCESS_TOKEN_REGISTERED": "令牌注册成功",
@@ -755,13 +779,6 @@ def get_message(key: str, language: str = "pt") -> str:
     
     Returns:
         str: Mensagem traduzida ou a própria chave se não encontrada
-    
-    Exemplo:
-        >>> get_message("ACHIEVEMENT_NOT_FOUND", "pt")
-        "Conquista não encontrada"
-        
-        >>> get_message("ACHIEVEMENT_NOT_FOUND", "en")
-        "Achievement not found"
     """
     lang_dict = MESSAGES.get(language, MESSAGES.get("pt", {}))
     return lang_dict.get(key, key)
@@ -809,20 +826,11 @@ def get_supported_languages() -> list:
 # ✅ Função get_all_message_keys() para validação
 # ✅ Função get_supported_languages() para listar idiomas
 # ✅ Fallback seguro: se a chave não for encontrada, retorna a própria chave
-# ✅ TODAS as mensagens dos arquivos modificados estão incluídas:
-#   - achievements.py ✅
-#   - bills.py ✅
-#   - bill_installments.py ✅
-#   - credit_card_purchases.py ✅
-#   - credit_cards.py ✅
-#   - goals.py ✅
-#   - ia.py ✅
-#   - investments.py ✅
-#   - notifications.py ✅
-#   - profile.py ✅
-#   - score.py ✅
-#   - transactions.py ✅
-#   - user.py ✅ (preventivo)
-#   - 🆕 IA Service: IA_ERROR_GENERIC, IA_ERROR_TIMEOUT, IA_OUT_OF_SCOPE, IA_CACHE_HIT ✅
+# ✅ 🆕 Adicionadas chaves SCORE_* para score_service.py
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Adicionado chaves IA Service (04/07/2026)
+#   - v3: Adicionado chaves SCORE_* (04/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
