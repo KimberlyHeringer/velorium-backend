@@ -153,6 +153,34 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SCORE_GOALS_ERROR": "Erro ao buscar metas",
         "SCORE_CALCULATION_STARTED": "Iniciando cálculo de score",
         
+        # ---------- Score Ranges (para anonimizer) ----------
+        "SCORE_RANGE_0_20": "0-20",
+        "SCORE_RANGE_20_40": "20-40",
+        "SCORE_RANGE_40_60": "40-60",
+        "SCORE_RANGE_60_80": "60-80",
+        "SCORE_RANGE_80_100": "80-100",
+        
+        # ---------- Expense Ranges (para anonimizer) ----------
+        "EXPENSE_RANGE_0_100": "0-100",
+        "EXPENSE_RANGE_100_500": "100-500",
+        "EXPENSE_RANGE_500_1000": "500-1000",
+        "EXPENSE_RANGE_1000_5000": "1000-5000",
+        "EXPENSE_RANGE_5000_PLUS": "5000+",
+        
+        # ---------- Email ----------
+        "EMAIL_RESET_SUBJECT": "Redefinição de Senha - Velorium",
+        "EMAIL_DELETE_SUBJECT": "Confirmação de Exclusão de Conta - Velorium",
+        "EMAIL_TEST_SUBJECT": "Teste de Email - Velorium",
+        
+        # ---------- Audit ----------
+        "AUDIT_COLLECTION_NONE": "Collection não pode ser None",
+        "AUDIT_DOC_ID_EMPTY": "doc_id não pode ser vazio",
+        "AUDIT_DOC_ID_INVALID": "doc_id inválido",
+        "AUDIT_USER_ID_EMPTY": "user_id não pode ser vazio",
+        "AUDIT_USER_ID_INVALID": "user_id inválido",
+        "AUDIT_DB_NONE": "db não pode ser None",
+        "AUDIT_ERROR_SAVING": "Erro ao salvar auditoria",
+        
         # ---------- Transações ----------
         "ERROR_INSUFFICIENT_LIMIT": "Limite insuficiente. Disponível: R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "Transação não encontrada.",
@@ -337,6 +365,34 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SCORE_NO_USER": "User not found",
         "SCORE_GOALS_ERROR": "Error fetching goals",
         "SCORE_CALCULATION_STARTED": "Starting score calculation",
+        
+        # ---------- Score Ranges ----------
+        "SCORE_RANGE_0_20": "0-20",
+        "SCORE_RANGE_20_40": "20-40",
+        "SCORE_RANGE_40_60": "40-60",
+        "SCORE_RANGE_60_80": "60-80",
+        "SCORE_RANGE_80_100": "80-100",
+        
+        # ---------- Expense Ranges ----------
+        "EXPENSE_RANGE_0_100": "0-100",
+        "EXPENSE_RANGE_100_500": "100-500",
+        "EXPENSE_RANGE_500_1000": "500-1000",
+        "EXPENSE_RANGE_1000_5000": "1000-5000",
+        "EXPENSE_RANGE_5000_PLUS": "5000+",
+        
+        # ---------- Email ----------
+        "EMAIL_RESET_SUBJECT": "Password Reset - Velorium",
+        "EMAIL_DELETE_SUBJECT": "Delete Confirmation - Velorium",
+        "EMAIL_TEST_SUBJECT": "Test Email - Velorium",
+        
+        # ---------- Audit ----------
+        "AUDIT_COLLECTION_NONE": "Collection cannot be None",
+        "AUDIT_DOC_ID_EMPTY": "doc_id cannot be empty",
+        "AUDIT_DOC_ID_INVALID": "Invalid doc_id",
+        "AUDIT_USER_ID_EMPTY": "user_id cannot be empty",
+        "AUDIT_USER_ID_INVALID": "Invalid user_id",
+        "AUDIT_DB_NONE": "db cannot be None",
+        "AUDIT_ERROR_SAVING": "Error saving audit",
         
         # ---------- Transactions ----------
         "ERROR_INSUFFICIENT_LIMIT": "Insufficient limit. Available: R$ {available:.2f}",
@@ -523,6 +579,34 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SCORE_GOALS_ERROR": "Error al buscar metas",
         "SCORE_CALCULATION_STARTED": "Iniciando cálculo de puntuación",
         
+        # ---------- Score Ranges ----------
+        "SCORE_RANGE_0_20": "0-20",
+        "SCORE_RANGE_20_40": "20-40",
+        "SCORE_RANGE_40_60": "40-60",
+        "SCORE_RANGE_60_80": "60-80",
+        "SCORE_RANGE_80_100": "80-100",
+        
+        # ---------- Expense Ranges ----------
+        "EXPENSE_RANGE_0_100": "0-100",
+        "EXPENSE_RANGE_100_500": "100-500",
+        "EXPENSE_RANGE_500_1000": "500-1000",
+        "EXPENSE_RANGE_1000_5000": "1000-5000",
+        "EXPENSE_RANGE_5000_PLUS": "5000+",
+        
+        # ---------- Email ----------
+        "EMAIL_RESET_SUBJECT": "Restablecimiento de Contraseña - Velorium",
+        "EMAIL_DELETE_SUBJECT": "Confirmación de Eliminación - Velorium",
+        "EMAIL_TEST_SUBJECT": "Correo de Prueba - Velorium",
+        
+        # ---------- Audit ----------
+        "AUDIT_COLLECTION_NONE": "La colección no puede ser None",
+        "AUDIT_DOC_ID_EMPTY": "doc_id no puede estar vacío",
+        "AUDIT_DOC_ID_INVALID": "doc_id inválido",
+        "AUDIT_USER_ID_EMPTY": "user_id no puede estar vacío",
+        "AUDIT_USER_ID_INVALID": "user_id inválido",
+        "AUDIT_DB_NONE": "db no puede ser None",
+        "AUDIT_ERROR_SAVING": "Error al guardar auditoría",
+        
         # ---------- Transacciones ----------
         "ERROR_INSUFFICIENT_LIMIT": "Límite insuficiente. Disponible: R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "Transacción no encontrada.",
@@ -708,6 +792,34 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SCORE_GOALS_ERROR": "获取目标时出错",
         "SCORE_CALCULATION_STARTED": "开始计算评分",
         
+        # ---------- Score Ranges ----------
+        "SCORE_RANGE_0_20": "0-20",
+        "SCORE_RANGE_20_40": "20-40",
+        "SCORE_RANGE_40_60": "40-60",
+        "SCORE_RANGE_60_80": "60-80",
+        "SCORE_RANGE_80_100": "80-100",
+        
+        # ---------- Expense Ranges ----------
+        "EXPENSE_RANGE_0_100": "0-100",
+        "EXPENSE_RANGE_100_500": "100-500",
+        "EXPENSE_RANGE_500_1000": "500-1000",
+        "EXPENSE_RANGE_1000_5000": "1000-5000",
+        "EXPENSE_RANGE_5000_PLUS": "5000+",
+        
+        # ---------- Email ----------
+        "EMAIL_RESET_SUBJECT": "重置密码 - Velorium",
+        "EMAIL_DELETE_SUBJECT": "确认删除账户 - Velorium",
+        "EMAIL_TEST_SUBJECT": "测试邮件 - Velorium",
+        
+        # ---------- Audit ----------
+        "AUDIT_COLLECTION_NONE": "集合不能为 None",
+        "AUDIT_DOC_ID_EMPTY": "doc_id 不能为空",
+        "AUDIT_DOC_ID_INVALID": "doc_id 无效",
+        "AUDIT_USER_ID_EMPTY": "user_id 不能为空",
+        "AUDIT_USER_ID_INVALID": "user_id 无效",
+        "AUDIT_DB_NONE": "db 不能为 None",
+        "AUDIT_ERROR_SAVING": "保存审计日志时出错",
+        
         # ---------- 交易 ----------
         "ERROR_INSUFFICIENT_LIMIT": "额度不足。可用：R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "未找到交易。",
@@ -826,11 +938,15 @@ def get_supported_languages() -> list:
 # ✅ Função get_all_message_keys() para validação
 # ✅ Função get_supported_languages() para listar idiomas
 # ✅ Fallback seguro: se a chave não for encontrada, retorna a própria chave
-# ✅ 🆕 Adicionadas chaves SCORE_* para score_service.py
+# ✅ 🆕 Adicionadas chaves SCORE_RANGES_* (anonimizer)
+# ✅ 🆕 Adicionadas chaves EXPENSE_RANGES_* (anonimizer)
+# ✅ 🆕 Adicionadas chaves EMAIL_* (email_service)
+# ✅ 🆕 Adicionadas chaves AUDIT_* (audit)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
 #   - v2: Adicionado chaves IA Service (04/07/2026)
 #   - v3: Adicionado chaves SCORE_* (04/07/2026)
+#   - v4: Adicionado chaves SCORE_RANGES, EXPENSE_RANGES, EMAIL, AUDIT (04/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
