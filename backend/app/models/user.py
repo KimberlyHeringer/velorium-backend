@@ -18,10 +18,11 @@ Principais features:
 - ✅ CORRIGIDO: NÃO herda user_id (User é o próprio dono)
 - ✅ CORRIGIDO: Campos opcionais no UserCreate
 - ✅ CORRIGIDO: UserResponse herda de User
-- ✅ CORRIGIDO: password_hash excluído do UserResponse
+- ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict
+- ✅ CORRIGIDO: location, occupation, financial_goal opcionais no UserResponse
 """
 
-from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator, model_validator
 from typing import Optional, Literal, Any
 from datetime import datetime, timezone
 import re
@@ -309,7 +310,7 @@ class UserResponse(User):
     """
     Schema para RESPOSTA da API (dados públicos).
     
-    🔧 ✅ CORRIGIDO: Exclui password_hash da resposta.
+    🔧 ✅ CORRIGIDO: password_hash excluído via ConfigDict.
     
     🔧 DIFERENÇAS DO MODEL USER:
       - id é obrigatório (já existe no banco)
@@ -317,10 +318,13 @@ class UserResponse(User):
       - location, occupation, financial_goal são opcionais (caso não preenchidos)
     """
     
-    id: str = Field(..., alias="_id", description="ID do usuário")
+    model_config = ConfigDict(
+        from_attributes=True,
+        # 🔧 Exclui password_hash da serialização
+        fields={"password_hash": {"exclude": True}}
+    )
     
-    # 🔧 EXCLUI PASSWORD_HASH DA RESPOSTA
-    password_hash: None = None
+    id: str = Field(..., alias="_id", description="ID do usuário")
     
     # 🔧 Torna campos opcionais para evitar erro se o usuário não preencheu
     location: Optional[str] = None
@@ -436,7 +440,7 @@ class UserUpdate(BaseModel):
 #   - Validação de senha (3/4 critérios)
 #   - ✅ CORRIGIDO: Campos opcionais no UserCreate (location, occupation, financial_goal)
 #   - ✅ CORRIGIDO: UserResponse herda de User (elimina duplicação)
-#   - ✅ CORRIGIDO: password_hash excluído do UserResponse
+#   - ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict
 #   - ✅ CORRIGIDO: location, occupation, financial_goal opcionais no UserResponse
 #   - Consentimento LGPD com rastreamento
 #   - I18n completo com chaves de erro
@@ -452,5 +456,6 @@ class UserUpdate(BaseModel):
 #   - v2: Refatoração - Herança de BaseModelWithUser e AuditMixin (03/07/2026)
 #   - v3: Correções - BaseModelWithoutUser, campos opcionais, UserResponse herda de User (03/07/2026)
 #   - v4: Correção - password_hash excluído do UserResponse, campos opcionais (04/07/2026)
+#   - v5: Correção - password_hash excluído via ConfigDict (05/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
