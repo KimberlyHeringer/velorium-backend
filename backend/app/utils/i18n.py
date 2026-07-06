@@ -43,6 +43,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "Conflito - recurso já existe",
         "ERROR_NO_DATA_TO_UPDATE": "Nenhum dado para atualizar",
         "ERROR_INVALID_DATE_RANGE": "A data inicial não pode ser maior que a data final",
+        "ERROR_PAGINATION_FAILED": "Erro ao processar paginação: {error}",
         
         # ---------- Autenticação ----------
         "AUTH_INVALID_CREDENTIALS": "E-mail ou senha inválidos",
@@ -186,9 +187,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUDIT_ERROR_SAVING": "Erro ao salvar auditoria",
         
         # ---------- Transações ----------
-        "ERROR_INSUFFICIENT_LIMIT": "Limite insuficiente. Disponível: R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "Transação não encontrada.",
-        "ERROR_NO_DATA_TO_UPDATE": "Nenhum dado para atualizar.",
         "ERROR_CREATE_TRANSACTION_FAILED": "Erro interno ao criar transação.",
         "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "Não é possível deletar despesa com parcelas pagas no cartão.",
         "SUCCESS_TRANSACTION_DELETED": "Transação deletada com sucesso.",
@@ -212,14 +211,20 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         # ---------- Rate Limiting ----------
         "RATE_LIMIT_EXCEEDED": "Muitas requisições. Tente novamente mais tarde",
         
-        # ---------- Perfil ----------
-        "ERROR_PROFILE_NOT_FOUND": "Perfil não encontrado",
+        # ---------- Perfil (Profile) ----------
+        "ERROR_PROFILE_NOT_FOUND": "Perfil não encontrado para o usuário {user_id}",
+        "ERROR_PROFILE_COLLECTION": "Erro ao criar/verificar coleção de perfis: {error}",
+        "ERROR_PROFILE_CREATE_FAILED": "Erro ao criar perfil para o usuário {user_id}",
+        "ERROR_PROFILE_UPDATE_FAILED": "Erro ao atualizar perfil do usuário {user_id}",
+        "PROFILE_CACHE_HIT": "Perfil obtido do cache para {user_id}",
+        "PROFILE_CACHE_MISS": "Perfil não encontrado no cache para {user_id}",
+        "PROFILE_CACHE_SET": "Perfil armazenado em cache para {user_id}",
+        "PROFILE_CACHE_INVALIDATED": "Cache de perfil invalidado para {user_id}",
         "SUCCESS_PROFILE_UPDATED": "Perfil atualizado com sucesso",
         "ERROR_INVALID_PROFILE_DATA": "Dados do perfil inválidos",
         
         # ---------- Investimentos ----------
         "ERROR_INVESTMENT_NOT_FOUND": "Investimento não encontrado",
-        "ERROR_INVALID_CATEGORY": "Categoria inválida. Use: {categories}",
         "ERROR_SOLD_VALUE_REQUIRED": "Valor de venda é obrigatório ao marcar como vendido",
         "ERROR_INVESTMENT_ALREADY_SOLD": "Investimento já foi vendido",
         "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "Não é possível atualizar preço de investimento vendido",
@@ -259,7 +264,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         # ---------- Dates ----------
         "ERROR_DATE_PAST": "Data não pode ser no passado",
         "ERROR_DATE_FUTURE": "Data não pode ser no futuro",
-        "ERROR_INVALID_DATE_RANGE": "A data inicial não pode ser maior que a data final",
         "ERROR_INVALID_DUE_DAY": "Dia de vencimento inválido",
         "ERROR_START_DATE_PAST": "Data de início não pode ser no passado",
         
@@ -302,6 +306,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "Conflict - resource already exists",
         "ERROR_NO_DATA_TO_UPDATE": "No data to update",
         "ERROR_INVALID_DATE_RANGE": "Start date cannot be greater than end date",
+        "ERROR_PAGINATION_FAILED": "Pagination error: {error}",
         
         # ---------- Authentication ----------
         "AUTH_INVALID_CREDENTIALS": "Invalid email or password",
@@ -445,9 +450,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUDIT_ERROR_SAVING": "Error saving audit",
         
         # ---------- Transactions ----------
-        "ERROR_INSUFFICIENT_LIMIT": "Insufficient limit. Available: R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "Transaction not found.",
-        "ERROR_NO_DATA_TO_UPDATE": "No data to update.",
         "ERROR_CREATE_TRANSACTION_FAILED": "Internal error creating transaction.",
         "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "Cannot delete expense with paid installments.",
         "SUCCESS_TRANSACTION_DELETED": "Transaction deleted successfully.",
@@ -472,13 +475,19 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "RATE_LIMIT_EXCEEDED": "Too many requests. Please try again later",
         
         # ---------- Profile ----------
-        "ERROR_PROFILE_NOT_FOUND": "Profile not found",
+        "ERROR_PROFILE_NOT_FOUND": "Profile not found for user {user_id}",
+        "ERROR_PROFILE_COLLECTION": "Error creating/checking profiles collection: {error}",
+        "ERROR_PROFILE_CREATE_FAILED": "Error creating profile for user {user_id}",
+        "ERROR_PROFILE_UPDATE_FAILED": "Error updating profile for user {user_id}",
+        "PROFILE_CACHE_HIT": "Profile cache hit for {user_id}",
+        "PROFILE_CACHE_MISS": "Profile cache miss for {user_id}",
+        "PROFILE_CACHE_SET": "Profile cached for {user_id}",
+        "PROFILE_CACHE_INVALIDATED": "Profile cache invalidated for {user_id}",
         "SUCCESS_PROFILE_UPDATED": "Profile updated successfully",
         "ERROR_INVALID_PROFILE_DATA": "Invalid profile data",
         
         # ---------- Investments ----------
         "ERROR_INVESTMENT_NOT_FOUND": "Investment not found",
-        "ERROR_INVALID_CATEGORY": "Invalid category. Use: {categories}",
         "ERROR_SOLD_VALUE_REQUIRED": "Sold value is required when marking as sold",
         "ERROR_INVESTMENT_ALREADY_SOLD": "Investment has already been sold",
         "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "Cannot update price of sold investment",
@@ -518,7 +527,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         # ---------- Dates ----------
         "ERROR_DATE_PAST": "Date cannot be in the past",
         "ERROR_DATE_FUTURE": "Date cannot be in the future",
-        "ERROR_INVALID_DATE_RANGE": "Start date cannot be greater than end date",
         "ERROR_INVALID_DUE_DAY": "Invalid due day",
         "ERROR_START_DATE_PAST": "Start date cannot be in the past",
         
@@ -561,6 +569,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "Conflicto - el recurso ya existe",
         "ERROR_NO_DATA_TO_UPDATE": "No hay datos para actualizar",
         "ERROR_INVALID_DATE_RANGE": "La fecha inicial no puede ser mayor que la fecha final",
+        "ERROR_PAGINATION_FAILED": "Error de paginación: {error}",
         
         # ---------- Autenticación ----------
         "AUTH_INVALID_CREDENTIALS": "Correo o contraseña inválidos",
@@ -704,9 +713,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUDIT_ERROR_SAVING": "Error al guardar auditoría",
         
         # ---------- Transacciones ----------
-        "ERROR_INSUFFICIENT_LIMIT": "Límite insuficiente. Disponible: R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "Transacción no encontrada.",
-        "ERROR_NO_DATA_TO_UPDATE": "No hay datos para actualizar.",
         "ERROR_CREATE_TRANSACTION_FAILED": "Error interno al crear la transacción.",
         "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "No se puede eliminar un gasto con cuotas pagadas.",
         "SUCCESS_TRANSACTION_DELETED": "Transacción eliminada con éxito.",
@@ -731,13 +738,19 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "RATE_LIMIT_EXCEEDED": "Demasiadas solicitudes. Intente más tarde",
         
         # ---------- Perfil ----------
-        "ERROR_PROFILE_NOT_FOUND": "Perfil no encontrado",
+        "ERROR_PROFILE_NOT_FOUND": "Perfil no encontrado para el usuario {user_id}",
+        "ERROR_PROFILE_COLLECTION": "Error al crear/verificar la colección de perfiles: {error}",
+        "ERROR_PROFILE_CREATE_FAILED": "Error al crear perfil para el usuario {user_id}",
+        "ERROR_PROFILE_UPDATE_FAILED": "Error al actualizar perfil del usuario {user_id}",
+        "PROFILE_CACHE_HIT": "Perfil obtenido de caché para {user_id}",
+        "PROFILE_CACHE_MISS": "Perfil no encontrado en caché para {user_id}",
+        "PROFILE_CACHE_SET": "Perfil almacenado en caché para {user_id}",
+        "PROFILE_CACHE_INVALIDATED": "Caché de perfil invalidado para {user_id}",
         "SUCCESS_PROFILE_UPDATED": "Perfil actualizado con éxito",
         "ERROR_INVALID_PROFILE_DATA": "Datos de perfil inválidos",
         
         # ---------- Inversiones ----------
         "ERROR_INVESTMENT_NOT_FOUND": "Inversión no encontrada",
-        "ERROR_INVALID_CATEGORY": "Categoría inválida. Use: {categories}",
         "ERROR_SOLD_VALUE_REQUIRED": "El valor de venta es obligatorio al marcar como vendido",
         "ERROR_INVESTMENT_ALREADY_SOLD": "La inversión ya ha sido vendida",
         "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "No se puede actualizar el precio de una inversión vendida",
@@ -777,7 +790,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         # ---------- Dates ----------
         "ERROR_DATE_PAST": "La fecha no puede ser en el pasado",
         "ERROR_DATE_FUTURE": "La fecha no puede ser en el futuro",
-        "ERROR_INVALID_DATE_RANGE": "La fecha inicial no puede ser mayor que la fecha final",
         "ERROR_INVALID_DUE_DAY": "Día de vencimiento inválido",
         "ERROR_START_DATE_PAST": "La fecha de inicio no puede ser en el pasado",
         
@@ -820,6 +832,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "ERROR_CONFLICT": "冲突 - 资源已存在",
         "ERROR_NO_DATA_TO_UPDATE": "没有数据可更新",
         "ERROR_INVALID_DATE_RANGE": "开始日期不能大于结束日期",
+        "ERROR_PAGINATION_FAILED": "分页错误：{error}",
         
         # ---------- 认证 ----------
         "AUTH_INVALID_CREDENTIALS": "邮箱或密码无效",
@@ -963,9 +976,7 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUDIT_ERROR_SAVING": "保存审计日志时出错",
         
         # ---------- 交易 ----------
-        "ERROR_INSUFFICIENT_LIMIT": "额度不足。可用：R$ {available:.2f}",
         "ERROR_TRANSACTION_NOT_FOUND": "未找到交易。",
-        "ERROR_NO_DATA_TO_UPDATE": "没有数据可更新。",
         "ERROR_CREATE_TRANSACTION_FAILED": "创建交易时内部错误。",
         "ERROR_CANNOT_DELETE_PAID_INSTALLMENTS": "无法删除已有已付分期的支出。",
         "SUCCESS_TRANSACTION_DELETED": "交易删除成功。",
@@ -990,13 +1001,19 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "RATE_LIMIT_EXCEEDED": "请求过多，请稍后再试",
         
         # ---------- 个人资料 ----------
-        "ERROR_PROFILE_NOT_FOUND": "未找到个人资料",
+        "ERROR_PROFILE_NOT_FOUND": "未找到用户 {user_id} 的个人资料",
+        "ERROR_PROFILE_COLLECTION": "创建/检查个人资料集合时出错：{error}",
+        "ERROR_PROFILE_CREATE_FAILED": "为用户 {user_id} 创建个人资料时出错",
+        "ERROR_PROFILE_UPDATE_FAILED": "更新用户 {user_id} 的个人资料时出错",
+        "PROFILE_CACHE_HIT": "命中 {user_id} 的个人资料缓存",
+        "PROFILE_CACHE_MISS": "未命中 {user_id} 的个人资料缓存",
+        "PROFILE_CACHE_SET": "已缓存 {user_id} 的个人资料",
+        "PROFILE_CACHE_INVALIDATED": "已失效 {user_id} 的个人资料缓存",
         "SUCCESS_PROFILE_UPDATED": "个人资料更新成功",
         "ERROR_INVALID_PROFILE_DATA": "个人资料数据无效",
         
         # ---------- 投资 ----------
         "ERROR_INVESTMENT_NOT_FOUND": "未找到投资",
-        "ERROR_INVALID_CATEGORY": "无效的分类。使用：{categories}",
         "ERROR_SOLD_VALUE_REQUIRED": "标记为已售时需要出售价值",
         "ERROR_INVESTMENT_ALREADY_SOLD": "投资已售出",
         "ERROR_CANNOT_UPDATE_SOLD_INVESTMENT": "无法更新已售投资的价格",
@@ -1036,7 +1053,6 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         # ---------- Dates ----------
         "ERROR_DATE_PAST": "日期不能是过去",
         "ERROR_DATE_FUTURE": "日期不能是未来",
-        "ERROR_INVALID_DATE_RANGE": "开始日期不能大于结束日期",
         "ERROR_INVALID_DUE_DAY": "无效的到期日",
         "ERROR_START_DATE_PAST": "开始日期不能是过去",
         
@@ -1122,12 +1138,15 @@ def get_supported_languages() -> list:
 # ✅ Função get_all_message_keys() para validação
 # ✅ Função get_supported_languages() para listar idiomas
 # ✅ Fallback seguro: se a chave não for encontrada, retorna a própria chave
-# ✅ 🆕 Adicionadas chaves AUTH_* (autenticação)
-# ✅ 🆕 Adicionadas chaves BALANCE_CACHE_* (cache de saldo)
-# ✅ 🆕 Adicionadas chaves CURRENCY_* (moeda)
-# ✅ 🆕 Adicionadas chaves ERROR_DATE_* (datas)
-# ✅ 🆕 Adicionadas chaves ERROR_INSTALLMENTS_* (parcelas)
-# ✅ 🆕 Adicionadas chaves NOTIFICATION_* (notificações)
+# ✅ Chaves AUTH_* (autenticação)
+# ✅ Chaves BALANCE_CACHE_* (cache de saldo)
+# ✅ Chaves CURRENCY_* (moeda)
+# ✅ Chaves ERROR_DATE_* (datas)
+# ✅ Chaves ERROR_INSTALLMENTS_* (parcelas)
+# ✅ Chaves NOTIFICATION_* (notificações)
+# ✅ 🔧 NOVO: Chaves ERROR_PROFILE_* (perfil - 4 chaves)
+# ✅ 🔧 NOVO: Chaves PROFILE_CACHE_* (cache de perfil - 4 chaves)
+# ✅ 🔧 NOVO: Chave ERROR_PAGINATION_FAILED (paginação)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -1135,5 +1154,6 @@ def get_supported_languages() -> list:
 #   - v3: Adicionado chaves SCORE_* (04/07/2026)
 #   - v4: Adicionado chaves SCORE_RANGES, EXPENSE_RANGES, EMAIL, AUDIT (04/07/2026)
 #   - v5: Adicionado chaves AUTH, BALANCE_CACHE, CURRENCY, DATES, INSTALLMENTS, NOTIFICATIONS (05/07/2026)
+#   - v6: Adicionado chaves PROFILE_CACHE_*, ERROR_PROFILE_*, ERROR_PAGINATION_FAILED (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

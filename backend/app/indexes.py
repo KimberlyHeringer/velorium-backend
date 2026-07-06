@@ -13,6 +13,7 @@ Arquivo: backend/app/indexes.py
 - 🔧 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
 - 🔧 NOVO: partialFilterExpression no TTL para otimização
 - 🔧 NOVO: Índices para bills (category e paid+due_date)
+- 🔧 NOVO: Índices para user_profiles (updated_at TTL, user_id+updated_at, is_complete)
 - 🆕 NOVO: Índice para credit_card_purchases (interest_rate)
 - 🆕 NOVO: Índices para ia_audit_logs (user_id + created_at)
 - 🆕 NOVO: Índices para ia_feedback (audit_id, feedback)
@@ -120,13 +121,38 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 5. PERFIL DO USUÁRIO
+    # 5. PERFIL DO USUÁRIO (USER_PROFILES) 🔧 CORRIGIDO
     # ================================================================
     try:
+        # Índice único para user_id (consulta por usuário)
         await db.user_profiles.create_index([("user_id", 1)], unique=True)
         logger.info("✅ Índice user_profiles.user_id (unique) criado")
     except Exception as e:
-        logger.warning(f"⚠️ Índice user_profiles: {e}", exc_info=True)
+        logger.warning(f"⚠️ Índice user_profiles.user_id: {e}", exc_info=True)
+    
+    # 🔧 NOVO: Índice para updated_at (ordenar por data de atualização)
+    try:
+        await db.user_profiles.create_index(
+            [("updated_at", 1)],
+            expireAfterSeconds=60 * 60 * 24 * 365  # 1 ano
+        )
+        logger.info("✅ Índice user_profiles.updated_at (TTL) criado (1 ano)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice user_profiles.updated_at: {e}", exc_info=True)
+    
+    # 🔧 NOVO: Índice composto para consultas comuns (user_id + updated_at)
+    try:
+        await db.user_profiles.create_index([("user_id", 1), ("updated_at", -1)])
+        logger.info("✅ Índice composto user_profiles.(user_id, updated_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice user_profiles.(user_id, updated_at): {e}", exc_info=True)
+    
+    # 🔧 NOVO: Índice para is_complete (perfis completos/incompletos)
+    try:
+        await db.user_profiles.create_index("is_complete")
+        logger.info("✅ Índice user_profiles.is_complete criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice user_profiles.is_complete: {e}", exc_info=True)
     
     # ================================================================
     # 6. HISTÓRICO DE SCORE
@@ -429,9 +455,8 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice score_cache.cached_at: {e}", exc_info=True)
     
     # ================================================================
-    # 24. LOGIN RATE LIMITS 🆕
+    # 24. LOGIN RATE LIMITS
     # ================================================================
-
     # Índice para busca por identifier
     try:
         await db.login_rate_limits.create_index([("identifier", 1)], unique=True)
@@ -439,7 +464,7 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice login_rate_limits.identifier: {e}", exc_info=True)
 
-    # Índice TTL para limpeza automática (opcional)
+    # Índice TTL para limpeza automática
     try:
         await db.login_rate_limits.create_index(
             [("updated_at", 1)],
@@ -450,9 +475,8 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice TTL login_rate_limits.updated_at: {e}", exc_info=True)
 
     # ================================================================
-    # 25. BALANCE CACHE (FALLBACK) 🆕
+    # 25. BALANCE CACHE (FALLBACK)
     # ================================================================
-
     # Índice para busca por usuário e contexto
     try:
         await db.balance_cache.create_index([
@@ -505,5 +529,6 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índice TTL para score_cache (cached_at)
 # ✅ 🆕 NOVO: Índices para login_rate_limits (identifier unique, updated_at TTL)
 # ✅ 🆕 NOVO: Índices para balance_cache (user_id + context, expires_at TTL)
+# ✅ 🆕 NOVO: Índices para user_profiles (updated_at TTL, user_id+updated_at, is_complete)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
