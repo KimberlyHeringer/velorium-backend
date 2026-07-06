@@ -20,6 +20,7 @@ Principais features:
 - 🔧 CORRIGIDO: Refresh token verifica blacklist
 - 🔧 CORRIGIDO: Rate limiting usa email como identifier
 - 🔧 CORRIGIDO: Verificação db is None
+- 🔧 CORRIGIDO: get_current_user usa model_validate em vez de **user
 - 🔧 CORRIGIDO: Documentação completa
 """
 
@@ -323,7 +324,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
     Retorna UserResponse (SEM password_hash) para segurança.
     
     🔧 CORRIGIDO: Remove password_hash antes de criar UserResponse.
-    🔧 CORRIGIDO: Usa mensagens i18n.
+    🔧 CORRIGIDO: Usa model_validate em vez de **user.
     """
     language = "pt"  # 🔧 FUTURO: Detectar idioma do usuário
     
@@ -350,7 +351,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
     user.pop("password_hash", None)
     
     logger.debug(f"Usuário autenticado: {user['email']} (ID: {user['_id']})")
-    return UserResponse(**user)
+    
+    # 🔧 CORRIGIDO: Usar model_validate em vez de **user
+    return UserResponse.model_validate(user)
 
 
 async def get_current_active_user(
@@ -504,6 +507,7 @@ async def is_token_blacklisted(token: str, db) -> bool:
 #   - 🔧 Refresh token verifica blacklist
 #   - 🔧 Rate limiting usa email como identifier
 #   - 🔧 Verificação db is None em todas as funções
+#   - 🔧 get_current_user usa model_validate
 #   - 🔧 Documentação completa
 #
 # ❌ Não implementado (Pós-MVP):
@@ -516,5 +520,6 @@ async def is_token_blacklisted(token: str, db) -> bool:
 #   - v2: Refatoração com i18n, validações (05/07/2026)
 #   - v3: Rate limiting com persistência no MongoDB (05/07/2026)
 #   - v4: Correções - identifier, db is None (05/07/2026)
+#   - v5: Correção - get_current_user usa model_validate (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
