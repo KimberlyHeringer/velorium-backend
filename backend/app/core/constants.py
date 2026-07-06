@@ -15,7 +15,7 @@ Facilita manutenção e evita duplicação.
     - Configurações de histórico (MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS)
     - Configurações de parcelas (MAX_INSTALLMENTS)
     - Rate limits (RATE_LIMIT_CREATE, RATE_LIMIT_UPDATE, etc.)
-    - Paginação (DEFAULT_PAGE, DEFAULT_LIMIT, MAX_LIMIT)
+    - Paginação (DEFAULT_PAGE, DEFAULT_LIMIT, MAX_LIMIT, PAGINATION_CACHE_TTL)
     - Juros (MIN_INTEREST_RATE, MAX_INTEREST_RATE)
     - Notificações (INACTIVE_TOKEN_DAYS, EXPO_API_URL, MAX_INSTALLMENTS_DAYS_WARNING)
     - Score (SCORE_CACHE_TTL_SECONDS, SLOW_THRESHOLD, MAX_RETRIES)
@@ -25,7 +25,8 @@ Facilita manutenção e evita duplicação.
     - Transações (PAYMENT_METHOD_CREDIT_CARD)
     - Categorias de contas a pagar (CATEGORIA_BILLS)
     - IA (GROQ_DEFAULT_MODEL, IA_TIMEOUT_SECONDS, IA_MAX_TOKENS, IA_TEMPERATURE, IA_CACHE_MAX_SIZE)
-    - Anonimizer (SCORE_RANGES, EXPENSE_RANGES)  # 🆕 ADICIONADO
+    - Anonimizer (SCORE_RANGES, EXPENSE_RANGES)
+    - 🔧 NOVO: Pagination (PAGINATION_CACHE_TTL, PAGINATION_CACHE_TTL_DEFAULT)
 """
 
 import os
@@ -71,6 +72,24 @@ MAX_INSTALLMENTS = 360
 DEFAULT_PAGE = 1
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
+
+# 🔧 NOVO: Cache de Paginação por Coleção
+# TTL diferente para cada coleção baseado na frequência de mudança
+PAGINATION_CACHE_TTL = {
+    "transactions": 60,      # 1 minuto - mudam com frequência
+    "bills": 120,            # 2 minutos - mudam moderadamente
+    "goals": 300,            # 5 minutos - mudam raramente
+    "credit_cards": 300,     # 5 minutos - mudam raramente
+    "credit_card_purchases": 120,  # 2 minutos - mudam moderadamente
+    "investments": 120,      # 2 minutos - mudam moderadamente
+    "achievements": 600,     # 10 minutos - mudam muito raramente
+    "score_history": 300,    # 5 minutos
+    "notifications": 60,     # 1 minuto - mudam com frequência
+    "debts": 300,            # 5 minutos - mudam raramente
+}
+
+# TTL padrão se a coleção não estiver na lista
+PAGINATION_CACHE_TTL_DEFAULT = 60  # 1 minuto
 
 
 # ================================================================
@@ -149,7 +168,7 @@ IA_TEMPERATURE = float(os.getenv("IA_TEMPERATURE", "0.3"))
 
 
 # ================================================================
-# ANONIMIZER - FAIXAS  # 🆕 ADICIONADO
+# ANONIMIZER - FAIXAS
 # ================================================================
 
 SCORE_RANGES = [
@@ -211,7 +230,6 @@ CATEGORIA_BILLS = Literal[
 ]
 """Categorias válidas para contas a pagar (Literal)."""
 
-
 # ================================================================
 # DECISÕES DOCUMENTADAS
 # ================================================================
@@ -233,7 +251,14 @@ CATEGORIA_BILLS = Literal[
 # ✅ IA_MAX_TOKENS adicionado (configurável via .env)
 # ✅ IA_TEMPERATURE adicionado (configurável via .env)
 # ✅ IA_CACHE_MAX_SIZE adicionado
-# ✅ 🆕 SCORE_RANGES adicionado (faixas de score para anonimização)
-# ✅ 🆕 EXPENSE_RANGES adicionado (faixas de gasto para anonimização)
+# ✅ SCORE_RANGES adicionado (faixas de score para anonimização)
+# ✅ EXPENSE_RANGES adicionado (faixas de gasto para anonimização)
+# ✅ 🔧 NOVO: PAGINATION_CACHE_TTL por coleção
+# ✅ 🔧 NOVO: PAGINATION_CACHE_TTL_DEFAULT
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Adicionado SCORE_RANGES, EXPENSE_RANGES (05/07/2026)
+#   - v3: Adicionado PAGINATION_CACHE_TTL, PAGINATION_CACHE_TTL_DEFAULT (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
