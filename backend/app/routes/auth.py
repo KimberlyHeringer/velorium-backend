@@ -18,8 +18,9 @@ Principais features:
 - Validação de força de senha
 - Logs de auditoria no login
 - Validação de termos aceitos
+- 🔧 CORRIGIDO: login usa model_validate em vez de criação manual
 
-Versão: v3 (refatorado)
+Versão: v4 (corrigido)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -140,7 +141,12 @@ async def login(
     user_data: UserLogin,
     db=Depends(get_database)
 ):
-    """Login do usuário com rate limiting (5/min)."""
+    """
+    Login do usuário com rate limiting (5/min).
+    
+    🔧 CORRIGIDO: Usa UserResponse.model_validate() em vez de criação manual.
+    Isso garante que campos opcionais sejam tratados corretamente.
+    """
     
     db_user = await db.users.find_one({"email": user_data.email.lower()})
     if not db_user or not verify_password(user_data.password, db_user["password_hash"]):
@@ -152,22 +158,12 @@ async def login(
 
     token_pair = generate_token_pair(str(db_user["_id"]))
 
-    user_response = UserResponse(
-        id=str(db_user["_id"]),
-        name=db_user["name"],
-        email=db_user["email"],
-        monthly_income=db_user.get("monthly_income", 0),
-        location=db_user.get("location"),
-        profession_type=db_user.get("profession_type", "outros"),
-        occupation=db_user.get("occupation"),
-        financial_goal=db_user.get("financial_goal"),
-        created_at=db_user["created_at"],
-        research_consent=db_user.get("research_consent", False),
-        terms_accepted=db_user.get("terms_accepted", False),
-        terms_accepted_at=db_user.get("terms_accepted_at"),
-        language=db_user.get("language", "pt"),
-        currency=db_user.get("currency", "BRL")
-    )
+    # 🔧 CORRIGIDO: Usar model_validate em vez de criar manualmente
+    # Isso garante que:
+    # 1. _id seja convertido para id automaticamente
+    # 2. Campos opcionais sejam tratados corretamente
+    # 3. Validações do modelo sejam aplicadas
+    user_response = UserResponse.model_validate(db_user)
 
     # Log de auditoria
     await db.audit_logs.insert_one({
@@ -367,6 +363,7 @@ async def reset_password(
 #   - Validação de termos aceitos no registro
 #   - Validação de refresh token no logout
 #   - Verificação de blacklist no /me
+#   - 🔧 CORRIGIDO: login usa model_validate em vez de criação manual
 #
 # ❌ Não implementado (Pós-MVP):
 #   - 2FA (dois fatores)
@@ -377,5 +374,6 @@ async def reset_password(
 #   - v1: Versão inicial
 #   - v2: I18n e correções (25/05/2026)
 #   - v3: Refatoração - validate_password_strength movido para utils/validators_extras.py (02/07/2026)
+#   - v4: Correção - login usa model_validate (05/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
