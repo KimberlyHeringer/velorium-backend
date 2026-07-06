@@ -23,6 +23,8 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para delete_requests (user_id)
 - 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
 - 🆕 NOVO: Índice TTL para score_cache (cached_at)
+- 🆕 NOVO: Índices para login_rate_limits (identifier unique, updated_at TTL)
+- 🆕 NOVO: Índices para balance_cache (user_id + context, expires_at TTL)
 """
 
 from app.utils.logger import setup_logger
@@ -415,7 +417,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice ia_metrics.user_id: {e}", exc_info=True)
     
     # ================================================================
-    # 23. CACHE DE SCORE (SCORE_CACHE) 🆕
+    # 23. CACHE DE SCORE (SCORE_CACHE)
     # ================================================================
     try:
         await db.score_cache.create_index(
@@ -425,6 +427,51 @@ async def create_indexes(db):
         logger.info("✅ Índice TTL para score_cache.cached_at criado (1 hora)")
     except Exception as e:
         logger.warning(f"⚠️ Índice score_cache.cached_at: {e}", exc_info=True)
+    
+    # ================================================================
+    # 24. LOGIN RATE LIMITS 🆕
+    # ================================================================
+
+    # Índice para busca por identifier
+    try:
+        await db.login_rate_limits.create_index([("identifier", 1)], unique=True)
+        logger.info("✅ Índice login_rate_limits.identifier (unique) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice login_rate_limits.identifier: {e}", exc_info=True)
+
+    # Índice TTL para limpeza automática (opcional)
+    try:
+        await db.login_rate_limits.create_index(
+            [("updated_at", 1)],
+            expireAfterSeconds=3600  # Remove após 1 hora de inatividade
+        )
+        logger.info("✅ Índice TTL login_rate_limits.updated_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice TTL login_rate_limits.updated_at: {e}", exc_info=True)
+
+    # ================================================================
+    # 25. BALANCE CACHE (FALLBACK) 🆕
+    # ================================================================
+
+    # Índice para busca por usuário e contexto
+    try:
+        await db.balance_cache.create_index([
+            ("user_id", 1),
+            ("context", 1)
+        ])
+        logger.info("✅ Índice balance_cache.user_id + context criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice balance_cache.user_id + context: {e}", exc_info=True)
+
+    # Índice TTL para expiração automática
+    try:
+        await db.balance_cache.create_index(
+            [("expires_at", 1)],
+            expireAfterSeconds=0
+        )
+        logger.info("✅ Índice TTL balance_cache.expires_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice TTL balance_cache.expires_at: {e}", exc_info=True)
     
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
@@ -456,5 +503,7 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para delete_requests (user_id)
 # ✅ 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
 # ✅ 🆕 NOVO: Índice TTL para score_cache (cached_at)
+# ✅ 🆕 NOVO: Índices para login_rate_limits (identifier unique, updated_at TTL)
+# ✅ 🆕 NOVO: Índices para balance_cache (user_id + context, expires_at TTL)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -50,6 +50,10 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUTH_WEAK_PASSWORD": "Senha muito fraca",
         "AUTH_INVALID_TOKEN": "Token inválido ou expirado",
         "AUTH_TOKEN_REFRESHED": "Token atualizado com sucesso",
+        "AUTH_TOKEN_REVOKED": "Token revogado",
+        "AUTH_USER_NOT_FOUND": "Usuário não encontrado",
+        "AUTH_INVALID_REFRESH_TOKEN": "Refresh token inválido",
+        "AUTH_TOKEN_EXPIRED": "Token expirado",
         
         # ---------- Conquistas (Achievements) ----------
         "ACHIEVEMENT_NOT_FOUND": "Conquista não encontrada",
@@ -236,6 +240,48 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_ACCOUNT_DELETED": "Sua conta e todos os dados associados foram permanentemente removidos",
         "USER_UPDATED": "Usuário atualizado com sucesso",
         "USER_DELETED": "Usuário removido com sucesso",
+        
+        # ---------- Cache ----------
+        "BALANCE_CACHE_HIT": "Saldo obtido do cache",
+        "BALANCE_CACHE_SAVED": "Saldo salvo no cache",
+        "BALANCE_CACHE_INVALIDATED": "Cache de saldo invalidado",
+        "BALANCE_CACHE_ERROR": "Erro ao acessar cache de saldo",
+        "BALANCE_CALCULATION_ERROR": "Erro ao calcular saldo",
+        "REDIS_CONNECTION_ERROR": "Erro ao conectar Redis",
+        "DB_NONE": "db não pode ser None",
+        "USER_ID_EMPTY": "user_id não pode ser vazio",
+        
+        # ---------- Currency ----------
+        "CURRENCY_TO_CENTS": "Conversão to_cents",
+        "CURRENCY_FROM_CENTS": "Conversão from_cents",
+        "CURRENCY_NEGATIVE_VALUE": "Valor não pode ser negativo",
+        
+        # ---------- Dates ----------
+        "ERROR_DATE_PAST": "Data não pode ser no passado",
+        "ERROR_DATE_FUTURE": "Data não pode ser no futuro",
+        "ERROR_INVALID_DATE_RANGE": "A data inicial não pode ser maior que a data final",
+        "ERROR_INVALID_DUE_DAY": "Dia de vencimento inválido",
+        "ERROR_START_DATE_PAST": "Data de início não pode ser no passado",
+        
+        # ---------- Installments ----------
+        "ERROR_INSTALLMENTS_PARTS_ZERO": "Número de parcelas deve ser maior que zero",
+        "ERROR_INSTALLMENTS_TOTAL_ZERO": "Valor total deve ser maior que zero",
+        "ERROR_INSTALLMENTS_INTEREST_NEGATIVE": "Taxa de juros não pode ser negativa",
+        "ERROR_INSTALLMENTS_INTEREST_HIGH": "Taxa de juros não pode ser maior que 100%",
+        
+        # ---------- Notifications ----------
+        "NOTIFICATION_EXPO_ERROR": "Erro no Expo",
+        "NOTIFICATION_SEND_ERROR": "Erro ao enviar notificação",
+        "NOTIFICATION_TIMEOUT": "Timeout ao enviar notificação",
+        "NOTIFICATION_INVALID_TOKEN": "Token inválido",
+        "NOTIFICATION_EMPTY_TOKEN": "Token vazio",
+        "NOTIFICATION_EMPTY_TITLE": "Título vazio",
+        "NOTIFICATION_EMPTY_BODY": "Corpo vazio",
+        "NOTIFICATION_EMPTY_TOKEN_LIST": "Lista de tokens vazia",
+        "NOTIFICATION_NO_VALID_TOKENS": "Nenhum token válido encontrado",
+        "NOTIFICATION_BULK_ERROR": "Erro ao enviar notificações em lote",
+        "NOTIFICATION_EXPO_URL_MISSING": "URL da API Expo não configurada",
+        "NOTIFICATION_NO_TICKET": "Ticket não recebido para o token",
     },
 
     # ============================================================
@@ -263,6 +309,10 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUTH_WEAK_PASSWORD": "Password is too weak",
         "AUTH_INVALID_TOKEN": "Invalid or expired token",
         "AUTH_TOKEN_REFRESHED": "Token refreshed successfully",
+        "AUTH_TOKEN_REVOKED": "Token revoked",
+        "AUTH_USER_NOT_FOUND": "User not found",
+        "AUTH_INVALID_REFRESH_TOKEN": "Invalid refresh token",
+        "AUTH_TOKEN_EXPIRED": "Token expired",
         
         # ---------- Achievements ----------
         "ACHIEVEMENT_NOT_FOUND": "Achievement not found",
@@ -449,6 +499,48 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_ACCOUNT_DELETED": "Your account and all associated data have been permanently removed",
         "USER_UPDATED": "User updated successfully",
         "USER_DELETED": "User deleted successfully",
+        
+        # ---------- Cache ----------
+        "BALANCE_CACHE_HIT": "Balance retrieved from cache",
+        "BALANCE_CACHE_SAVED": "Balance saved to cache",
+        "BALANCE_CACHE_INVALIDATED": "Balance cache invalidated",
+        "BALANCE_CACHE_ERROR": "Error accessing balance cache",
+        "BALANCE_CALCULATION_ERROR": "Error calculating balance",
+        "REDIS_CONNECTION_ERROR": "Redis connection error",
+        "DB_NONE": "db cannot be None",
+        "USER_ID_EMPTY": "user_id cannot be empty",
+        
+        # ---------- Currency ----------
+        "CURRENCY_TO_CENTS": "Conversion to_cents",
+        "CURRENCY_FROM_CENTS": "Conversion from_cents",
+        "CURRENCY_NEGATIVE_VALUE": "Value cannot be negative",
+        
+        # ---------- Dates ----------
+        "ERROR_DATE_PAST": "Date cannot be in the past",
+        "ERROR_DATE_FUTURE": "Date cannot be in the future",
+        "ERROR_INVALID_DATE_RANGE": "Start date cannot be greater than end date",
+        "ERROR_INVALID_DUE_DAY": "Invalid due day",
+        "ERROR_START_DATE_PAST": "Start date cannot be in the past",
+        
+        # ---------- Installments ----------
+        "ERROR_INSTALLMENTS_PARTS_ZERO": "Number of installments must be greater than zero",
+        "ERROR_INSTALLMENTS_TOTAL_ZERO": "Total value must be greater than zero",
+        "ERROR_INSTALLMENTS_INTEREST_NEGATIVE": "Interest rate cannot be negative",
+        "ERROR_INSTALLMENTS_INTEREST_HIGH": "Interest rate cannot be greater than 100%",
+        
+        # ---------- Notifications ----------
+        "NOTIFICATION_EXPO_ERROR": "Expo error",
+        "NOTIFICATION_SEND_ERROR": "Error sending notification",
+        "NOTIFICATION_TIMEOUT": "Timeout sending notification",
+        "NOTIFICATION_INVALID_TOKEN": "Invalid token",
+        "NOTIFICATION_EMPTY_TOKEN": "Empty token",
+        "NOTIFICATION_EMPTY_TITLE": "Empty title",
+        "NOTIFICATION_EMPTY_BODY": "Empty body",
+        "NOTIFICATION_EMPTY_TOKEN_LIST": "Empty token list",
+        "NOTIFICATION_NO_VALID_TOKENS": "No valid tokens found",
+        "NOTIFICATION_BULK_ERROR": "Error sending bulk notifications",
+        "NOTIFICATION_EXPO_URL_MISSING": "Expo API URL not configured",
+        "NOTIFICATION_NO_TICKET": "No ticket received for token",
     },
 
     # ============================================================
@@ -476,6 +568,10 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUTH_WEAK_PASSWORD": "La contraseña es demasiado débil",
         "AUTH_INVALID_TOKEN": "Token inválido o expirado",
         "AUTH_TOKEN_REFRESHED": "Token actualizado con éxito",
+        "AUTH_TOKEN_REVOKED": "Token revocado",
+        "AUTH_USER_NOT_FOUND": "Usuario no encontrado",
+        "AUTH_INVALID_REFRESH_TOKEN": "Refresh token inválido",
+        "AUTH_TOKEN_EXPIRED": "Token expirado",
         
         # ---------- Logros ----------
         "ACHIEVEMENT_NOT_FOUND": "Logro no encontrado",
@@ -662,6 +758,48 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_ACCOUNT_DELETED": "Su cuenta y todos los datos asociados han sido eliminados permanentemente",
         "USER_UPDATED": "Usuario actualizado con éxito",
         "USER_DELETED": "Usuario eliminado con éxito",
+        
+        # ---------- Cache ----------
+        "BALANCE_CACHE_HIT": "Saldo obtenido de caché",
+        "BALANCE_CACHE_SAVED": "Saldo guardado en caché",
+        "BALANCE_CACHE_INVALIDATED": "Caché de saldo invalidado",
+        "BALANCE_CACHE_ERROR": "Error al acceder al caché de saldo",
+        "BALANCE_CALCULATION_ERROR": "Error al calcular saldo",
+        "REDIS_CONNECTION_ERROR": "Error de conexión Redis",
+        "DB_NONE": "db no puede ser None",
+        "USER_ID_EMPTY": "user_id no puede estar vacío",
+        
+        # ---------- Currency ----------
+        "CURRENCY_TO_CENTS": "Conversión to_cents",
+        "CURRENCY_FROM_CENTS": "Conversión from_cents",
+        "CURRENCY_NEGATIVE_VALUE": "El valor no puede ser negativo",
+        
+        # ---------- Dates ----------
+        "ERROR_DATE_PAST": "La fecha no puede ser en el pasado",
+        "ERROR_DATE_FUTURE": "La fecha no puede ser en el futuro",
+        "ERROR_INVALID_DATE_RANGE": "La fecha inicial no puede ser mayor que la fecha final",
+        "ERROR_INVALID_DUE_DAY": "Día de vencimiento inválido",
+        "ERROR_START_DATE_PAST": "La fecha de inicio no puede ser en el pasado",
+        
+        # ---------- Installments ----------
+        "ERROR_INSTALLMENTS_PARTS_ZERO": "El número de cuotas debe ser mayor que cero",
+        "ERROR_INSTALLMENTS_TOTAL_ZERO": "El valor total debe ser mayor que cero",
+        "ERROR_INSTALLMENTS_INTEREST_NEGATIVE": "La tasa de interés no puede ser negativa",
+        "ERROR_INSTALLMENTS_INTEREST_HIGH": "La tasa de interés no puede ser mayor que 100%",
+        
+        # ---------- Notifications ----------
+        "NOTIFICATION_EXPO_ERROR": "Error en Expo",
+        "NOTIFICATION_SEND_ERROR": "Error al enviar notificación",
+        "NOTIFICATION_TIMEOUT": "Timeout al enviar notificación",
+        "NOTIFICATION_INVALID_TOKEN": "Token inválido",
+        "NOTIFICATION_EMPTY_TOKEN": "Token vacío",
+        "NOTIFICATION_EMPTY_TITLE": "Título vacío",
+        "NOTIFICATION_EMPTY_BODY": "Cuerpo vacío",
+        "NOTIFICATION_EMPTY_TOKEN_LIST": "Lista de tokens vacía",
+        "NOTIFICATION_NO_VALID_TOKENS": "No se encontraron tokens válidos",
+        "NOTIFICATION_BULK_ERROR": "Error al enviar notificaciones en lote",
+        "NOTIFICATION_EXPO_URL_MISSING": "URL de API Expo no configurada",
+        "NOTIFICATION_NO_TICKET": "No se recibió ticket para el token",
     },
 
     # ============================================================
@@ -689,6 +827,10 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "AUTH_WEAK_PASSWORD": "密码太弱",
         "AUTH_INVALID_TOKEN": "令牌无效或已过期",
         "AUTH_TOKEN_REFRESHED": "令牌更新成功",
+        "AUTH_TOKEN_REVOKED": "令牌已撤销",
+        "AUTH_USER_NOT_FOUND": "未找到用户",
+        "AUTH_INVALID_REFRESH_TOKEN": "刷新令牌无效",
+        "AUTH_TOKEN_EXPIRED": "令牌已过期",
         
         # ---------- 成就 ----------
         "ACHIEVEMENT_NOT_FOUND": "未找到成就",
@@ -875,6 +1017,48 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "SUCCESS_ACCOUNT_DELETED": "您的帐户和所有相关数据已被永久删除",
         "USER_UPDATED": "用户更新成功",
         "USER_DELETED": "用户删除成功",
+        
+        # ---------- Cache ----------
+        "BALANCE_CACHE_HIT": "从缓存获取余额",
+        "BALANCE_CACHE_SAVED": "余额已保存到缓存",
+        "BALANCE_CACHE_INVALIDATED": "余额缓存已失效",
+        "BALANCE_CACHE_ERROR": "访问余额缓存时出错",
+        "BALANCE_CALCULATION_ERROR": "计算余额时出错",
+        "REDIS_CONNECTION_ERROR": "Redis连接错误",
+        "DB_NONE": "db 不能为 None",
+        "USER_ID_EMPTY": "user_id 不能为空",
+        
+        # ---------- Currency ----------
+        "CURRENCY_TO_CENTS": "转换为分",
+        "CURRENCY_FROM_CENTS": "从分转换",
+        "CURRENCY_NEGATIVE_VALUE": "值不能为负数",
+        
+        # ---------- Dates ----------
+        "ERROR_DATE_PAST": "日期不能是过去",
+        "ERROR_DATE_FUTURE": "日期不能是未来",
+        "ERROR_INVALID_DATE_RANGE": "开始日期不能大于结束日期",
+        "ERROR_INVALID_DUE_DAY": "无效的到期日",
+        "ERROR_START_DATE_PAST": "开始日期不能是过去",
+        
+        # ---------- Installments ----------
+        "ERROR_INSTALLMENTS_PARTS_ZERO": "分期数必须大于零",
+        "ERROR_INSTALLMENTS_TOTAL_ZERO": "总金额必须大于零",
+        "ERROR_INSTALLMENTS_INTEREST_NEGATIVE": "利率不能为负数",
+        "ERROR_INSTALLMENTS_INTEREST_HIGH": "利率不能大于100%",
+        
+        # ---------- Notifications ----------
+        "NOTIFICATION_EXPO_ERROR": "Expo错误",
+        "NOTIFICATION_SEND_ERROR": "发送通知错误",
+        "NOTIFICATION_TIMEOUT": "发送通知超时",
+        "NOTIFICATION_INVALID_TOKEN": "无效令牌",
+        "NOTIFICATION_EMPTY_TOKEN": "空令牌",
+        "NOTIFICATION_EMPTY_TITLE": "空标题",
+        "NOTIFICATION_EMPTY_BODY": "空内容",
+        "NOTIFICATION_EMPTY_TOKEN_LIST": "空令牌列表",
+        "NOTIFICATION_NO_VALID_TOKENS": "未找到有效令牌",
+        "NOTIFICATION_BULK_ERROR": "批量发送通知错误",
+        "NOTIFICATION_EXPO_URL_MISSING": "未配置Expo API URL",
+        "NOTIFICATION_NO_TICKET": "未收到令牌的票证",
     }
 }
 
@@ -938,15 +1122,18 @@ def get_supported_languages() -> list:
 # ✅ Função get_all_message_keys() para validação
 # ✅ Função get_supported_languages() para listar idiomas
 # ✅ Fallback seguro: se a chave não for encontrada, retorna a própria chave
-# ✅ 🆕 Adicionadas chaves SCORE_RANGES_* (anonimizer)
-# ✅ 🆕 Adicionadas chaves EXPENSE_RANGES_* (anonimizer)
-# ✅ 🆕 Adicionadas chaves EMAIL_* (email_service)
-# ✅ 🆕 Adicionadas chaves AUDIT_* (audit)
+# ✅ 🆕 Adicionadas chaves AUTH_* (autenticação)
+# ✅ 🆕 Adicionadas chaves BALANCE_CACHE_* (cache de saldo)
+# ✅ 🆕 Adicionadas chaves CURRENCY_* (moeda)
+# ✅ 🆕 Adicionadas chaves ERROR_DATE_* (datas)
+# ✅ 🆕 Adicionadas chaves ERROR_INSTALLMENTS_* (parcelas)
+# ✅ 🆕 Adicionadas chaves NOTIFICATION_* (notificações)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
 #   - v2: Adicionado chaves IA Service (04/07/2026)
 #   - v3: Adicionado chaves SCORE_* (04/07/2026)
 #   - v4: Adicionado chaves SCORE_RANGES, EXPENSE_RANGES, EMAIL, AUDIT (04/07/2026)
+#   - v5: Adicionado chaves AUTH, BALANCE_CACHE, CURRENCY, DATES, INSTALLMENTS, NOTIFICATIONS (05/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
