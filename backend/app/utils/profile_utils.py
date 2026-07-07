@@ -27,40 +27,7 @@ Principais features:
 - ✅ Conversão de ObjectId centralizada
 - ✅ Documentação completa
 
-Regra: 2.8 (Logs)
-Regra: 3.2 (Cache com Redis)
-Regra: 4.1 (Índices)
-Regra: 5.1 (Tratamento de erros)
-Regra: 7.1 (Internacionalização)
 
-🔧 USO:
-    from app.utils.profile_utils import (
-        create_empty_profile,
-        prepare_profile_response,
-        ensure_profile_collection,
-        get_cached_profile,
-        set_cached_profile,
-        invalidate_profile_cache,
-        get_profile_metrics,
-        reset_profile_metrics
-    )
-    
-    # Garantir que a coleção existe com índices
-    await ensure_profile_collection(db)
-    
-    # Buscar perfil com cache
-    profile = await get_cached_profile(user_id, db)
-    if profile is None:
-        profile = await db.user_profiles.find_one({"user_id": user_id})
-        if profile:
-            await set_cached_profile(user_id, profile)
-    
-    # Preparar resposta (com validação Pydantic)
-    response = prepare_profile_response(profile, fallback_user_id=user_id)
-    
-    # Ver métricas do cache
-    metrics = get_profile_metrics()
-    print(metrics["hit_rate"])  # 85.0%
 """
 
 from datetime import datetime, timezone
@@ -427,44 +394,6 @@ async def ensure_profile_collection(db) -> bool:
         error_msg = get_message("ERROR_PROFILE_COLLECTION", "pt", error=str(e))
         logger.error(f"❌ {error_msg}", exc_info=True)
         return False
-
-
-# ============================================================
-# NOTAS DE IMPLEMENTAÇÃO
-# ============================================================
-
-"""
-📌 COMO USAR:
-
-1. Garantir coleção (antes de qualquer operação):
-   from app.utils.profile_utils import ensure_profile_collection
-   await ensure_profile_collection(db)
-
-2. Buscar perfil com cache:
-   from app.utils.profile_utils import get_cached_profile, set_cached_profile
-   
-   profile = await get_cached_profile(user_id, db)
-   if profile is None:
-       profile = await db.user_profiles.find_one({"user_id": user_id})
-       if profile:
-           await set_cached_profile(user_id, profile)
-       else:
-           profile = create_empty_profile(user_id)
-
-3. Preparar resposta (com validação Pydantic):
-   from app.utils.profile_utils import prepare_profile_response
-   response = prepare_profile_response(profile, fallback_user_id=user_id)
-
-4. Invalidar cache ao atualizar:
-   from app.utils.profile_utils import invalidate_profile_cache
-   await db.user_profiles.update_one(...)
-   await invalidate_profile_cache(user_id)
-
-5. Ver métricas (debug/admin):
-   from app.utils.profile_utils import get_profile_metrics
-   metrics = get_profile_metrics()
-   # metrics = {"hits": 80, "misses": 20, "hit_rate": 80.0, "total": 100}
-"""
 
 
 # ============================================================

@@ -13,14 +13,15 @@ Arquivo: backend/app/indexes.py
 - 🔧 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
 - 🔧 NOVO: partialFilterExpression no TTL para otimização
 - 🔧 NOVO: Índices para bills (category e paid+due_date)
-- 🔧 NOVO: Índices para user_profiles (updated_at TTL, user_id+updated_at, is_complete)
+- 🔧 NOVO: Índices para user_profiles (user_id unique, updated_at, user_id+updated_at, is_complete)
+- 🔧 CORRIGIDO: Removido TTL do índice updated_at em user_profiles (dados mantidos para sempre)
 - 🆕 NOVO: Índice para credit_card_purchases (interest_rate)
 - 🆕 NOVO: Índices para ia_audit_logs (user_id + created_at)
 - 🆕 NOVO: Índices para ia_feedback (audit_id, feedback)
 - 🆕 NOVO: Índices para investments (user_id + category, user_id + sold, user_id + created_at)
 - 🆕 NOVO: Índices para notification_logs (user_id + sent_at, type + sent_at)
 - 🆕 NOVO: Índices para transactions (user_id + context + date, user_id + date + type, user_id + category)
-- 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
+- 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique, user_id+created_at)
 - 🆕 NOVO: Índices para delete_requests (user_id)
 - 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
 - 🆕 NOVO: Índice TTL para score_cache (cached_at)
@@ -130,24 +131,21 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles.user_id: {e}", exc_info=True)
     
-    # 🔧 NOVO: Índice para updated_at (ordenar por data de atualização)
+    # 🔧 CORRIGIDO: Índice para updated_at (SEM TTL - dados mantidos para sempre)
     try:
-        await db.user_profiles.create_index(
-            [("updated_at", 1)],
-            expireAfterSeconds=60 * 60 * 24 * 365  # 1 ano
-        )
-        logger.info("✅ Índice user_profiles.updated_at (TTL) criado (1 ano)")
+        await db.user_profiles.create_index([("updated_at", 1)])
+        logger.info("✅ Índice user_profiles.updated_at (sem TTL) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles.updated_at: {e}", exc_info=True)
     
-    # 🔧 NOVO: Índice composto para consultas comuns (user_id + updated_at)
+    # Índice composto para consultas comuns (user_id + updated_at)
     try:
         await db.user_profiles.create_index([("user_id", 1), ("updated_at", -1)])
         logger.info("✅ Índice composto user_profiles.(user_id, updated_at) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles.(user_id, updated_at): {e}", exc_info=True)
     
-    # 🔧 NOVO: Índice para is_complete (perfis completos/incompletos)
+    # Índice para is_complete (perfis completos/incompletos)
     try:
         await db.user_profiles.create_index("is_complete")
         logger.info("✅ Índice user_profiles.is_complete criado")
@@ -383,8 +381,9 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice notification_logs.type + sent_at: {e}", exc_info=True)
     
     # ================================================================
-    # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS)
+    # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS) 🔧 CORRIGIDO
     # ================================================================
+    # Índice TTL para expiração automática
     try:
         await db.delete_tokens.create_index(
             [("expires_at", 1)],
@@ -394,14 +393,19 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice delete_tokens.expires_at: {e}", exc_info=True)
     
+    # 🔧 NOVO: Índice único para token (busca por token)
     try:
-        await db.delete_tokens.create_index(
-            [("token", 1)],
-            unique=True
-        )
+        await db.delete_tokens.create_index([("token", 1)], unique=True)
         logger.info("✅ Índice delete_tokens.token (unique) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice delete_tokens.token: {e}", exc_info=True)
+    
+    # 🔧 NOVO: Índice para user_id + created_at (busca por usuário)
+    try:
+        await db.delete_tokens.create_index([("user_id", 1), ("created_at", -1)])
+        logger.info("✅ Índice delete_tokens.(user_id, created_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice delete_tokens.(user_id, created_at): {e}", exc_info=True)
     
     # ================================================================
     # 21. SOLICITAÇÕES DE EXCLUSÃO (DELETE_REQUESTS)
@@ -523,12 +527,13 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para investments
 # ✅ 🆕 NOVO: Índices para notification_logs
 # ✅ 🆕 NOVO: Índices para transactions
-# ✅ 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique)
+# ✅ 🆕 NOVO: Índices para delete_tokens (expires_at TTL, token unique, user_id+created_at)
 # ✅ 🆕 NOVO: Índices para delete_requests (user_id)
 # ✅ 🆕 NOVO: Índices para ia_metrics (user_id + timestamp, timestamp, user_id)
 # ✅ 🆕 NOVO: Índice TTL para score_cache (cached_at)
 # ✅ 🆕 NOVO: Índices para login_rate_limits (identifier unique, updated_at TTL)
 # ✅ 🆕 NOVO: Índices para balance_cache (user_id + context, expires_at TTL)
-# ✅ 🆕 NOVO: Índices para user_profiles (updated_at TTL, user_id+updated_at, is_complete)
+# ✅ 🆕 NOVO: Índices para user_profiles (user_id, updated_at, user_id+updated_at, is_complete)
+# ✅ 🔧 CORRIGIDO: Removido TTL do índice updated_at em user_profiles (dados mantidos para sempre)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

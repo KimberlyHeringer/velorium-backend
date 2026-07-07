@@ -286,6 +286,69 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_BULK_ERROR": "Erro ao enviar notificações em lote",
         "NOTIFICATION_EXPO_URL_MISSING": "URL da API Expo não configurada",
         "NOTIFICATION_NO_TICKET": "Ticket não recebido para o token",
+        
+        # ---------- Scheduler ----------
+        "SCHEDULER_WORKER_SCORE_LOADED": "✅ Worker de score carregado com sucesso",
+        "SCHEDULER_WORKER_SCORE_NOT_AVAILABLE": "⚠️ Worker de score não disponível: {error}",
+        "SCHEDULER_WORKER_SCORE_ERROR": "❌ Erro ao carregar worker de score: {error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_LOADED": "✅ Worker de notificações carregado com sucesso",
+        "SCHEDULER_WORKER_NOTIFICATIONS_NOT_AVAILABLE": "⚠️ Worker de notificações não disponível: {error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_ERROR": "❌ Erro ao carregar worker de notificações: {error}",
+        "SCHEDULER_ALREADY_INITIALIZED": "⚠️ Scheduler já foi inicializado",
+        "SCHEDULER_DEV_MODE": "ℹ️ Ambiente de desenvolvimento detectado. Workers NÃO serão agendados.",
+        "SCHEDULER_NO_WORKERS": "❌ Nenhum worker disponível. Scheduler não será iniciado.",
+        "SCHEDULER_SCORE_SCHEDULED": "⏰ Worker de score agendado para 03:00",
+        "SCHEDULER_SCORE_NOT_SCHEDULED": "⚠️ Worker de score NÃO agendado (não disponível)",
+        "SCHEDULER_NOTIFICATIONS_SCHEDULED": "⏰ Worker de notificações agendado para 09:00",
+        "SCHEDULER_NOTIFICATIONS_NOT_SCHEDULED": "⚠️ Worker de notificações NÃO agendado (não disponível)",
+        "SCHEDULER_STARTED": "✅ Scheduler iniciado com sucesso!",
+        "SCHEDULER_NO_JOBS": "⚠️ Nenhum worker agendado. Scheduler não foi iniciado.",
+        "SCHEDULER_SHUTDOWN": "🛑 Scheduler desligado",
+        "SCHEDULER_SHUTDOWN_ERROR": "❌ Erro ao desligar scheduler: {error}",
+
+        # ---------- Score Cache ----------
+        "SCORE_CACHE_REDIS_CONNECTED": "✅ Redis conectado com sucesso para cache de score",
+        "SCORE_CACHE_REDIS_NOT_CONFIGURED": "ℹ️ Redis não configurado - usando MongoDB como cache",
+        "SCORE_CACHE_REDIS_NOT_INSTALLED": "ℹ️ Redis não instalado - usando MongoDB como cache",
+        "SCORE_CACHE_REDIS_ERROR": "❌ Erro ao conectar Redis: {error}",
+        "SCORE_CACHE_USER_ID_INVALID": "❌ user_id inválido: {user_id}",
+        "SCORE_CACHE_REDIS_HIT": "✅ Score obtido do Redis para usuário {user_id}",
+        "SCORE_CACHE_REDIS_MISS": "ℹ️ Score não encontrado no Redis para {user_id}",
+        "SCORE_CACHE_REDIS_GET_ERROR": "⚠️ Erro ao buscar score no Redis para {user_id}: {error}",
+        "SCORE_CACHE_REDIS_SET": "💾 Score armazenado no Redis para {user_id} (TTL: {ttl}s)",
+        "SCORE_CACHE_REDIS_SET_ERROR": "⚠️ Erro ao armazenar score no Redis para {user_id}: {error}",
+        "SCORE_CACHE_REDIS_INVALIDATED": "🗑️ Cache Redis invalidado para usuário {user_id}",
+        "SCORE_CACHE_REDIS_INVALIDATE_ERROR": "⚠️ Erro ao invalidar cache Redis para {user_id}: {error}",
+        "SCORE_CACHE_REDIS_BATCH_INVALIDATED": "🗑️ Cache invalidado para {count} usuários ({errors} erros)",
+        "SCORE_CACHE_MONGODB_HIT": "✅ Score obtido do MongoDB para usuário {user_id}",
+        "SCORE_CACHE_MONGODB_MISS": "ℹ️ Score não encontrado no MongoDB para {user_id}",
+        "SCORE_CACHE_MONGODB_GET_ERROR": "⚠️ Erro ao buscar score no MongoDB para {user_id}: {error}",
+        "SCORE_CACHE_MONGODB_SET": "💾 Score armazenado no MongoDB para {user_id}",
+        "SCORE_CACHE_MONGODB_SET_ERROR": "⚠️ Erro ao armazenar score no MongoDB para {user_id}: {error}",
+        "SCORE_CACHE_FINAL_HIT": "✅ Score final obtido do cache para {user_id}",
+        "SCORE_CACHE_FINAL_HIT_MONGODB": "✅ Score final obtido do MongoDB para {user_id}",
+        "SCORE_CACHE_MISS_RECALCULATING": "🔄 Cache miss para usuário {user_id} - recalculando score...",
+        "SCORE_CACHE_RECALCULATED": "✅ Score recalculado para usuário {user_id}",
+        "SCORE_CACHE_DB_NONE": "❌ db não pode ser None para o usuário {user_id}",
+
+        # ---------- User Tokens ----------
+        "USER_TOKENS_USER_ID_INVALID": "❌ user_id inválido: {user_id}",
+        "USER_TOKENS_TOKEN_INVALID": "❌ token inválido: {token}",
+        "USER_TOKENS_DB_NONE": "❌ db não pode ser None",
+        "USER_TOKENS_GENERATING": "🔄 Gerando token de exclusão para usuário {user_id}",
+        "USER_TOKENS_GENERATED": "✅ Token gerado para usuário {user_id} (expira em {expiry_hours} horas)",
+        "USER_TOKENS_GENERATE_ERROR": "❌ Erro ao gerar token para usuário {user_id}: {error}",
+        "USER_TOKENS_VERIFYING": "🔍 Verificando token {token}",
+        "USER_TOKENS_INVALID": "⚠️ Token inválido ou expirado: {token}",
+        "USER_TOKENS_VERIFIED": "✅ Token verificado para usuário {user_id}",
+        "USER_TOKENS_VERIFY_ERROR": "❌ Erro ao verificar token: {error}",
+        "USER_TOKENS_MARKING_USED": "📝 Marcando token como usado: {token}",
+        "USER_TOKENS_MARKED_USED": "✅ Token marcado como usado: {token}",
+        "USER_TOKENS_NOT_FOUND": "⚠️ Token não encontrado: {token}",
+        "USER_TOKENS_MARK_ERROR": "❌ Erro ao marcar token como usado: {error}",
+        "USER_TOKENS_DELETED_EXPIRED": "🗑️ {count} tokens expirados removidos",
+        "USER_TOKENS_DELETE_EXPIRED_ERROR": "❌ Erro ao remover tokens expirados: {error}",
+        "USER_TOKENS_RATE_LIMIT": "⛔ Limite de geração de tokens excedido para usuário {user_id}. Aguarde 1 hora.",
     },
 
     # ============================================================
@@ -549,6 +612,69 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_BULK_ERROR": "Error sending bulk notifications",
         "NOTIFICATION_EXPO_URL_MISSING": "Expo API URL not configured",
         "NOTIFICATION_NO_TICKET": "No ticket received for token",
+        
+        # ---------- Scheduler ----------
+        "SCHEDULER_WORKER_SCORE_LOADED": "✅ Score worker loaded successfully",
+        "SCHEDULER_WORKER_SCORE_NOT_AVAILABLE": "⚠️ Score worker not available: {error}",
+        "SCHEDULER_WORKER_SCORE_ERROR": "❌ Error loading score worker: {error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_LOADED": "✅ Notifications worker loaded successfully",
+        "SCHEDULER_WORKER_NOTIFICATIONS_NOT_AVAILABLE": "⚠️ Notifications worker not available: {error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_ERROR": "❌ Error loading notifications worker: {error}",
+        "SCHEDULER_ALREADY_INITIALIZED": "⚠️ Scheduler already initialized",
+        "SCHEDULER_DEV_MODE": "ℹ️ Development environment detected. Workers will NOT be scheduled.",
+        "SCHEDULER_NO_WORKERS": "❌ No workers available. Scheduler will not start.",
+        "SCHEDULER_SCORE_SCHEDULED": "⏰ Score worker scheduled for 03:00",
+        "SCHEDULER_SCORE_NOT_SCHEDULED": "⚠️ Score worker NOT scheduled (not available)",
+        "SCHEDULER_NOTIFICATIONS_SCHEDULED": "⏰ Notifications worker scheduled for 09:00",
+        "SCHEDULER_NOTIFICATIONS_NOT_SCHEDULED": "⚠️ Notifications worker NOT scheduled (not available)",
+        "SCHEDULER_STARTED": "✅ Scheduler started successfully!",
+        "SCHEDULER_NO_JOBS": "⚠️ No workers scheduled. Scheduler not started.",
+        "SCHEDULER_SHUTDOWN": "🛑 Scheduler shutdown",
+        "SCHEDULER_SHUTDOWN_ERROR": "❌ Error shutting down scheduler: {error}",
+
+        # ---------- Score Cache ----------
+        "SCORE_CACHE_REDIS_CONNECTED": "✅ Redis connected successfully for score cache",
+        "SCORE_CACHE_REDIS_NOT_CONFIGURED": "ℹ️ Redis not configured - using MongoDB as cache",
+        "SCORE_CACHE_REDIS_NOT_INSTALLED": "ℹ️ Redis not installed - using MongoDB as cache",
+        "SCORE_CACHE_REDIS_ERROR": "❌ Error connecting to Redis: {error}",
+        "SCORE_CACHE_USER_ID_INVALID": "❌ Invalid user_id: {user_id}",
+        "SCORE_CACHE_REDIS_HIT": "✅ Score retrieved from Redis for user {user_id}",
+        "SCORE_CACHE_REDIS_MISS": "ℹ️ Score not found in Redis for {user_id}",
+        "SCORE_CACHE_REDIS_GET_ERROR": "⚠️ Error fetching score from Redis for {user_id}: {error}",
+        "SCORE_CACHE_REDIS_SET": "💾 Score stored in Redis for {user_id} (TTL: {ttl}s)",
+        "SCORE_CACHE_REDIS_SET_ERROR": "⚠️ Error storing score in Redis for {user_id}: {error}",
+        "SCORE_CACHE_REDIS_INVALIDATED": "🗑️ Redis cache invalidated for user {user_id}",
+        "SCORE_CACHE_REDIS_INVALIDATE_ERROR": "⚠️ Error invalidating Redis cache for {user_id}: {error}",
+        "SCORE_CACHE_REDIS_BATCH_INVALIDATED": "🗑️ Cache invalidated for {count} users ({errors} errors)",
+        "SCORE_CACHE_MONGODB_HIT": "✅ Score retrieved from MongoDB for user {user_id}",
+        "SCORE_CACHE_MONGODB_MISS": "ℹ️ Score not found in MongoDB for {user_id}",
+        "SCORE_CACHE_MONGODB_GET_ERROR": "⚠️ Error fetching score from MongoDB for {user_id}: {error}",
+        "SCORE_CACHE_MONGODB_SET": "💾 Score stored in MongoDB for {user_id}",
+        "SCORE_CACHE_MONGODB_SET_ERROR": "⚠️ Error storing score in MongoDB for {user_id}: {error}",
+        "SCORE_CACHE_FINAL_HIT": "✅ Final score retrieved from cache for {user_id}",
+        "SCORE_CACHE_FINAL_HIT_MONGODB": "✅ Final score retrieved from MongoDB for {user_id}",
+        "SCORE_CACHE_MISS_RECALCULATING": "🔄 Cache miss for user {user_id} - recalculating score...",
+        "SCORE_CACHE_RECALCULATED": "✅ Score recalculated for user {user_id}",
+        "SCORE_CACHE_DB_NONE": "❌ db cannot be None for user {user_id}",
+
+        # ---------- User Tokens ----------
+        "USER_TOKENS_USER_ID_INVALID": "❌ Invalid user_id: {user_id}",
+        "USER_TOKENS_TOKEN_INVALID": "❌ Invalid token: {token}",
+        "USER_TOKENS_DB_NONE": "❌ db cannot be None",
+        "USER_TOKENS_GENERATING": "🔄 Generating deletion token for user {user_id}",
+        "USER_TOKENS_GENERATED": "✅ Token generated for user {user_id} (expires in {expiry_hours} hours)",
+        "USER_TOKENS_GENERATE_ERROR": "❌ Error generating token for user {user_id}: {error}",
+        "USER_TOKENS_VERIFYING": "🔍 Verifying token {token}",
+        "USER_TOKENS_INVALID": "⚠️ Invalid or expired token: {token}",
+        "USER_TOKENS_VERIFIED": "✅ Token verified for user {user_id}",
+        "USER_TOKENS_VERIFY_ERROR": "❌ Error verifying token: {error}",
+        "USER_TOKENS_MARKING_USED": "📝 Marking token as used: {token}",
+        "USER_TOKENS_MARKED_USED": "✅ Token marked as used: {token}",
+        "USER_TOKENS_NOT_FOUND": "⚠️ Token not found: {token}",
+        "USER_TOKENS_MARK_ERROR": "❌ Error marking token as used: {error}",
+        "USER_TOKENS_DELETED_EXPIRED": "🗑️ {count} expired tokens removed",
+        "USER_TOKENS_DELETE_EXPIRED_ERROR": "❌ Error removing expired tokens: {error}",
+        "USER_TOKENS_RATE_LIMIT": "⛔ Token generation limit exceeded for user {user_id}. Please wait 1 hour.",
     },
 
     # ============================================================
@@ -812,6 +938,69 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_BULK_ERROR": "Error al enviar notificaciones en lote",
         "NOTIFICATION_EXPO_URL_MISSING": "URL de API Expo no configurada",
         "NOTIFICATION_NO_TICKET": "No se recibió ticket para el token",
+        
+        # ---------- Scheduler ----------
+        "SCHEDULER_WORKER_SCORE_LOADED": "✅ Worker de score cargado con éxito",
+        "SCHEDULER_WORKER_SCORE_NOT_AVAILABLE": "⚠️ Worker de score no disponible: {error}",
+        "SCHEDULER_WORKER_SCORE_ERROR": "❌ Error al cargar worker de score: {error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_LOADED": "✅ Worker de notificaciones cargado con éxito",
+        "SCHEDULER_WORKER_NOTIFICATIONS_NOT_AVAILABLE": "⚠️ Worker de notificaciones no disponible: {error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_ERROR": "❌ Error al cargar worker de notificaciones: {error}",
+        "SCHEDULER_ALREADY_INITIALIZED": "⚠️ El scheduler ya fue inicializado",
+        "SCHEDULER_DEV_MODE": "ℹ️ Entorno de desarrollo detectado. Los workers NO serán programados.",
+        "SCHEDULER_NO_WORKERS": "❌ Ningún worker disponible. El scheduler no se iniciará.",
+        "SCHEDULER_SCORE_SCHEDULED": "⏰ Worker de score programado para las 03:00",
+        "SCHEDULER_SCORE_NOT_SCHEDULED": "⚠️ Worker de score NO programado (no disponible)",
+        "SCHEDULER_NOTIFICATIONS_SCHEDULED": "⏰ Worker de notificaciones programado para las 09:00",
+        "SCHEDULER_NOTIFICATIONS_NOT_SCHEDULED": "⚠️ Worker de notificaciones NO programado (no disponible)",
+        "SCHEDULER_STARTED": "✅ Scheduler iniciado con éxito!",
+        "SCHEDULER_NO_JOBS": "⚠️ Ningún worker programado. El scheduler no se inició.",
+        "SCHEDULER_SHUTDOWN": "🛑 Scheduler apagado",
+        "SCHEDULER_SHUTDOWN_ERROR": "❌ Error al apagar scheduler: {error}",
+
+        # ---------- Score Cache ----------
+        "SCORE_CACHE_REDIS_CONNECTED": "✅ Redis conectado con éxito para caché de score",
+        "SCORE_CACHE_REDIS_NOT_CONFIGURED": "ℹ️ Redis no configurado - usando MongoDB como caché",
+        "SCORE_CACHE_REDIS_NOT_INSTALLED": "ℹ️ Redis no instalado - usando MongoDB como caché",
+        "SCORE_CACHE_REDIS_ERROR": "❌ Error al conectar Redis: {error}",
+        "SCORE_CACHE_USER_ID_INVALID": "❌ user_id inválido: {user_id}",
+        "SCORE_CACHE_REDIS_HIT": "✅ Score obtenido de Redis para usuario {user_id}",
+        "SCORE_CACHE_REDIS_MISS": "ℹ️ Score no encontrado en Redis para {user_id}",
+        "SCORE_CACHE_REDIS_GET_ERROR": "⚠️ Error al obtener score de Redis para {user_id}: {error}",
+        "SCORE_CACHE_REDIS_SET": "💾 Score almacenado en Redis para {user_id} (TTL: {ttl}s)",
+        "SCORE_CACHE_REDIS_SET_ERROR": "⚠️ Error al almacenar score en Redis para {user_id}: {error}",
+        "SCORE_CACHE_REDIS_INVALIDATED": "🗑️ Caché Redis invalidado para usuario {user_id}",
+        "SCORE_CACHE_REDIS_INVALIDATE_ERROR": "⚠️ Error al invalidar caché Redis para {user_id}: {error}",
+        "SCORE_CACHE_REDIS_BATCH_INVALIDATED": "🗑️ Caché invalidado para {count} usuarios ({errors} errores)",
+        "SCORE_CACHE_MONGODB_HIT": "✅ Score obtenido de MongoDB para usuario {user_id}",
+        "SCORE_CACHE_MONGODB_MISS": "ℹ️ Score no encontrado en MongoDB para {user_id}",
+        "SCORE_CACHE_MONGODB_GET_ERROR": "⚠️ Error al obtener score de MongoDB para {user_id}: {error}",
+        "SCORE_CACHE_MONGODB_SET": "💾 Score almacenado en MongoDB para {user_id}",
+        "SCORE_CACHE_MONGODB_SET_ERROR": "⚠️ Error al almacenar score en MongoDB para {user_id}: {error}",
+        "SCORE_CACHE_FINAL_HIT": "✅ Score final obtenido de caché para {user_id}",
+        "SCORE_CACHE_FINAL_HIT_MONGODB": "✅ Score final obtenido de MongoDB para {user_id}",
+        "SCORE_CACHE_MISS_RECALCULATING": "🔄 Cache miss para usuario {user_id} - recalculando score...",
+        "SCORE_CACHE_RECALCULATED": "✅ Score recalculado para usuario {user_id}",
+        "SCORE_CACHE_DB_NONE": "❌ db no puede ser None para el usuario {user_id}",
+
+        # ---------- User Tokens ----------
+        "USER_TOKENS_USER_ID_INVALID": "❌ user_id inválido: {user_id}",
+        "USER_TOKENS_TOKEN_INVALID": "❌ token inválido: {token}",
+        "USER_TOKENS_DB_NONE": "❌ db no puede ser None",
+        "USER_TOKENS_GENERATING": "🔄 Generando token de eliminación para usuario {user_id}",
+        "USER_TOKENS_GENERATED": "✅ Token generado para usuario {user_id} (expira en {expiry_hours} horas)",
+        "USER_TOKENS_GENERATE_ERROR": "❌ Error al generar token para usuario {user_id}: {error}",
+        "USER_TOKENS_VERIFYING": "🔍 Verificando token {token}",
+        "USER_TOKENS_INVALID": "⚠️ Token inválido o expirado: {token}",
+        "USER_TOKENS_VERIFIED": "✅ Token verificado para usuario {user_id}",
+        "USER_TOKENS_VERIFY_ERROR": "❌ Error al verificar token: {error}",
+        "USER_TOKENS_MARKING_USED": "📝 Marcando token como usado: {token}",
+        "USER_TOKENS_MARKED_USED": "✅ Token marcado como usado: {token}",
+        "USER_TOKENS_NOT_FOUND": "⚠️ Token no encontrado: {token}",
+        "USER_TOKENS_MARK_ERROR": "❌ Error al marcar token como usado: {error}",
+        "USER_TOKENS_DELETED_EXPIRED": "🗑️ {count} tokens expirados eliminados",
+        "USER_TOKENS_DELETE_EXPIRED_ERROR": "❌ Error al eliminar tokens expirados: {error}",
+        "USER_TOKENS_RATE_LIMIT": "⛔ Límite de generación de tokens excedido para usuario {user_id}. Espere 1 hora.",
     },
 
     # ============================================================
@@ -1075,6 +1264,69 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "NOTIFICATION_BULK_ERROR": "批量发送通知错误",
         "NOTIFICATION_EXPO_URL_MISSING": "未配置Expo API URL",
         "NOTIFICATION_NO_TICKET": "未收到令牌的票证",
+        
+        # ---------- Scheduler ----------
+        "SCHEDULER_WORKER_SCORE_LOADED": "✅ 评分工作器加载成功",
+        "SCHEDULER_WORKER_SCORE_NOT_AVAILABLE": "⚠️ 评分工作器不可用：{error}",
+        "SCHEDULER_WORKER_SCORE_ERROR": "❌ 加载评分工作器出错：{error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_LOADED": "✅ 通知工作器加载成功",
+        "SCHEDULER_WORKER_NOTIFICATIONS_NOT_AVAILABLE": "⚠️ 通知工作器不可用：{error}",
+        "SCHEDULER_WORKER_NOTIFICATIONS_ERROR": "❌ 加载通知工作器出错：{error}",
+        "SCHEDULER_ALREADY_INITIALIZED": "⚠️ 调度器已初始化",
+        "SCHEDULER_DEV_MODE": "ℹ️ 检测到开发环境。工作器将不会调度。",
+        "SCHEDULER_NO_WORKERS": "❌ 没有可用的工作器。调度器不会启动。",
+        "SCHEDULER_SCORE_SCHEDULED": "⏰ 评分工作器安排在 03:00",
+        "SCHEDULER_SCORE_NOT_SCHEDULED": "⚠️ 评分工作器未安排（不可用）",
+        "SCHEDULER_NOTIFICATIONS_SCHEDULED": "⏰ 通知工作器安排在 09:00",
+        "SCHEDULER_NOTIFICATIONS_NOT_SCHEDULED": "⚠️ 通知工作器未安排（不可用）",
+        "SCHEDULER_STARTED": "✅ 调度器启动成功！",
+        "SCHEDULER_NO_JOBS": "⚠️ 没有安排工作器。调度器未启动。",
+        "SCHEDULER_SHUTDOWN": "🛑 调度器已关闭",
+        "SCHEDULER_SHUTDOWN_ERROR": "❌ 关闭调度器出错：{error}",
+
+        # ---------- Score Cache ----------
+        "SCORE_CACHE_REDIS_CONNECTED": "✅ Redis 成功连接到评分缓存",
+        "SCORE_CACHE_REDIS_NOT_CONFIGURED": "ℹ️ Redis 未配置 - 使用 MongoDB 作为缓存",
+        "SCORE_CACHE_REDIS_NOT_INSTALLED": "ℹ️ Redis 未安装 - 使用 MongoDB 作为缓存",
+        "SCORE_CACHE_REDIS_ERROR": "❌ 连接 Redis 出错：{error}",
+        "SCORE_CACHE_USER_ID_INVALID": "❌ user_id 无效：{user_id}",
+        "SCORE_CACHE_REDIS_HIT": "✅ 从 Redis 获取用户 {user_id} 的评分",
+        "SCORE_CACHE_REDIS_MISS": "ℹ️ 在 Redis 中未找到 {user_id} 的评分",
+        "SCORE_CACHE_REDIS_GET_ERROR": "⚠️ 从 Redis 获取 {user_id} 的评分出错：{error}",
+        "SCORE_CACHE_REDIS_SET": "💾 评分已存储在 Redis 中 {user_id}（TTL：{ttl}s）",
+        "SCORE_CACHE_REDIS_SET_ERROR": "⚠️ 存储评分到 Redis 出错 {user_id}：{error}",
+        "SCORE_CACHE_REDIS_INVALIDATED": "🗑️ 用户 {user_id} 的 Redis 缓存已失效",
+        "SCORE_CACHE_REDIS_INVALIDATE_ERROR": "⚠️ 使 {user_id} 的 Redis 缓存失效出错：{error}",
+        "SCORE_CACHE_REDIS_BATCH_INVALIDATED": "🗑️ 已使 {count} 个用户的缓存失效（{errors} 个错误）",
+        "SCORE_CACHE_MONGODB_HIT": "✅ 从 MongoDB 获取用户 {user_id} 的评分",
+        "SCORE_CACHE_MONGODB_MISS": "ℹ️ 在 MongoDB 中未找到 {user_id} 的评分",
+        "SCORE_CACHE_MONGODB_GET_ERROR": "⚠️ 从 MongoDB 获取 {user_id} 的评分出错：{error}",
+        "SCORE_CACHE_MONGODB_SET": "💾 评分已存储在 MongoDB 中 {user_id}",
+        "SCORE_CACHE_MONGODB_SET_ERROR": "⚠️ 存储评分到 MongoDB 出错 {user_id}：{error}",
+        "SCORE_CACHE_FINAL_HIT": "✅ 从缓存获取用户 {user_id} 的最终评分",
+        "SCORE_CACHE_FINAL_HIT_MONGODB": "✅ 从 MongoDB 获取用户 {user_id} 的最终评分",
+        "SCORE_CACHE_MISS_RECALCULATING": "🔄 用户 {user_id} 的缓存未命中 - 重新计算评分...",
+        "SCORE_CACHE_RECALCULATED": "✅ 用户 {user_id} 的评分已重新计算",
+        "SCORE_CACHE_DB_NONE": "❌ 用户 {user_id} 的 db 不能为 None",
+
+        # ---------- User Tokens ----------
+        "USER_TOKENS_USER_ID_INVALID": "❌ user_id 无效：{user_id}",
+        "USER_TOKENS_TOKEN_INVALID": "❌ token 无效：{token}",
+        "USER_TOKENS_DB_NONE": "❌ db 不能为 None",
+        "USER_TOKENS_GENERATING": "🔄 为用户 {user_id} 生成删除令牌",
+        "USER_TOKENS_GENERATED": "✅ 为用户 {user_id} 生成令牌（在 {expiry_hours} 小时后过期）",
+        "USER_TOKENS_GENERATE_ERROR": "❌ 为用户 {user_id} 生成令牌出错：{error}",
+        "USER_TOKENS_VERIFYING": "🔍 验证令牌 {token}",
+        "USER_TOKENS_INVALID": "⚠️ 令牌无效或已过期：{token}",
+        "USER_TOKENS_VERIFIED": "✅ 用户 {user_id} 的令牌已验证",
+        "USER_TOKENS_VERIFY_ERROR": "❌ 验证令牌出错：{error}",
+        "USER_TOKENS_MARKING_USED": "📝 标记令牌为已使用：{token}",
+        "USER_TOKENS_MARKED_USED": "✅ 令牌已标记为已使用：{token}",
+        "USER_TOKENS_NOT_FOUND": "⚠️ 未找到令牌：{token}",
+        "USER_TOKENS_MARK_ERROR": "❌ 标记令牌为已使用时出错：{error}",
+        "USER_TOKENS_DELETED_EXPIRED": "🗑️ 删除了 {count} 个过期令牌",
+        "USER_TOKENS_DELETE_EXPIRED_ERROR": "❌ 删除过期令牌时出错：{error}",
+        "USER_TOKENS_RATE_LIMIT": "⛔ 用户 {user_id} 超出令牌生成限制。请等待 1 小时。",
     }
 }
 
@@ -1138,15 +1390,6 @@ def get_supported_languages() -> list:
 # ✅ Função get_all_message_keys() para validação
 # ✅ Função get_supported_languages() para listar idiomas
 # ✅ Fallback seguro: se a chave não for encontrada, retorna a própria chave
-# ✅ Chaves AUTH_* (autenticação)
-# ✅ Chaves BALANCE_CACHE_* (cache de saldo)
-# ✅ Chaves CURRENCY_* (moeda)
-# ✅ Chaves ERROR_DATE_* (datas)
-# ✅ Chaves ERROR_INSTALLMENTS_* (parcelas)
-# ✅ Chaves NOTIFICATION_* (notificações)
-# ✅ 🔧 NOVO: Chaves ERROR_PROFILE_* (perfil - 4 chaves)
-# ✅ 🔧 NOVO: Chaves PROFILE_CACHE_* (cache de perfil - 4 chaves)
-# ✅ 🔧 NOVO: Chave ERROR_PAGINATION_FAILED (paginação)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -1155,5 +1398,6 @@ def get_supported_languages() -> list:
 #   - v4: Adicionado chaves SCORE_RANGES, EXPENSE_RANGES, EMAIL, AUDIT (04/07/2026)
 #   - v5: Adicionado chaves AUTH, BALANCE_CACHE, CURRENCY, DATES, INSTALLMENTS, NOTIFICATIONS (05/07/2026)
 #   - v6: Adicionado chaves PROFILE_CACHE_*, ERROR_PROFILE_*, ERROR_PAGINATION_FAILED (06/07/2026)
+#   - v7: Adicionado chaves SCHEDULER_*, SCORE_CACHE_*, USER_TOKENS_* (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
