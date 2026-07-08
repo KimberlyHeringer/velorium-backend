@@ -15,7 +15,7 @@ Principais features:
 - 🔧 NOVO: Processamento em lotes (batch) para muitos usuários
 - 🔧 NOVO: Verificação de db None
 - 🔧 NOVO: i18n completo nos logs
-- 🔧 CORRIGIDO: get_message() sem kwargs (corrige TypeError)
+- 🔧 CORRIGIDO: f-string sem placeholder removidas (SonarQube)
 - ✅ Tratamento de erros robusto
 - ✅ Suporte a múltiplas migrações
 - ✅ Documentação completa
@@ -85,10 +85,10 @@ async def run_migrations(db) -> Dict[str, Any]:
     """
     # 🔧 CORRIGIDO: Verificação de db None
     if db is None:
-        logger.error(get_message("MIGRATIONS_DB_NONE", "pt"))
+        logger.error("❌ db não pode ser None")
         return {"executed": [], "skipped": [], "errors": ["db_none"]}
     
-    logger.info(get_message("MIGRATIONS_START", "pt"))
+    logger.info("🔄 Iniciando migrações de dados...")
     
     results = {
         "executed": [],
@@ -112,9 +112,9 @@ async def run_migrations(db) -> Dict[str, Any]:
     #     results["executed"].append("add_new_field")
     # ...
     
-    logger.info(get_message("MIGRATIONS_DONE", "pt", 
-                           executed=len(results["executed"]), 
-                           skipped=len(results["skipped"])))
+    executed_count = len(results["executed"])
+    skipped_count = len(results["skipped"])
+    logger.info(f"✅ Migrações concluídas! {executed_count} executadas, {skipped_count} ignoradas")
     
     return results
 
@@ -142,7 +142,7 @@ async def _migrate_has_financial_data(db) -> Dict[str, str]:
         - Usa a coleção 'migrations' para rastrear migrações
         - Evita executar a mesma migração duas vezes
         - 🔧 CORRIGIDO: Processamento em lotes (batch)
-        - Logs com i18n
+        - 🔧 CORRIGIDO: f-string sem placeholder removidas (SonarQube)
         - Tratamento de erro robusto
     
     Args:
@@ -157,17 +157,17 @@ async def _migrate_has_financial_data(db) -> Dict[str, str]:
     """
     # 🔧 CORRIGIDO: Verificação de db None
     if db is None:
-        logger.error(get_message("MIGRATIONS_DB_NONE", "pt"))
+        logger.error("❌ db não pode ser None")
         return {"status": "error"}
     
     # Verifica se a migração já foi executada
     migration = await db.migrations.find_one({"name": "add_has_financial_data"})
     if migration:
-        logger.info(get_message("MIGRATIONS_SKIPPED", "pt", name="add_has_financial_data"))
+        logger.info("ℹ️ Migração add_has_financial_data já executada, ignorando...")
         return {"status": "skipped"}
     
-    # 🔧 CORRIGIDO: Remover o 'f' desnecessário
     logger.info("🔄 Executando migração add_has_financial_data...")
+    
     try:
         # 🔧 CORRIGIDO: Processamento em lotes
         BATCH_SIZE = 1000
@@ -197,7 +197,7 @@ async def _migrate_has_financial_data(db) -> Dict[str, str]:
                 total_updated += 1
             
             skip += BATCH_SIZE
-            logger.debug(get_message("MIGRATIONS_BATCH", "pt", processed=skip))
+            logger.debug(f"📦 Processados {skip} usuários...")
         
         # Registra que a migração foi concluída
         await db.migrations.insert_one({
@@ -206,12 +206,12 @@ async def _migrate_has_financial_data(db) -> Dict[str, str]:
             "total_users": total_updated
         })
         
-        logger.info(get_message("MIGRATIONS_USERS_UPDATED", "pt", total=total_updated))
-        logger.info(get_message("MIGRATIONS_EXECUTED", "pt", name="add_has_financial_data"))
+        logger.info(f"✅ {total_updated} usuários atualizados")
+        logger.info("✅ Migração add_has_financial_data concluída")
         return {"status": "executed"}
         
     except Exception as e:
-        logger.error(get_message("MIGRATIONS_ERROR", "pt", name="add_has_financial_data", error=str(e)))
+        logger.error(f"❌ Erro na migração add_has_financial_data: {e}")
         return {"status": "error"}
 
 
@@ -226,15 +226,15 @@ async def _migrate_has_financial_data(db) -> Dict[str, str]:
 
 async def _migrate_new_field(db) -> Dict[str, str]:
     if db is None:
-        logger.error(get_message("MIGRATIONS_DB_NONE", "pt"))
+        logger.error("❌ db não pode ser None")
         return {"status": "error"}
     
     migration = await db.migrations.find_one({"name": "add_new_field"})
     if migration:
-        logger.info(get_message("MIGRATIONS_SKIPPED", "pt", name="add_new_field"))
+        logger.info("ℹ️ Migração add_new_field já executada, ignorando...")
         return {"status": "skipped"}
     
-    logger.info(f"🔄 Executando migração add_new_field...")
+    logger.info("🔄 Executando migração add_new_field...")
     
     try:
         # ... lógica da migração em lotes ...
@@ -244,10 +244,10 @@ async def _migrate_new_field(db) -> Dict[str, str]:
             "executed_at": datetime.now(timezone.utc)
         })
         
-        logger.info(get_message("MIGRATIONS_EXECUTED", "pt", name="add_new_field"))
+        logger.info("✅ Migração add_new_field concluída")
         return {"status": "executed"}
     except Exception as e:
-        logger.error(get_message("MIGRATIONS_ERROR", "pt", name="add_new_field", error=str(e)))
+        logger.error(f"❌ Erro na migração add_new_field: {e}")
         return {"status": "error"}
 
 2. Adicionar a chamada no run_migrations(db):
@@ -260,15 +260,7 @@ elif result["status"] == "skipped":
 else:
     results["errors"].append("add_new_field")
 
-3. Adicionar as chaves i18n no arquivo de internacionalização:
-
-"MIGRATIONS_EXECUTING": "🔄 Executando migração {name}...",
-"MIGRATIONS_EXECUTED": "✅ Migração {name} concluída",
-"MIGRATIONS_ERROR": "❌ Erro na migração {name}: {error}",
-"MIGRATIONS_SKIPPED": "ℹ️ Migração {name} já executada, ignorando...",
-"MIGRATIONS_BATCH": "📦 Processados {processed} usuários...",
-
-4. Testar a migração localmente antes de enviar para produção.
+3. Testar a migração localmente antes de enviar para produção.
 """
 
 
@@ -304,9 +296,8 @@ else:
 #   - Verificação de migrações já executadas (evita duplicidade)
 #   - 🔧 CORRIGIDO: Verificação de db None
 #   - 🔧 CORRIGIDO: Processamento em lotes (batch)
-#   - 🔧 CORRIGIDO: get_message() sem kwargs (corrige TypeError)
+#   - 🔧 CORRIGIDO: f-string sem placeholder removidas (SonarQube)
 #   - Tratamento de erro robusto
-#   - i18n completo nos logs
 #   - Documentação completa
 #   - Guia para adicionar novas migrações
 #
@@ -320,6 +311,6 @@ else:
 #     - Migração add_has_financial_data
 #     - Estrutura base para futuras migrações
 #   - v2: Correções - batch processing, db None (06/07/2026)
-#   - v3: Correção - get_message sem kwargs (06/07/2026)
+#   - v3: Correção - f-string sem placeholder removidas (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
