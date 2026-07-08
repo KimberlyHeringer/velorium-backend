@@ -16,6 +16,9 @@ from app.utils.logger import setup_logger
 # ========== 🔧 NOVO: Internacionalização ==========
 from app.middleware.language import LanguageMiddleware
 
+# 🔧 NOVO: Migrations
+from app.utils.migrations import run_migrations
+
 logger = setup_logger(__name__)
 
 # Carrega variáveis de ambiente
@@ -116,6 +119,8 @@ async def startup():
         await asyncio.wait_for(connect_to_mongo(), timeout=30.0)
         db = get_database()
         await asyncio.wait_for(create_indexes(db), timeout=20.0)
+        # 🔧 NOVO: Executa migrações
+        await asyncio.wait_for(run_migrations(db), timeout=30.0)
     
     try:
         if OTEL_ENABLED:
@@ -172,6 +177,14 @@ app.include_router(user.router, prefix="/api/v1")
 app.include_router(achievements.router, prefix="/api/v1")
 app.include_router(investments.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
+
+# 🔧 NOVO: Rota de workers (status dos workers)
+try:
+    from app.routes import workers
+    app.include_router(workers.router, prefix="/api/v1")
+    logger.info("✅ Rota de workers registrada")
+except ImportError as e:
+    logger.warning(f"⚠️ Rota de workers não disponível: {e}")
 
 # ========== ENDPOINTS PÚBLICOS ==========
 @app.get("/")

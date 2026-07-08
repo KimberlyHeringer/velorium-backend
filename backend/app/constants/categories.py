@@ -6,12 +6,27 @@ Funcionalidade: Centraliza todas as categorias usadas no sistema para
 reutilização em diferentes rotas e módulos.
 
 🔧 USO:
-    from app.constants.categories import CATEGORIAS_VALIDAS, CATEGORIAS_INVESTIMENTOS
+    from app.constants.categories import (
+        CATEGORIAS_TRANSACOES,
+        CATEGORIAS_METAS,
+        CATEGORIAS_INVESTIMENTOS,
+        CATEGORIAS_COMPRAS,
+        CATEGORIAS_VALIDAS,
+        VALID_CATEGORIES,
+        get_categories_by_type,
+        is_valid_category
+    )
     
-    if category not in CATEGORIAS_VALIDAS:
+    # Validar categoria de transação
+    if category not in CATEGORIAS_TRANSACOES:
         raise ValidationException(...)
     
+    # Validar categoria de investimento
     if category not in CATEGORIAS_INVESTIMENTOS:
+        raise ValidationException(...)
+    
+    # Usar função auxiliar
+    if not is_valid_category(category, "transacoes"):
         raise ValidationException(...)
 
 📋 ESTRUTURA:
@@ -23,7 +38,10 @@ reutilização em diferentes rotas e módulos.
     VALID_CATEGORIES: Alias para CATEGORIAS_TRANSACOES (compatibilidade)
 """
 
-# ========== CATEGORIAS DE TRANSAÇÕES ==========
+# ================================================================
+# CATEGORIAS DE TRANSAÇÕES
+# ================================================================
+
 CATEGORIAS_TRANSACOES = [
     "alimentacao",
     "transporte",
@@ -37,7 +55,10 @@ CATEGORIAS_TRANSACOES = [
     "outros"
 ]
 
-# ========== CATEGORIAS DE METAS ==========
+# ================================================================
+# CATEGORIAS DE METAS
+# ================================================================
+
 CATEGORIAS_METAS = [
     "economia",
     "investimento",
@@ -49,7 +70,10 @@ CATEGORIAS_METAS = [
     "outros"
 ]
 
-# ========== CATEGORIAS DE INVESTIMENTOS ==========
+# ================================================================
+# CATEGORIAS DE INVESTIMENTOS
+# ================================================================
+
 CATEGORIAS_INVESTIMENTOS = [
     "renda_fixa",
     "acoes",
@@ -58,7 +82,10 @@ CATEGORIAS_INVESTIMENTOS = [
     "outros"
 ]
 
-# ========== CATEGORIAS DE CARTÃO DE CRÉDITO ==========
+# ================================================================
+# CATEGORIAS DE CARTÃO DE CRÉDITO
+# ================================================================
+
 CATEGORIAS_COMPRAS = [
     "alimentacao",
     "transporte",
@@ -74,17 +101,80 @@ CATEGORIAS_COMPRAS = [
     "outros"
 ]
 
-# ========== ALIAS PARA COMPATIBILIDADE ==========
+# ================================================================
+# ALIAS PARA COMPATIBILIDADE
+# ================================================================
+
 # Mantém os nomes antigos para não quebrar código existente
 CATEGORIAS_VALIDAS = CATEGORIAS_TRANSACOES
 VALID_CATEGORIES = CATEGORIAS_TRANSACOES
 
+# ================================================================
+# 🔧 NOVO: CONSTANTES COM LABEL_KEY PARA I18N
+# ================================================================
 
-# ========== FUNÇÕES AUXILIARES ==========
+CATEGORIAS_TRANSACOES_LABELS = [
+    {"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"},
+    {"value": "transporte", "label_key": "CATEGORY_TRANSPORTE"},
+    {"value": "moradia", "label_key": "CATEGORY_MORADIA"},
+    {"value": "lazer", "label_key": "CATEGORY_LAZER"},
+    {"value": "saude", "label_key": "CATEGORY_SAUDE"},
+    {"value": "educacao", "label_key": "CATEGORY_EDUCACAO"},
+    {"value": "investimentos", "label_key": "CATEGORY_INVESTIMENTOS"},
+    {"value": "vestuario", "label_key": "CATEGORY_VESTUARIO"},
+    {"value": "beleza", "label_key": "CATEGORY_BELEZA"},
+    {"value": "outros", "label_key": "CATEGORY_OUTROS"},
+]
+
+CATEGORIAS_METAS_LABELS = [
+    {"value": "economia", "label_key": "CATEGORY_ECONOMIA"},
+    {"value": "investimento", "label_key": "CATEGORY_INVESTIMENTO"},
+    {"value": "viagem", "label_key": "CATEGORY_VIAGEM"},
+    {"value": "educacao", "label_key": "CATEGORY_EDUCACAO"},
+    {"value": "saude", "label_key": "CATEGORY_SAUDE"},
+    {"value": "casa", "label_key": "CATEGORY_CASA"},
+    {"value": "carro", "label_key": "CATEGORY_CARRO"},
+    {"value": "outros", "label_key": "CATEGORY_OUTROS"},
+]
+
+CATEGORIAS_INVESTIMENTOS_LABELS = [
+    {"value": "renda_fixa", "label_key": "CATEGORY_RENDA_FIXA"},
+    {"value": "acoes", "label_key": "CATEGORY_ACOES"},
+    {"value": "fiis", "label_key": "CATEGORY_FIIS"},
+    {"value": "cripto", "label_key": "CATEGORY_CRIPTO"},
+    {"value": "outros", "label_key": "CATEGORY_OUTROS"},
+]
+
+CATEGORIAS_COMPRAS_LABELS = [
+    {"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"},
+    {"value": "transporte", "label_key": "CATEGORY_TRANSPORTE"},
+    {"value": "moradia", "label_key": "CATEGORY_MORADIA"},
+    {"value": "lazer", "label_key": "CATEGORY_LAZER"},
+    {"value": "saude", "label_key": "CATEGORY_SAUDE"},
+    {"value": "educacao", "label_key": "CATEGORY_EDUCACAO"},
+    {"value": "investimentos", "label_key": "CATEGORY_INVESTIMENTOS"},
+    {"value": "vestuario", "label_key": "CATEGORY_VESTUARIO"},
+    {"value": "beleza", "label_key": "CATEGORY_BELEZA"},
+    {"value": "eletronicos", "label_key": "CATEGORY_ELETRONICOS"},
+    {"value": "casa", "label_key": "CATEGORY_CASA"},
+    {"value": "outros", "label_key": "CATEGORY_OUTROS"},
+]
+
+
+# ================================================================
+# FUNÇÕES AUXILIARES
+# ================================================================
 
 def get_categories_by_type(category_type: str) -> list:
     """
     Retorna a lista de categorias por tipo.
+    
+    🔧 USO:
+        categories = get_categories_by_type("transacoes")
+        # ["alimentacao", "transporte", ...]
+    
+    📋 PADRÃO:
+        - Retorna lista vazia se o tipo não for encontrado
     
     Args:
         category_type: "transacoes", "metas", "investimentos", "compras"
@@ -108,9 +198,40 @@ def get_categories_by_type(category_type: str) -> list:
     return mapping.get(category_type, [])
 
 
+def get_categories_with_labels_by_type(category_type: str) -> list:
+    """
+    🔧 NOVO: Retorna a lista de categorias com label_key por tipo.
+    
+    🔧 USO:
+        categories = get_categories_with_labels_by_type("transacoes")
+        # [{"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"}, ...]
+    
+    Args:
+        category_type: "transacoes", "metas", "investimentos", "compras"
+    
+    Returns:
+        list: Lista de categorias com label_key
+    
+    Exemplo:
+        >>> get_categories_with_labels_by_type("transacoes")
+        [{"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"}, ...]
+    """
+    mapping = {
+        "transacoes": CATEGORIAS_TRANSACOES_LABELS,
+        "metas": CATEGORIAS_METAS_LABELS,
+        "investimentos": CATEGORIAS_INVESTIMENTOS_LABELS,
+        "compras": CATEGORIAS_COMPRAS_LABELS
+    }
+    return mapping.get(category_type, [])
+
+
 def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
     """
     Verifica se uma categoria é válida para um determinado tipo.
+    
+    🔧 USO:
+        if is_valid_category("alimentacao", "transacoes"):
+            print("Categoria válida")
     
     Args:
         category: Categoria a ser verificada
@@ -133,13 +254,62 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
     return category in valid_categories
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
+# ================================================================
+# NOTAS DE IMPLEMENTAÇÃO
+# ================================================================
+
+"""
+📌 COMO USAR:
+
+1. Validar categoria de transação:
+   from app.constants.categories import CATEGORIAS_TRANSACOES
+   
+   if category not in CATEGORIAS_TRANSACOES:
+       raise ValidationException(...)
+
+2. Validar categoria de investimento:
+   from app.constants.categories import CATEGORIAS_INVESTIMENTOS
+   
+   if category not in CATEGORIAS_INVESTIMENTOS:
+       raise ValidationException(...)
+
+3. Usar função auxiliar:
+   from app.constants.categories import is_valid_category
+   
+   if not is_valid_category(category, "transacoes"):
+       raise ValidationException(...)
+
+4. Usar com i18n (Frontend):
+   from app.constants.categories import get_categories_with_labels_by_type
+   
+   categories = get_categories_with_labels_by_type("transacoes")
+   # [{"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"}, ...]
+"""
+
+
+# ================================================================
+# DECISÕES DOCUMENTADAS
+# ================================================================
 #
 # ✅ Centraliza todas as categorias do sistema
 # ✅ Reutilizável em todas as rotas
 # ✅ Fácil manutenção (alterar em um lugar)
 # ✅ Compatibilidade com código existente (aliases)
 # ✅ Funções auxiliares para validação
-# ✅ 🆕 CATEGORIAS_INVESTIMENTOS adicionado
+# ✅ 🔧 NOVO: CATEGORIAS_TRANSACOES_LABELS com label_key para i18n
+# ✅ 🔧 NOVO: CATEGORIAS_METAS_LABELS com label_key para i18n
+# ✅ 🔧 NOVO: CATEGORIAS_INVESTIMENTOS_LABELS com label_key para i18n
+# ✅ 🔧 NOVO: CATEGORIAS_COMPRAS_LABELS com label_key para i18n
+# ✅ 🔧 NOVO: get_categories_with_labels_by_type()
+# ✅ 🔧 NOVO: Notas de implementação com exemplos
+#
+# ❌ Não implementado (Pós-MVP):
+#   - Categorias personalizadas pelo usuário
+#   - Categorias com ícones
+#
+# 📋 CHANGELOG:
+#   - v1: Versão inicial
+#   - v2: Adicionado CATEGORIAS_INVESTIMENTOS (05/07/2026)
+#   - v3: Adicionado labels para i18n, get_categories_with_labels_by_type (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

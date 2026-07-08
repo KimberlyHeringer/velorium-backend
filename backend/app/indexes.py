@@ -27,6 +27,9 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índice TTL para score_cache (cached_at)
 - 🆕 NOVO: Índices para login_rate_limits (identifier unique, updated_at TTL)
 - 🆕 NOVO: Índices para balance_cache (user_id + context, expires_at TTL)
+- 🆕 NOVO: Índices para worker_logs (worker + executed_at)
+- 🆕 NOVO: Índices para migrations (name unique)
+- 🆕 NOVO: Índices para notification_logs (user_id + type + sent_at)
 """
 
 from app.utils.logger import setup_logger
@@ -381,6 +384,19 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice notification_logs.type + sent_at: {e}", exc_info=True)
     
     # ================================================================
+    # 19.5 🔧 NOVO: LOGS DE NOTIFICAÇÕES - ÍNDICE COMPOSTO
+    # ================================================================
+    try:
+        await db.notification_logs.create_index([
+            ("user_id", 1),
+            ("type", 1),
+            ("sent_at", -1)
+        ])
+        logger.info("✅ Índice notification_logs.(user_id, type, sent_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notification_logs.(user_id, type, sent_at): {e}", exc_info=True)
+    
+    # ================================================================
     # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS) 🔧 CORRIGIDO
     # ================================================================
     # Índice TTL para expiração automática
@@ -500,6 +516,32 @@ async def create_indexes(db):
         logger.info("✅ Índice TTL balance_cache.expires_at criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice TTL balance_cache.expires_at: {e}", exc_info=True)
+
+    # ================================================================
+    # 26. 🔧 NOVO: WORKER LOGS
+    # ================================================================
+    try:
+        await db.worker_logs.create_index([
+            ("worker", 1),
+            ("executed_at", -1)
+        ])
+        logger.info("✅ Índice worker_logs.(worker, executed_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice worker_logs.(worker, executed_at): {e}", exc_info=True)
+
+    # ================================================================
+    # 27. 🔧 NOVO: MIGRATIONS
+    # ================================================================
+    try:
+        await db.migrations.create_index([("name", 1)], unique=True)
+        logger.info("✅ Índice migrations.name (unique) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice migrations.name: {e}", exc_info=True)
+
+    # ================================================================
+    # 28. 🔧 NOVO: NOTIFICATION LOGS - ÍNDICE COMPOSTO (JÁ ADICIONADO EM 19.5)
+    # ================================================================
+    # O índice composto (user_id, type, sent_at) já foi adicionado na seção 19.5
     
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
@@ -534,6 +576,9 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para login_rate_limits (identifier unique, updated_at TTL)
 # ✅ 🆕 NOVO: Índices para balance_cache (user_id + context, expires_at TTL)
 # ✅ 🆕 NOVO: Índices para user_profiles (user_id, updated_at, user_id+updated_at, is_complete)
+# ✅ 🆕 NOVO: Índices para worker_logs (worker + executed_at)
+# ✅ 🆕 NOVO: Índices para migrations (name unique)
+# ✅ 🆕 NOVO: Índices para notification_logs (user_id + type + sent_at)
 # ✅ 🔧 CORRIGIDO: Removido TTL do índice updated_at em user_profiles (dados mantidos para sempre)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -15,11 +15,25 @@ Principais features:
 - Consentimento LGPD com rastreamento de data
 - Preferências de idioma e moeda
 - Herança de BaseModelWithoutUser (id, created_at, updated_at, touch(), convert_objectid())
+- 🔧 NOVO: has_financial_data (indica se usuário tem dados financeiros)
 - ✅ CORRIGIDO: NÃO herda user_id (User é o próprio dono)
 - ✅ CORRIGIDO: Campos opcionais no UserCreate
 - ✅ CORRIGIDO: UserResponse herda de User
 - ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict
 - ✅ CORRIGIDO: location, occupation, financial_goal opcionais no UserResponse
+
+Regra: 2.8 (Logs)
+Regra: 5.1 (Tratamento de erros)
+Regra: 7.1 (Internacionalização)
+
+🔧 USO:
+    from app.models.user import User, UserCreate, UserResponse, UserUpdate, Token
+    
+    # Criar usuário
+    user_data = UserCreate(name="João", email="joao@email.com", password="Senha@123")
+    
+    # Resposta da API
+    return UserResponse(id="123", **user_data.model_dump())
 """
 
 from pydantic import BaseModel, Field, ConfigDict, EmailStr, field_validator, model_validator
@@ -49,6 +63,7 @@ class User(BaseModelWithoutUser, AuditMixin):
       - location: Cidade - Estado (opcional no registro)
       - occupation: Área de atuação (opcional no registro)
       - financial_goal: Objetivo financeiro (opcional no registro)
+      - has_financial_data: Indica se o usuário tem dados financeiros
       - research_consent: Consentimento para pesquisa
       - terms_accepted: Aceite dos termos
       - terms_accepted_at: Data de aceite dos termos
@@ -94,7 +109,6 @@ class User(BaseModelWithoutUser, AuditMixin):
     )
     
     # ========== CAMPOS OPCIONAIS NO REGISTRO ==========
-    # ✅ CORRIGIDO: São obrigatórios no modelo, mas opcionais no UserCreate
     
     location: str = Field(
         ...,
@@ -112,6 +126,13 @@ class User(BaseModelWithoutUser, AuditMixin):
         ...,
         max_length=500,
         description="Objetivo financeiro principal (obrigatório para recomendações)"
+    )
+    
+    # ========== 🔧 NOVO: DADOS FINANCEIROS ==========
+    
+    has_financial_data: bool = Field(
+        default=False,
+        description="Indica se o usuário tem dados financeiros (transações, metas, cartões)"
     )
     
     # ========== CONSENTIMENTO LGPD ==========
@@ -442,6 +463,7 @@ class UserUpdate(BaseModel):
 #   - ✅ CORRIGIDO: UserResponse herda de User (elimina duplicação)
 #   - ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict
 #   - ✅ CORRIGIDO: location, occupation, financial_goal opcionais no UserResponse
+#   - 🔧 NOVO: has_financial_data (indica se usuário tem dados financeiros)
 #   - Consentimento LGPD com rastreamento
 #   - I18n completo com chaves de erro
 #   - Schemas separados (Create, Update, Response, Login, Token)
@@ -457,5 +479,6 @@ class UserUpdate(BaseModel):
 #   - v3: Correções - BaseModelWithoutUser, campos opcionais, UserResponse herda de User (03/07/2026)
 #   - v4: Correção - password_hash excluído do UserResponse, campos opcionais (04/07/2026)
 #   - v5: Correção - password_hash excluído via ConfigDict (05/07/2026)
+#   - v6: Adicionado has_financial_data (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -26,15 +26,16 @@ Facilita manutenção e evita duplicação.
     - Categorias de contas a pagar (CATEGORIA_BILLS)
     - IA (GROQ_DEFAULT_MODEL, IA_TIMEOUT_SECONDS, IA_MAX_TOKENS, IA_TEMPERATURE, IA_CACHE_MAX_SIZE)
     - Anonimizer (SCORE_RANGES, EXPENSE_RANGES)
-    - 🔧 NOVO: Pagination (PAGINATION_CACHE_TTL, PAGINATION_CACHE_TTL_DEFAULT)
+    - Pagination (PAGINATION_CACHE_TTL, PAGINATION_CACHE_TTL_DEFAULT)
+    - 🔧 NOVO: Workers (SCORE_BATCH_SIZE, SCORE_MAX_USERS_PER_RUN, NOTIFICATION_BATCH_SIZE, etc.)
 """
 
 import os
-import logging
-from typing import Literal
+from typing import Literal  # 🔧 CORRIGIDO: Import adicionado
+from app.utils.logger import setup_logger
 
 # ========== CONFIGURAÇÃO DE LOG ==========
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 # ================================================================
@@ -130,16 +131,22 @@ MAX_INSTALLMENTS_DAYS_WARNING = 3
 # SCORE
 # ================================================================
 
-SCORE_CACHE_TTL_SECONDS = 3600  # 1 hora
-SLOW_THRESHOLD = 2.0  # Segundos para considerar cálculo lento
-MAX_RETRIES = 3  # Número máximo de tentativas no worker
+SCORE_CACHE_TTL_SECONDS = int(os.getenv("SCORE_CACHE_TTL_SECONDS", "3600"))
+"""TTL do cache de score em segundos (padrão: 1 hora)."""
+
+SLOW_THRESHOLD = 2.0
+"""Segundos para considerar cálculo lento."""
+
+MAX_RETRIES = 3
+"""Número máximo de tentativas no worker."""
 
 
 # ================================================================
 # BALANCE (SALDO)
 # ================================================================
 
-BALANCE_CACHE_TTL_SECONDS = 300  # 5 minutos
+BALANCE_CACHE_TTL_SECONDS = 300
+"""TTL do cache de saldo em segundos (padrão: 5 minutos)."""
 
 
 # ================================================================
@@ -194,7 +201,8 @@ EXPENSE_RANGES = [
 # CSV EXPORT
 # ================================================================
 
-CSV_MAX_EXPORT = 10000  # Máximo de registros para exportação
+CSV_MAX_EXPORT = 10000
+"""Máximo de registros para exportação."""
 
 
 # ================================================================
@@ -230,6 +238,78 @@ CATEGORIA_BILLS = Literal[
 ]
 """Categorias válidas para contas a pagar (Literal)."""
 
+
+# ================================================================
+# 🔧 NOVO: WORKERS (SCORE)
+# ================================================================
+
+SCORE_BATCH_SIZE = int(os.getenv("SCORE_BATCH_SIZE", "50"))
+"""Número de usuários processados por lote no worker de score."""
+
+SCORE_MAX_USERS_PER_RUN = int(os.getenv("SCORE_MAX_USERS_PER_RUN", "10000"))
+"""Máximo de usuários processados por execução do worker de score."""
+
+SCORE_PAUSE_DURATION = float(os.getenv("SCORE_PAUSE_DURATION", "1.0"))
+"""Pausa entre lotes no worker de score (em segundos)."""
+
+SCORE_MAX_ERRORS = int(os.getenv("SCORE_MAX_ERRORS", "100"))
+"""Máximo de erros registrados detalhadamente no worker de score."""
+
+SCORE_INCREMENTAL_ENABLED = os.getenv("SCORE_INCREMENTAL_ENABLED", "true").lower() == "true"
+"""Habilita o processamento incremental no worker de score."""
+
+
+# ================================================================
+# 🔧 NOVO: WORKERS (NOTIFICATIONS)
+# ================================================================
+
+NOTIFICATION_BATCH_SIZE = int(os.getenv("NOTIFICATION_BATCH_SIZE", "1000"))
+"""Máximo de usuários processados por execução do worker de notificações."""
+
+NOTIFICATION_PAUSE_INTERVAL = int(os.getenv("NOTIFICATION_PAUSE_INTERVAL", "10"))
+"""Pausa a cada N usuários no worker de notificações."""
+
+NOTIFICATION_PAUSE_DURATION = float(os.getenv("NOTIFICATION_PAUSE_DURATION", "1.0"))
+"""Tempo de pausa no worker de notificações (em segundos)."""
+
+NOTIFICATION_DAYS_AHEAD = int(os.getenv("NOTIFICATION_DAYS_AHEAD", "3"))
+"""Dias para contas a vencer no worker de notificações."""
+
+NOTIFICATION_DAYS_BACK = int(os.getenv("NOTIFICATION_DAYS_BACK", "30"))
+"""Dias para histórico de gastos no worker de notificações."""
+
+NOTIFICATION_MAX_RETRIES = int(os.getenv("NOTIFICATION_MAX_RETRIES", "3"))
+"""Número máximo de tentativas no worker de notificações."""
+
+NOTIFICATION_RETRY_BACKOFF = int(os.getenv("NOTIFICATION_RETRY_BACKOFF", "2"))
+"""Base para backoff exponencial no worker de notificações."""
+
+
+# ================================================================
+# NOTAS DE IMPLEMENTAÇÃO
+# ================================================================
+
+"""
+📌 COMO USAR:
+
+1. Importar constantes:
+   from app.core.constants import MAX_LIMIT, DEFAULT_LIMIT
+   from app.core.constants import PAGINATION_CACHE_TTL, PAGINATION_CACHE_TTL_DEFAULT
+   from app.core.constants import SCORE_BATCH_SIZE, NOTIFICATION_MAX_RETRIES
+
+2. Em pagination.py:
+   ttl = PAGINATION_CACHE_TTL.get("transactions", PAGINATION_CACHE_TTL_DEFAULT)
+
+3. Em validações:
+   if limit > MAX_LIMIT:
+       raise ValidationException(...)
+
+4. Em workers:
+   batch_size = SCORE_BATCH_SIZE
+   max_retries = NOTIFICATION_MAX_RETRIES
+"""
+
+
 # ================================================================
 # DECISÕES DOCUMENTADAS
 # ================================================================
@@ -253,12 +333,19 @@ CATEGORIA_BILLS = Literal[
 # ✅ IA_CACHE_MAX_SIZE adicionado
 # ✅ SCORE_RANGES adicionado (faixas de score para anonimização)
 # ✅ EXPENSE_RANGES adicionado (faixas de gasto para anonimização)
-# ✅ 🔧 NOVO: PAGINATION_CACHE_TTL por coleção
-# ✅ 🔧 NOVO: PAGINATION_CACHE_TTL_DEFAULT
+# ✅ PAGINATION_CACHE_TTL por coleção
+# ✅ PAGINATION_CACHE_TTL_DEFAULT
+# ✅ 🔧 NOVO: SCORE_BATCH_SIZE, SCORE_MAX_USERS_PER_RUN, SCORE_PAUSE_DURATION, SCORE_MAX_ERRORS, SCORE_INCREMENTAL_ENABLED
+# ✅ 🔧 NOVO: NOTIFICATION_BATCH_SIZE, NOTIFICATION_PAUSE_INTERVAL, NOTIFICATION_PAUSE_DURATION, NOTIFICATION_DAYS_AHEAD, NOTIFICATION_DAYS_BACK, NOTIFICATION_MAX_RETRIES, NOTIFICATION_RETRY_BACKOFF
+# ✅ 🔧 CORRIGIDO: Logger padronizado com setup_logger()
+# ✅ 🔧 CORRIGIDO: SCORE_CACHE_TTL_SECONDS configurável via .env
+# ✅ 🔧 CORRIGIDO: Import de Literal adicionado
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
 #   - v2: Adicionado SCORE_RANGES, EXPENSE_RANGES (05/07/2026)
 #   - v3: Adicionado PAGINATION_CACHE_TTL, PAGINATION_CACHE_TTL_DEFAULT (06/07/2026)
+#   - v4: Adicionado constantes dos workers, logger padronizado, SCORE_CACHE_TTL_SECONDS configurável (06/07/2026)
+#   - v5: Adicionado import de Literal (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
