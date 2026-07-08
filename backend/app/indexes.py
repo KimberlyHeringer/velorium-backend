@@ -30,6 +30,7 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para worker_logs (worker + executed_at)
 - 🆕 NOVO: Índices para migrations (name unique)
 - 🆕 NOVO: Índices para notification_logs (user_id + type + sent_at)
+- 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas (corrige TypeError)
 """
 
 from app.utils.logger import setup_logger
@@ -435,7 +436,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice delete_requests.user_id: {e}", exc_info=True)
     
     # ================================================================
-    # 22. MÉTRICAS DA IA (IA_METRICS)
+    # 22. MÉTRICAS DA IA (IA_METRICS) 🔧 CORRIGIDO
     # ================================================================
     try:
         await db.ia_metrics.create_index([
@@ -446,17 +447,19 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice ia_metrics.user_id + timestamp: {e}", exc_info=True)
     
+    # 🔧 CORRIGIDO: Lista de tuplas
     try:
         await db.ia_metrics.create_index(
-            ("timestamp", -1)
+            [("timestamp", -1)]  # ← CORRIGIDO: lista de tuplas
         )
         logger.info("✅ Índice ia_metrics.timestamp criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice ia_metrics.timestamp: {e}", exc_info=True)
     
+    # 🔧 CORRIGIDO: Lista de tuplas
     try:
         await db.ia_metrics.create_index(
-            ("user_id", 1)
+            [("user_id", 1)]  # ← CORRIGIDO: lista de tuplas
         )
         logger.info("✅ Índice ia_metrics.user_id criado")
     except Exception as e:
@@ -538,11 +541,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice migrations.name: {e}", exc_info=True)
 
-    # ================================================================
-    # 28. 🔧 NOVO: NOTIFICATION LOGS - ÍNDICE COMPOSTO (JÁ ADICIONADO EM 19.5)
-    # ================================================================
-    # O índice composto (user_id, type, sent_at) já foi adicionado na seção 19.5
-    
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
 
@@ -580,5 +578,6 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para migrations (name unique)
 # ✅ 🆕 NOVO: Índices para notification_logs (user_id + type + sent_at)
 # ✅ 🔧 CORRIGIDO: Removido TTL do índice updated_at em user_profiles (dados mantidos para sempre)
+# ✅ 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas (corrige TypeError)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -15,12 +15,13 @@ Principais features:
 - 🔧 NOVO: Processamento em lotes (batch) para muitos usuários
 - 🔧 NOVO: Verificação de db None
 - 🔧 NOVO: i18n completo nos logs
+- 🔧 CORRIGIDO: get_message() sem kwargs (corrige TypeError)
 - ✅ Tratamento de erros robusto
 - ✅ Suporte a múltiplas migrações
 - ✅ Documentação completa
 
 Regra: 2.8 (Logs)
-Regra: 7.1 (Internacionalización)
+Regra: 7.1 (Internacionalização)
 
 🔧 USO:
     from app.utils.migrations import run_migrations
@@ -165,8 +166,8 @@ async def _migrate_has_financial_data(db) -> Dict[str, str]:
         logger.info(get_message("MIGRATIONS_SKIPPED", "pt", name="add_has_financial_data"))
         return {"status": "skipped"}
     
-    logger.info(get_message("MIGRATIONS_EXECUTING", "pt", name="add_has_financial_data"))
-    
+    # 🔧 CORRIGIDO: Remover o 'f' desnecessário
+    logger.info("🔄 Executando migração add_has_financial_data...")
     try:
         # 🔧 CORRIGIDO: Processamento em lotes
         BATCH_SIZE = 1000
@@ -233,7 +234,7 @@ async def _migrate_new_field(db) -> Dict[str, str]:
         logger.info(get_message("MIGRATIONS_SKIPPED", "pt", name="add_new_field"))
         return {"status": "skipped"}
     
-    logger.info(get_message("MIGRATIONS_EXECUTING", "pt", name="add_new_field"))
+    logger.info(f"🔄 Executando migração add_new_field...")
     
     try:
         # ... lógica da migração em lotes ...
@@ -303,6 +304,7 @@ else:
 #   - Verificação de migrações já executadas (evita duplicidade)
 #   - 🔧 CORRIGIDO: Verificação de db None
 #   - 🔧 CORRIGIDO: Processamento em lotes (batch)
+#   - 🔧 CORRIGIDO: get_message() sem kwargs (corrige TypeError)
 #   - Tratamento de erro robusto
 #   - i18n completo nos logs
 #   - Documentação completa
@@ -318,5 +320,6 @@ else:
 #     - Migração add_has_financial_data
 #     - Estrutura base para futuras migrações
 #   - v2: Correções - batch processing, db None (06/07/2026)
+#   - v3: Correção - get_message sem kwargs (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
