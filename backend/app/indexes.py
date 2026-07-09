@@ -11,7 +11,6 @@ Arquivo: backend/app/indexes.py
 - 🔧 NOVO: Índice TTL para reset_token_expires (expiração automática)
 - 🔧 NOVO: Índices para bill_installments (otimização de consultas)
 - 🔧 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
-- 🔧 NOVO: partialFilterExpression no TTL para otimização
 - 🔧 NOVO: Índices para bills (category e paid+due_date)
 - 🔧 NOVO: Índices para user_profiles (user_id unique, updated_at, user_id+updated_at, is_complete)
 - 🔧 CORRIGIDO: Removido TTL do índice updated_at em user_profiles (dados mantidos para sempre)
@@ -31,6 +30,8 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para migrations (name unique)
 - 🆕 NOVO: Índices para notification_logs (user_id + type + sent_at)
 - 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas (corrige TypeError)
+- 🔧 CORRIGIDO: Índice updated_at remove TTL antes de recriar
+- 🔧 CORRIGIDO: Índice history.expires_at sem partialFilterExpression
 """
 
 from app.utils.logger import setup_logger
@@ -135,8 +136,17 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles.user_id: {e}", exc_info=True)
     
-    # 🔧 CORRIGIDO: Índice para updated_at (SEM TTL - dados mantidos para sempre)
+    # 🔧 CORRIGIDO: Verifica se o índice já existe e remove antes de recriar
     try:
+        existing_indexes = await db.user_profiles.index_information()
+        if "updated_at_1" in existing_indexes:
+            try:
+                await db.user_profiles.drop_index("updated_at_1")
+                logger.info("🗑️ Índice updated_at_1 removido para recriação sem TTL")
+            except Exception as drop_error:
+                logger.warning(f"⚠️ Não foi possível remover índice updated_at_1: {drop_error}")
+
+        # 🔧 CORRIGIDO: SEM TTL - dados mantidos para sempre
         await db.user_profiles.create_index([("updated_at", 1)])
         logger.info("✅ Índice user_profiles.updated_at (sem TTL) criado")
     except Exception as e:
@@ -242,15 +252,15 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS)
+    # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS) 🔧 CORRIGIDO
     # ================================================================
     try:
+        # 🔧 CORRIGIDO: Removido partialFilterExpression
         await db.bill_installments.create_index(
             [("history.expires_at", 1)],
-            expireAfterSeconds=0,
-            partialFilterExpression={"history": {"$exists": True, "$ne": []}}
+            expireAfterSeconds=0
         )
-        logger.info("✅ Índice TTL para history.expires_at criado (com partialFilterExpression)")
+        logger.info("✅ Índice TTL para history.expires_at criado (sem partialFilterExpression)")
     except Exception as e:
         logger.warning(f"⚠️ Índice TTL para history.expires_at: {e}", exc_info=True)
     
@@ -450,7 +460,7 @@ async def create_indexes(db):
     # 🔧 CORRIGIDO: Lista de tuplas
     try:
         await db.ia_metrics.create_index(
-            [("timestamp", -1)]  # ← CORRIGIDO: lista de tuplas
+            [("timestamp", -1)]
         )
         logger.info("✅ Índice ia_metrics.timestamp criado")
     except Exception as e:
@@ -459,7 +469,7 @@ async def create_indexes(db):
     # 🔧 CORRIGIDO: Lista de tuplas
     try:
         await db.ia_metrics.create_index(
-            [("user_id", 1)]  # ← CORRIGIDO: lista de tuplas
+            [("user_id", 1)]
         )
         logger.info("✅ Índice ia_metrics.user_id criado")
     except Exception as e:
@@ -559,7 +569,6 @@ async def create_indexes(db):
 # ✅ 🔧 NOVO: Índice TTL para reset_token_expires (expiração automática)
 # ✅ 🆕 NOVO: Índices bill_installments para otimização de consultas
 # ✅ 🆕 NOVO: Índice TTL para history.expires_at (expiração automática do histórico)
-# ✅ 🆕 NOVO: partialFilterExpression no TTL para otimização
 # ✅ 🆕 NOVO: Índices bills atualizados
 # ✅ 🆕 NOVO: Índices credit_card_purchases atualizados
 # ✅ 🆕 NOVO: Índices credit_card_installments atualizados
@@ -578,6 +587,7 @@ async def create_indexes(db):
 # ✅ 🆕 NOVO: Índices para migrations (name unique)
 # ✅ 🆕 NOVO: Índices para notification_logs (user_id + type + sent_at)
 # ✅ 🔧 CORRIGIDO: Removido TTL do índice updated_at em user_profiles (dados mantidos para sempre)
-# ✅ 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas (corrige TypeError)
+# ✅ 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas
+# ✅ 🔧 CORRIGIDO: Índice history.expires_at sem partialFilterExpression
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
