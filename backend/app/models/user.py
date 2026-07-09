@@ -19,7 +19,7 @@ Principais features:
 - ✅ CORRIGIDO: NÃO herda user_id (User é o próprio dono)
 - ✅ CORRIGIDO: Campos opcionais no UserCreate
 - ✅ CORRIGIDO: UserResponse herda de User
-- ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict
+- ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict E Optional
 - ✅ CORRIGIDO: location, occupation, financial_goal opcionais no UserResponse
 
 Regra: 2.8 (Logs)
@@ -329,13 +329,11 @@ class UserLogin(BaseModel):
 
 class UserResponse(User):
     """
-    Schema para RESPOSTA da API (dados públicos).
-    
-    🔧 ✅ CORRIGIDO: password_hash excluído via ConfigDict.
+    🔧 CORRIGIDO: Schema para RESPOSTA da API (dados públicos).
     
     🔧 DIFERENÇAS DO MODEL USER:
       - id é obrigatório (já existe no banco)
-      - Não tem password_hash (campo sensível)
+      - password_hash é OPCIONAL e excluído (campo sensível)
       - location, occupation, financial_goal são opcionais (caso não preenchidos)
     """
     
@@ -346,6 +344,9 @@ class UserResponse(User):
     )
     
     id: str = Field(..., alias="_id", description="ID do usuário")
+    
+    # 🔧 CORRIGIDO: password_hash como Optional e excluído
+    password_hash: Optional[str] = Field(None, exclude=True)
     
     # 🔧 Torna campos opcionais para evitar erro se o usuário não preencheu
     location: Optional[str] = None
@@ -461,7 +462,7 @@ class UserUpdate(BaseModel):
 #   - Validação de senha (3/4 critérios)
 #   - ✅ CORRIGIDO: Campos opcionais no UserCreate (location, occupation, financial_goal)
 #   - ✅ CORRIGIDO: UserResponse herda de User (elimina duplicação)
-#   - ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict
+#   - ✅ CORRIGIDO: password_hash excluído do UserResponse via ConfigDict E Optional
 #   - ✅ CORRIGIDO: location, occupation, financial_goal opcionais no UserResponse
 #   - 🔧 NOVO: has_financial_data (indica se usuário tem dados financeiros)
 #   - Consentimento LGPD com rastreamento
@@ -480,5 +481,6 @@ class UserUpdate(BaseModel):
 #   - v4: Correção - password_hash excluído do UserResponse, campos opcionais (04/07/2026)
 #   - v5: Correção - password_hash excluído via ConfigDict (05/07/2026)
 #   - v6: Adicionado has_financial_data (06/07/2026)
+#   - v7: Correção - password_hash como Optional no UserResponse (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
