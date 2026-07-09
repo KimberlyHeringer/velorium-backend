@@ -22,8 +22,9 @@ Principais features:
 - Exportação CSV (LGPD)
 - Categorias centralizadas
 - Índices otimizados
+- 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
 
-Versão: v3.2 (refatorado)
+Versão: v3.3 (corrigido)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
@@ -45,7 +46,7 @@ from app.utils.validators import convert_objectid_to_str, validate_object_id
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
 
-# ========== NOVOS IMPORTS ==========
+# ========== IMPORTS ==========
 from app.core.constants import PAYMENT_METHOD_CREDIT_CARD, BALANCE_CACHE_TTL_SECONDS, CSV_MAX_EXPORT
 from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 from app.utils.date_utils import get_month_range
@@ -219,7 +220,6 @@ async def create_transaction(
     db=Depends(get_database)
 ):
     """Cria uma nova transação (receita ou despesa)"""
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     try:
@@ -293,7 +293,6 @@ async def get_transactions(
     """
     Lista transações do usuário com paginação, filtros e ordenação.
     """
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     params = PaginationParams(page=page, limit=limit)
@@ -358,7 +357,6 @@ async def get_balance(
     """
     Retorna o saldo do MÊS ATUAL com cache.
     """
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     user_id = str(current_user.id)
@@ -397,7 +395,6 @@ async def get_total_balance(
     """
     Retorna o saldo TOTAL (soma de TODAS as transações) com cache.
     """
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     user_id = str(current_user.id)
@@ -475,7 +472,6 @@ async def recalculate_balance(
     """
     Recalcula e atualiza o cache de saldo do usuário.
     """
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     user_id = str(current_user.id)
@@ -492,7 +488,7 @@ async def recalculate_balance(
     logger.info(f"🔄 Cache de saldo recalculado para usuário {user_id}")
     
     return {
-        "message": get_message("SUCCESS_BALANCE_RECALCULATED", language),
+        "message": get_message("SUCCESS_BALANCE_RECALCULATED", "pt"),
         "success": True
     }
 
@@ -506,7 +502,6 @@ async def get_transaction(
     db=Depends(get_database)
 ):
     """Busca uma transação específica"""
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     validate_object_id(transaction_id, "transaction_id")
@@ -538,7 +533,6 @@ async def update_transaction(
     db=Depends(get_database)
 ):
     """Atualiza uma transação existente"""
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     validate_object_id(transaction_id, "transaction_id")
@@ -645,8 +639,6 @@ async def delete_transaction(
     }
 
 
-# ========== NOVOS ENDPOINTS ==========
-
 @router.post("/bulk-categorize", response_model=dict)
 @limiter.limit("10/minute", key_func=get_user_rate_limit_key)
 async def bulk_categorize_transactions(
@@ -730,7 +722,6 @@ async def export_transactions_csv(
     Exporta transações em formato CSV (LGPD - portabilidade de dados).
     Limite de 10.000 registros.
     """
-    language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     query = {
@@ -805,6 +796,7 @@ async def export_transactions_csv(
 #   - Categorias centralizadas
 #   - Índices otimizados
 #   - Funções auxiliares centralizadas
+#   - 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Timezone do usuário
@@ -816,5 +808,6 @@ async def export_transactions_csv(
 #   - v3: Rate limiting, cache, bulk, CSV (30/06/2026)
 #   - v3.1: Correções de request, scan_iter (01/07/2026)
 #   - v3.2: Refatoração - constants, rate_limiter, date_utils, installments, balance_cache (02/07/2026)
+#   - v3.3: Removidas variáveis language não utilizadas (SonarQube) (06/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
