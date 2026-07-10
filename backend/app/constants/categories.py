@@ -11,6 +11,7 @@ reutilização em diferentes rotas e módulos.
         CATEGORIAS_METAS,
         CATEGORIAS_INVESTIMENTOS,
         CATEGORIAS_COMPRAS,
+        CATEGORIAS_BILLS,           # 🆕 NOVO
         CATEGORIAS_VALIDAS,
         VALID_CATEGORIES,
         get_categories_by_type,
@@ -25,6 +26,10 @@ reutilização em diferentes rotas e módulos.
     if category not in CATEGORIAS_INVESTIMENTOS:
         raise ValidationException(...)
     
+    # Validar categoria de conta
+    if category not in CATEGORIAS_BILLS:
+        raise ValidationException(...)
+    
     # Usar função auxiliar
     if not is_valid_category(category, "transacoes"):
         raise ValidationException(...)
@@ -34,8 +39,15 @@ reutilização em diferentes rotas e módulos.
     CATEGORIAS_METAS: Categorias para metas
     CATEGORIAS_INVESTIMENTOS: Categorias para investimentos
     CATEGORIAS_COMPRAS: Categorias para compras no cartão
+    CATEGORIAS_BILLS: Categorias para contas a pagar (🆕 NOVO)
     CATEGORIAS_VALIDAS: Alias para CATEGORIAS_TRANSACOES (compatibilidade)
     VALID_CATEGORIES: Alias para CATEGORIAS_TRANSACOES (compatibilidade)
+
+🆕 ATUALIZADO: 10/07/2026
+✅ Adicionado CATEGORIAS_BILLS
+✅ Adicionado CATEGORIAS_BILLS_LABELS
+✅ Adicionado suporte a 'bills' em get_categories_by_type
+✅ Adicionado suporte a 'bills' em get_categories_with_labels_by_type
 """
 
 # ================================================================
@@ -102,6 +114,23 @@ CATEGORIAS_COMPRAS = [
 ]
 
 # ================================================================
+# 🆕 CATEGORIAS DE CONTAS A PAGAR (BILLS)
+# ================================================================
+
+CATEGORIAS_BILLS = [
+    "moradia",
+    "transporte",
+    "alimentacao",
+    "saude",
+    "educacao",
+    "lazer",
+    "servicos",
+    "seguros",
+    "impostos",
+    "outros"
+]
+
+# ================================================================
 # ALIAS PARA COMPATIBILIDADE
 # ================================================================
 
@@ -110,7 +139,7 @@ CATEGORIAS_VALIDAS = CATEGORIAS_TRANSACOES
 VALID_CATEGORIES = CATEGORIAS_TRANSACOES
 
 # ================================================================
-# 🔧 NOVO: CONSTANTES COM LABEL_KEY PARA I18N
+# 🆕 CONSTANTES COM LABEL_KEY PARA I18N
 # ================================================================
 
 CATEGORIAS_TRANSACOES_LABELS = [
@@ -160,6 +189,19 @@ CATEGORIAS_COMPRAS_LABELS = [
     {"value": "outros", "label_key": "CATEGORY_OUTROS"},
 ]
 
+# 🆕 CATEGORIAS_BILLS_LABELS
+CATEGORIAS_BILLS_LABELS = [
+    {"value": "moradia", "label_key": "CATEGORY_MORADIA"},
+    {"value": "transporte", "label_key": "CATEGORY_TRANSPORTE"},
+    {"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"},
+    {"value": "saude", "label_key": "CATEGORY_SAUDE"},
+    {"value": "educacao", "label_key": "CATEGORY_EDUCACAO"},
+    {"value": "lazer", "label_key": "CATEGORY_LAZER"},
+    {"value": "servicos", "label_key": "CATEGORY_SERVICOS"},
+    {"value": "seguros", "label_key": "CATEGORY_SEGUROS"},
+    {"value": "impostos", "label_key": "CATEGORY_IMPOSTOS"},
+    {"value": "outros", "label_key": "CATEGORY_OUTROS"},
+]
 
 # ================================================================
 # FUNÇÕES AUXILIARES
@@ -176,8 +218,10 @@ def get_categories_by_type(category_type: str) -> list:
     📋 PADRÃO:
         - Retorna lista vazia se o tipo não for encontrado
     
+    🆕 SUPORTE: 'bills' adicionado
+    
     Args:
-        category_type: "transacoes", "metas", "investimentos", "compras"
+        category_type: "transacoes", "metas", "investimentos", "compras", "bills"
     
     Returns:
         list: Lista de categorias válidas
@@ -188,12 +232,16 @@ def get_categories_by_type(category_type: str) -> list:
         
         >>> get_categories_by_type("investimentos")
         ["renda_fixa", "acoes", ...]
+        
+        >>> get_categories_by_type("bills")
+        ["moradia", "transporte", ...]
     """
     mapping = {
         "transacoes": CATEGORIAS_TRANSACOES,
         "metas": CATEGORIAS_METAS,
         "investimentos": CATEGORIAS_INVESTIMENTOS,
-        "compras": CATEGORIAS_COMPRAS
+        "compras": CATEGORIAS_COMPRAS,
+        "bills": CATEGORIAS_BILLS,  # 🆕 NOVO
     }
     return mapping.get(category_type, [])
 
@@ -206,8 +254,10 @@ def get_categories_with_labels_by_type(category_type: str) -> list:
         categories = get_categories_with_labels_by_type("transacoes")
         # [{"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"}, ...]
     
+    🆕 SUPORTE: 'bills' adicionado
+    
     Args:
-        category_type: "transacoes", "metas", "investimentos", "compras"
+        category_type: "transacoes", "metas", "investimentos", "compras", "bills"
     
     Returns:
         list: Lista de categorias com label_key
@@ -215,12 +265,16 @@ def get_categories_with_labels_by_type(category_type: str) -> list:
     Exemplo:
         >>> get_categories_with_labels_by_type("transacoes")
         [{"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"}, ...]
+        
+        >>> get_categories_with_labels_by_type("bills")
+        [{"value": "moradia", "label_key": "CATEGORY_MORADIA"}, ...]
     """
     mapping = {
         "transacoes": CATEGORIAS_TRANSACOES_LABELS,
         "metas": CATEGORIAS_METAS_LABELS,
         "investimentos": CATEGORIAS_INVESTIMENTOS_LABELS,
-        "compras": CATEGORIAS_COMPRAS_LABELS
+        "compras": CATEGORIAS_COMPRAS_LABELS,
+        "bills": CATEGORIAS_BILLS_LABELS,  # 🆕 NOVO
     }
     return mapping.get(category_type, [])
 
@@ -233,9 +287,11 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
         if is_valid_category("alimentacao", "transacoes"):
             print("Categoria válida")
     
+    🆕 SUPORTE: 'bills' adicionado
+    
     Args:
         category: Categoria a ser verificada
-        category_type: "transacoes", "metas", "investimentos", "compras"
+        category_type: "transacoes", "metas", "investimentos", "compras", "bills"
     
     Returns:
         bool: True se a categoria for válida
@@ -248,6 +304,9 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
         False
         
         >>> is_valid_category("acoes", "investimentos")
+        True
+        
+        >>> is_valid_category("moradia", "bills")
         True
     """
     valid_categories = get_categories_by_type(category_type)
@@ -267,23 +326,23 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
    if category not in CATEGORIAS_TRANSACOES:
        raise ValidationException(...)
 
-2. Validar categoria de investimento:
-   from app.constants.categories import CATEGORIAS_INVESTIMENTOS
+2. Validar categoria de conta:
+   from app.constants.categories import CATEGORIAS_BILLS
    
-   if category not in CATEGORIAS_INVESTIMENTOS:
+   if category not in CATEGORIAS_BILLS:
        raise ValidationException(...)
 
 3. Usar função auxiliar:
    from app.constants.categories import is_valid_category
    
-   if not is_valid_category(category, "transacoes"):
+   if not is_valid_category(category, "bills"):
        raise ValidationException(...)
 
 4. Usar com i18n (Frontend):
    from app.constants.categories import get_categories_with_labels_by_type
    
-   categories = get_categories_with_labels_by_type("transacoes")
-   # [{"value": "alimentacao", "label_key": "CATEGORY_ALIMENTACAO"}, ...]
+   categories = get_categories_with_labels_by_type("bills")
+   # [{"value": "moradia", "label_key": "CATEGORY_MORADIA"}, ...]
 """
 
 
@@ -296,12 +355,17 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
 # ✅ Fácil manutenção (alterar em um lugar)
 # ✅ Compatibilidade com código existente (aliases)
 # ✅ Funções auxiliares para validação
-# ✅ 🔧 NOVO: CATEGORIAS_TRANSACOES_LABELS com label_key para i18n
-# ✅ 🔧 NOVO: CATEGORIAS_METAS_LABELS com label_key para i18n
-# ✅ 🔧 NOVO: CATEGORIAS_INVESTIMENTOS_LABELS com label_key para i18n
-# ✅ 🔧 NOVO: CATEGORIAS_COMPRAS_LABELS com label_key para i18n
-# ✅ 🔧 NOVO: get_categories_with_labels_by_type()
-# ✅ 🔧 NOVO: Notas de implementação com exemplos
+# ✅ CATEGORIAS_TRANSACOES_LABELS com label_key para i18n
+# ✅ CATEGORIAS_METAS_LABELS com label_key para i18n
+# ✅ CATEGORIAS_INVESTIMENTOS_LABELS com label_key para i18n
+# ✅ CATEGORIAS_COMPRAS_LABELS com label_key para i18n
+#
+# 🆕 ATUALIZADO: 10/07/2026
+# ✅ CATEGORIAS_BILLS (10 categorias: moradia, transporte, alimentacao, saude, educacao, lazer, servicos, seguros, impostos, outros)
+# ✅ CATEGORIAS_BILLS_LABELS com label_key para i18n
+# ✅ Suporte a 'bills' em get_categories_by_type()
+# ✅ Suporte a 'bills' em get_categories_with_labels_by_type()
+# ✅ Exemplos de uso adicionados
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Categorias personalizadas pelo usuário
@@ -311,5 +375,7 @@ def is_valid_category(category: str, category_type: str = "transacoes") -> bool:
 #   - v1: Versão inicial
 #   - v2: Adicionado CATEGORIAS_INVESTIMENTOS (05/07/2026)
 #   - v3: Adicionado labels para i18n, get_categories_with_labels_by_type (06/07/2026)
+#   - v4: Adicionado CATEGORIAS_BILLS e suporte a 'bills' (10/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
+# 📅 ÚLTIMA ATUALIZAÇÃO: 10/07/2026
