@@ -24,12 +24,14 @@ Principais features:
 📅 ÚLTIMA ATUALIZAÇÃO: 10/07/2026
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
-from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, Body
+from fastapi import Body as FastAPIBody
+from typing import Optional, List, Any
 from datetime import datetime, timezone, timedelta
 import os
 import json
 import zlib  # 🔧 Compressão opcional
+from pydantic import BaseModel, Field
 
 from app.database import get_database
 from app.models.user import UserResponse
@@ -64,6 +66,29 @@ MIN_TTL = 1  # 1 segundo
 
 # 🔧 Compressão opcional (dados > 1KB são comprimidos)
 COMPRESSION_THRESHOLD = 1024  # 1KB
+
+# ================================================================
+# SCHEMAS PYDANTIC PARA REQUISIÇÕES
+# ================================================================
+
+class CacheSetRequest(BaseModel):
+    """Schema para requisição de salvamento no cache"""
+    key: str = Field(..., description="Chave do cache", min_length=1, max_length=256)
+    data: dict = Field(..., description="Dados a serem cacheados")
+    ttl: Optional[int] = Field(
+        REDIS_DEFAULT_TTL,
+        ge=MIN_TTL,
+        le=MAX_TTL,
+        description=f"TTL em segundos ({MIN_TTL}-{MAX_TTL})"
+    )
+
+class CacheInvalidatePrefixRequest(BaseModel):
+    """Schema para requisição de invalidação por prefixo"""
+    prefix: str = Field(..., description="Prefixo para invalidação", min_length=1, max_length=100)
+
+# ================================================================
+# FUNÇÕES AUXILIARES
+# ================================================================
 
 def validate_ttl(ttl: int) -> int:
     """Valida e ajusta TTL"""
@@ -342,9 +367,7 @@ async def get_cache(
 @limiter.limit("30/minute")
 async def set_cache(
     request: Request,
-    key: str = Query(..., description="Chave do cache"),
-    data: dict = Query(..., description="Dados a serem cacheados"),
-    ttl: int = Query(REDIS_DEFAULT_TTL, ge=MIN_TTL, le=MAX_TTL, description=f"TTL em segundos ({MIN_TTL}-{MAX_TTL})"),
+    cache_request: CacheSetRequest,  # ✅ Agora usa Body (Pydantic schema)
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
@@ -352,20 +375,22 @@ async def set_cache(
     Salva um item no cache (Redis + MongoDB).
     
     Args:
-        key: Chave do cache
-        data: Dados a serem cacheados
-        ttl: Tempo de vida em segundos (padrão: 300s = 5min)
+        cache_request: Objeto com key, data e ttl (Body)
     
     Returns:
         dict: Status da operação
     """
+    key = cache_request.key
+    data = cache_request.data
+    ttl = cache_request.ttl or REDIS_DEFAULT_TTL
+
     # Valida chave
     if not key or len(key) > 256:
         raise ValidationException(
             message_key="CACHE_INVALID_KEY",
             request=request
         )
-    
+
     # Valida tamanho dos dados (máx 1MB)
     try:
         data_size = len(json.dumps(data))
@@ -379,9 +404,9 @@ async def set_cache(
             message_key="CACHE_INVALID_DATA",
             request=request
         )
-    
+
     success = await set_in_cache(key, data, ttl)
-    
+
     if not success:
         language = get_language_from_request(request)
         raise I18nHTTPException(
@@ -389,9 +414,9 @@ async def set_cache(
             message_key="CACHE_SAVE_FAILED",
             request=request
         )
-    
+
     logger.info(f"📦 Cache SET: {key} para usuário {current_user.id} (TTL: {ttl}s)")
-    
+
     return {
         "success": True,
         "key": key,
@@ -438,7 +463,7 @@ async def delete_cache(
 @limiter.limit("20/minute")
 async def invalidate_cache_by_prefix(
     request: Request,
-    prefix: str = Query(..., description="Prefixo para invalidação"),
+    invalidate_request: CacheInvalidatePrefixRequest,  # ✅ Agora usa Body
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
@@ -446,11 +471,13 @@ async def invalidate_cache_by_prefix(
     Invalida múltiplos itens do cache por prefixo (Redis + MongoDB).
     
     Args:
-        prefix: Prefixo das chaves a serem removidas
+        invalidate_request: Objeto com prefix (Body)
     
     Returns:
         dict: Status da operação com contagem de itens removidos
     """
+    prefix = invalidate_request.prefix
+
     if not prefix or len(prefix) > 100:
         raise ValidationException(
             message_key="CACHE_INVALID_PREFIX",
@@ -661,6 +688,8 @@ async def get_cache_stats(
    13. Índices TTL no MongoDB (limpeza automática)
    14. I18n completo
    15. Rate limiting
+   16. 🔧 CORRIGIDO: Uso de Body em vez de Query para POST
+   17. 🔧 ADICIONADO: Schemas Pydantic (CacheSetRequest, CacheInvalidatePrefixRequest)
 
 ✅ PADRÕES SEGUIDOS:
    - Rate limiting (5-60/min)

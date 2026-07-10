@@ -33,6 +33,8 @@ Arquivo: backend/app/indexes.py
 - 🔧 CORRIGIDO: Índice updated_at remove TTL antes de recriar
 - 🔧 CORRIGIDO: Índice history.expires_at sem partialFilterExpression
 - 🆕 NOVO: Índices para cache (expires_at TTL, user_id+key unique, key)
+- 🆕 NOVO: Índices para custom_categories (user_id+name unique, user_id+type, is_deleted)
+- 🆕 NOVO: Índice unique custom_categories.(user_id, value) para slug único por usuário
 """
 
 from app.utils.logger import setup_logger
@@ -568,6 +570,48 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice cache.key: {e}", exc_info=True)
 
+    # ================================================================
+    # 🆕 29. CATEGORIAS PERSONALIZADAS (CUSTOM_CATEGORIES)
+    # ================================================================
+    # Índice único para (user_id, value) - slug único por usuário
+    try:
+        await db.custom_categories.create_index(
+            [("user_id", 1), ("value", 1)],
+            unique=True,
+            partialFilterExpression={"is_deleted": {"$ne": True}}
+        )
+        logger.info("✅ Índice custom_categories.(user_id, value) único criado (slug único por usuário)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice custom_categories.(user_id, value): {e}", exc_info=True)
+
+    # Índice para buscas por nome
+    try:
+        await db.custom_categories.create_index(
+            [("user_id", 1), ("name", 1)],
+            partialFilterExpression={"is_deleted": {"$ne": True}}
+        )
+        logger.info("✅ Índice custom_categories.(user_id, name) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice custom_categories.(user_id, name): {e}", exc_info=True)
+
+    # Índice para buscas por tipo
+    try:
+        await db.custom_categories.create_index(
+            [("user_id", 1), ("type", 1)]
+        )
+        logger.info("✅ Índice custom_categories.(user_id, type) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice custom_categories.(user_id, type): {e}", exc_info=True)
+
+    # Índice para soft delete
+    try:
+        await db.custom_categories.create_index(
+            [("is_deleted", 1)]
+        )
+        logger.info("✅ Índice custom_categories.is_deleted criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice custom_categories.is_deleted: {e}", exc_info=True)
+
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
 
@@ -607,5 +651,6 @@ async def create_indexes(db):
 # ✅ 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas
 # ✅ 🔧 CORRIGIDO: Índice history.expires_at sem partialFilterExpression
 # 🆕 ✅ NOVO: Índices para cache (expires_at TTL, user_id+key unique, key)
+# 🆕 ✅ NOVO: Índices para custom_categories (user_id+value unique, user_id+name, user_id+type, is_deleted)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

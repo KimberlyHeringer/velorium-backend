@@ -470,6 +470,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CATEGORY_CRIPTO": "Cripto",
         "CATEGORY_OUTROS": "Outros",
         "CATEGORY_INVESTIMENTO": "Investimento",
+        
+        # ---------- 🆕 Categories Personalizadas ----------
+        "CATEGORY_ALREADY_EXISTS": "Já existe uma categoria com este nome para o usuário.",
+        "CATEGORY_NOT_FOUND": "Categoria não encontrada.",
+        "CATEGORY_DELETED": "Categoria removida com sucesso.",
+        "CATEGORY_INVALID_TYPE": "Tipo de categoria inválido. Use: expense, income, goal, investment ou bill.",
+        "CATEGORY_NAME_REQUIRED": "O nome da categoria é obrigatório.",
+        "CATEGORY_INVALID_COLOR": "Cor inválida. Use formato hexadecimal (#RRGGBB ou #RGB).",
     },
 
     # ============================================================
@@ -917,6 +925,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CATEGORY_CRIPTO": "Crypto",
         "CATEGORY_OUTROS": "Others",
         "CATEGORY_INVESTIMENTO": "Investment",
+        
+        # ---------- 🆕 Custom Categories ----------
+        "CATEGORY_ALREADY_EXISTS": "A category with this name already exists for the user.",
+        "CATEGORY_NOT_FOUND": "Category not found.",
+        "CATEGORY_DELETED": "Category removed successfully.",
+        "CATEGORY_INVALID_TYPE": "Invalid category type. Use: expense, income, goal, investment or bill.",
+        "CATEGORY_NAME_REQUIRED": "Category name is required.",
+        "CATEGORY_INVALID_COLOR": "Invalid color. Use hexadecimal format (#RRGGBB or #RGB).",
     },
 
     # ============================================================
@@ -1364,6 +1380,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CATEGORY_CRIPTO": "Cripto",
         "CATEGORY_OUTROS": "Otros",
         "CATEGORY_INVESTIMENTO": "Inversión",
+        
+        # ---------- 🆕 Categorías Personalizadas ----------
+        "CATEGORY_ALREADY_EXISTS": "Ya existe una categoría con este nombre para el usuario.",
+        "CATEGORY_NOT_FOUND": "Categoría no encontrada.",
+        "CATEGORY_DELETED": "Categoría eliminada con éxito.",
+        "CATEGORY_INVALID_TYPE": "Tipo de categoría inválido. Use: expense, income, goal, investment o bill.",
+        "CATEGORY_NAME_REQUIRED": "El nombre de la categoría es obligatorio.",
+        "CATEGORY_INVALID_COLOR": "Color inválido. Use formato hexadecimal (#RRGGBB o #RGB).",
     },
 
     # ============================================================
@@ -1811,6 +1835,14 @@ MESSAGES: Dict[str, Dict[str, str]] = {
         "CATEGORY_CRIPTO": "加密货币",
         "CATEGORY_OUTROS": "其他",
         "CATEGORY_INVESTIMENTO": "投资",
+        
+        # ---------- 🆕 自定义类别 ----------
+        "CATEGORY_ALREADY_EXISTS": "该用户已存在同名类别。",
+        "CATEGORY_NOT_FOUND": "未找到类别。",
+        "CATEGORY_DELETED": "类别已成功删除。",
+        "CATEGORY_INVALID_TYPE": "无效的类别类型。请使用：expense、income、goal、investment 或 bill。",
+        "CATEGORY_NAME_REQUIRED": "类别名称是必填项。",
+        "CATEGORY_INVALID_COLOR": "无效颜色。请使用十六进制格式（#RRGGBB 或 #RGB）。",
     }
 }
 
@@ -1874,6 +1906,7 @@ def get_supported_languages() -> list:
 # ✅ Função get_all_message_keys() para validação
 # ✅ Função get_supported_languages() para listar idiomas
 # ✅ Fallback seguro: se a chave não for encontrada, retorna a própria chave
+# ✅ 🆕 Mensagens para categorias personalizadas adicionadas
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -1885,5 +1918,7 @@ def get_supported_languages() -> list:
 #   - v7: Adicionado chaves SCHEDULER_*, SCORE_CACHE_*, USER_TOKENS_* (06/07/2026)
 #   - v8: Adicionado chaves VALIDATION_* (Validators Extras) (06/07/2026)
 #   - v9: Adicionado chaves ERROR_INVALID_ID, ERROR_DATE_FUTURE, NOTIFICATION_*, SCORE_*, MIGRATIONS_*, CATEGORY_* (06/07/2026)
+#   - v10: Adicionado chaves CATEGORY_ALREADY_EXISTS, CATEGORY_NOT_FOUND, CATEGORY_DELETED, CATEGORY_INVALID_TYPE, CATEGORY_NAME_REQUIRED, CATEGORY_INVALID_COLOR (10/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
+# 📅 ÚLTIMA ATUALIZAÇÃO: 10/07/2026

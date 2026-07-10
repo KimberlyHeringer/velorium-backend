@@ -1,5 +1,5 @@
 """
-Arquivo principal do backend Velorium - Versão Estável com i18n e Cache Redis
+Arquivo principal do backend Velorium - Versão Estável com i18n, Cache Redis e Categorias Personalizadas
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -170,7 +170,8 @@ from app.routes import (
     notifications,
     achievements, 
     bill_installments,
-    cache  # 🆕 Rota de cache Redis
+    cache,          # 🆕 Rota de cache Redis
+    categories      # 🆕 Rota de categorias personalizadas
 )
 
 # Registrar rotas manualmente
@@ -188,7 +189,8 @@ app.include_router(user.router, prefix="/api/v1")
 app.include_router(achievements.router, prefix="/api/v1")
 app.include_router(investments.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
-app.include_router(cache.router, prefix="/api/v1")  # 🆕 Rota de cache Redis
+app.include_router(cache.router, prefix="/api/v1")          # 🆕 Rota de cache Redis
+app.include_router(categories.router, prefix="/api/v1")     # 🆕 Rota de categorias personalizadas
 
 # 🔧 NOVO: Rota de workers (status dos workers)
 try:
