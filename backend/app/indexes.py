@@ -32,6 +32,7 @@ Arquivo: backend/app/indexes.py
 - 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas (corrige TypeError)
 - 🔧 CORRIGIDO: Índice updated_at remove TTL antes de recriar
 - 🔧 CORRIGIDO: Índice history.expires_at sem partialFilterExpression
+- 🆕 NOVO: Índices para cache (expires_at TTL, user_id+key unique, key)
 """
 
 from app.utils.logger import setup_logger
@@ -130,13 +131,11 @@ async def create_indexes(db):
     # 5. PERFIL DO USUÁRIO (USER_PROFILES) 🔧 CORRIGIDO
     # ================================================================
     try:
-        # Índice único para user_id (consulta por usuário)
         await db.user_profiles.create_index([("user_id", 1)], unique=True)
         logger.info("✅ Índice user_profiles.user_id (unique) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles.user_id: {e}", exc_info=True)
     
-    # 🔧 CORRIGIDO: Verifica se o índice já existe e remove antes de recriar
     try:
         existing_indexes = await db.user_profiles.index_information()
         if "updated_at_1" in existing_indexes:
@@ -146,20 +145,17 @@ async def create_indexes(db):
             except Exception as drop_error:
                 logger.warning(f"⚠️ Não foi possível remover índice updated_at_1: {drop_error}")
 
-        # 🔧 CORRIGIDO: SEM TTL - dados mantidos para sempre
         await db.user_profiles.create_index([("updated_at", 1)])
         logger.info("✅ Índice user_profiles.updated_at (sem TTL) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles.updated_at: {e}", exc_info=True)
     
-    # Índice composto para consultas comuns (user_id + updated_at)
     try:
         await db.user_profiles.create_index([("user_id", 1), ("updated_at", -1)])
         logger.info("✅ Índice composto user_profiles.(user_id, updated_at) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice user_profiles.(user_id, updated_at): {e}", exc_info=True)
     
-    # Índice para is_complete (perfis completos/incompletos)
     try:
         await db.user_profiles.create_index("is_complete")
         logger.info("✅ Índice user_profiles.is_complete criado")
@@ -255,7 +251,6 @@ async def create_indexes(db):
     # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS) 🔧 CORRIGIDO
     # ================================================================
     try:
-        # 🔧 CORRIGIDO: Removido partialFilterExpression
         await db.bill_installments.create_index(
             [("history.expires_at", 1)],
             expireAfterSeconds=0
@@ -410,7 +405,6 @@ async def create_indexes(db):
     # ================================================================
     # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS) 🔧 CORRIGIDO
     # ================================================================
-    # Índice TTL para expiração automática
     try:
         await db.delete_tokens.create_index(
             [("expires_at", 1)],
@@ -420,14 +414,12 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice delete_tokens.expires_at: {e}", exc_info=True)
     
-    # 🔧 NOVO: Índice único para token (busca por token)
     try:
         await db.delete_tokens.create_index([("token", 1)], unique=True)
         logger.info("✅ Índice delete_tokens.token (unique) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice delete_tokens.token: {e}", exc_info=True)
     
-    # 🔧 NOVO: Índice para user_id + created_at (busca por usuário)
     try:
         await db.delete_tokens.create_index([("user_id", 1), ("created_at", -1)])
         logger.info("✅ Índice delete_tokens.(user_id, created_at) criado")
@@ -457,7 +449,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice ia_metrics.user_id + timestamp: {e}", exc_info=True)
     
-    # 🔧 CORRIGIDO: Lista de tuplas
     try:
         await db.ia_metrics.create_index(
             [("timestamp", -1)]
@@ -466,7 +457,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice ia_metrics.timestamp: {e}", exc_info=True)
     
-    # 🔧 CORRIGIDO: Lista de tuplas
     try:
         await db.ia_metrics.create_index(
             [("user_id", 1)]
@@ -490,14 +480,12 @@ async def create_indexes(db):
     # ================================================================
     # 24. LOGIN RATE LIMITS
     # ================================================================
-    # Índice para busca por identifier
     try:
         await db.login_rate_limits.create_index([("identifier", 1)], unique=True)
         logger.info("✅ Índice login_rate_limits.identifier (unique) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice login_rate_limits.identifier: {e}", exc_info=True)
 
-    # Índice TTL para limpeza automática
     try:
         await db.login_rate_limits.create_index(
             [("updated_at", 1)],
@@ -510,7 +498,6 @@ async def create_indexes(db):
     # ================================================================
     # 25. BALANCE CACHE (FALLBACK)
     # ================================================================
-    # Índice para busca por usuário e contexto
     try:
         await db.balance_cache.create_index([
             ("user_id", 1),
@@ -520,7 +507,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice balance_cache.user_id + context: {e}", exc_info=True)
 
-    # Índice TTL para expiração automática
     try:
         await db.balance_cache.create_index(
             [("expires_at", 1)],
@@ -531,7 +517,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice TTL balance_cache.expires_at: {e}", exc_info=True)
 
     # ================================================================
-    # 26. 🔧 NOVO: WORKER LOGS
+    # 26. WORKER LOGS
     # ================================================================
     try:
         await db.worker_logs.create_index([
@@ -543,13 +529,44 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice worker_logs.(worker, executed_at): {e}", exc_info=True)
 
     # ================================================================
-    # 27. 🔧 NOVO: MIGRATIONS
+    # 27. MIGRATIONS
     # ================================================================
     try:
         await db.migrations.create_index([("name", 1)], unique=True)
         logger.info("✅ Índice migrations.name (unique) criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice migrations.name: {e}", exc_info=True)
+
+    # ================================================================
+    # 🆕 28. CACHE (Redis Fallback MongoDB)
+    # ================================================================
+    try:
+        await db.cache.create_index(
+            [("expiresAt", 1)],
+            expireAfterSeconds=0
+        )
+        logger.info("✅ Índice TTL para cache.expiresAt criado (limpeza automática)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice TTL para cache.expiresAt: {e}", exc_info=True)
+
+    try:
+        await db.cache.create_index(
+            [("user_id", 1), ("key", 1)],
+            unique=True,
+            name="user_id_key_unique"
+        )
+        logger.info("✅ Índice único cache.(user_id, key) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice cache.(user_id, key): {e}", exc_info=True)
+
+    try:
+        await db.cache.create_index(
+            [("key", 1)],
+            name="key_index"
+        )
+        logger.info("✅ Índice cache.key criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice cache.key: {e}", exc_info=True)
 
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
@@ -589,5 +606,6 @@ async def create_indexes(db):
 # ✅ 🔧 CORRIGIDO: Removido TTL do índice updated_at em user_profiles (dados mantidos para sempre)
 # ✅ 🔧 CORRIGIDO: Índices ia_metrics com lista de tuplas
 # ✅ 🔧 CORRIGIDO: Índice history.expires_at sem partialFilterExpression
+# 🆕 ✅ NOVO: Índices para cache (expires_at TTL, user_id+key unique, key)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

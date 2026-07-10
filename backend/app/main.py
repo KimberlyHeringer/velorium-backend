@@ -1,5 +1,5 @@
 """
-Arquivo principal do backend Velorium - Versão Estável com i18n
+Arquivo principal do backend Velorium - Versão Estável com i18n e Cache Redis
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -156,10 +156,21 @@ async def shutdown():
 
 # ========== ROTAS (IMPORTS MANUAIS - MAIS CONFIÁVEL) ==========
 from app.routes import (
-    auth, transactions, bills, credit_cards,
-    credit_card_purchases, ia, profile, score,
-    goals, user, investments, notifications,
-    achievements, bill_installments
+    auth, 
+    transactions, 
+    bills, 
+    credit_cards,
+    credit_card_purchases, 
+    ia, 
+    profile, 
+    score,
+    goals, 
+    user, 
+    investments, 
+    notifications,
+    achievements, 
+    bill_installments,
+    cache  # 🆕 Rota de cache Redis
 )
 
 # Registrar rotas manualmente
@@ -177,6 +188,7 @@ app.include_router(user.router, prefix="/api/v1")
 app.include_router(achievements.router, prefix="/api/v1")
 app.include_router(investments.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
+app.include_router(cache.router, prefix="/api/v1")  # 🆕 Rota de cache Redis
 
 # 🔧 NOVO: Rota de workers (status dos workers)
 try:
