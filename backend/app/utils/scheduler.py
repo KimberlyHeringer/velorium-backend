@@ -18,7 +18,8 @@ Funcionalidades:
 - 🔧 NOVO: Função get_scheduler_status() para monitoramento
 - 🆕 NOVO: Worker de metas recorrentes (goal_recurring)
 - 🆕 NOVO: Worker de notificações de metas (goal_notifications)
-- 🔧 CORRIGIDO: Caminho dos workers usando 'worker_disabled'
+- 🔧 CORRIGIDO: Caminho dos workers usando 'workers_disabled'
+- 🔧 ADICIONADO: stop_scheduler() para desligar o scheduler
 
 🔧 REGRA 3.1: Score Financeiro - Worker Diário (03:00)
 🔧 REGRA 4.1: Notificações Proativas - Worker Diário (09:00)
@@ -69,7 +70,7 @@ def _safe_import_workers():
     
     # Tenta importar worker de score
     try:
-        from worker_disabled.score_worker import run_score_worker_sync
+        from app.workers_disabled.score_worker import run_score_worker_sync
         workers["score"] = run_score_worker_sync
         logger.info(get_message("SCHEDULER_WORKER_SCORE_LOADED", "pt"))
     except ImportError as e:
@@ -79,7 +80,7 @@ def _safe_import_workers():
     
     # Tenta importar worker de notificações proativas
     try:
-        from worker_disabled.daily_notifications import run_daily_notifications_sync
+        from app.workers_disabled.daily_notifications import run_daily_notifications_sync
         workers["notifications"] = run_daily_notifications_sync
         logger.info(get_message("SCHEDULER_WORKER_NOTIFICATIONS_LOADED", "pt"))
     except ImportError as e:
@@ -89,7 +90,7 @@ def _safe_import_workers():
     
     # 🆕 Tenta importar worker de metas recorrentes
     try:
-        from worker_disabled.goal_recurring import process_recurring_goals
+        from app.workers_disabled.goal_recurring import process_recurring_goals
         workers["goal_recurring"] = process_recurring_goals
         logger.info("✅ Worker de metas recorrentes carregado")
     except ImportError as e:
@@ -99,7 +100,7 @@ def _safe_import_workers():
     
     # 🆕 Tenta importar worker de notificações de metas
     try:
-        from worker_disabled.goal_notification import process_goal_notifications
+        from app.workers_disabled.goal_notification import process_goal_notifications
         workers["goal_notifications"] = process_goal_notifications
         logger.info("✅ Worker de notificações de metas carregado")
     except ImportError as e:
@@ -225,19 +226,41 @@ def start_scheduler():
     return init_scheduler()
 
 
-def shutdown_scheduler():
+# ================================================================
+# 🔧 NOVO: stop_scheduler()
+# ================================================================
+
+def stop_scheduler():
     """
-    Desliga o scheduler de forma segura
+    Para o scheduler de forma segura.
+    Usada no main.py para shutdown.
     """
     global _scheduler
-    if _scheduler:
-        try:
-            _scheduler.shutdown()
-            logger.info(get_message("SCHEDULER_SHUTDOWN", "pt"))
-        except Exception as e:
-            logger.error(get_message("SCHEDULER_SHUTDOWN_ERROR", "pt", error=str(e)))
-        finally:
-            _scheduler = None
+    
+    if _scheduler is None:
+        logger.info("ℹ️ Scheduler já está parado")
+        return True
+    
+    try:
+        # Remove todos os jobs
+        _scheduler.remove_all_jobs()
+        
+        # Desliga o scheduler
+        _scheduler.shutdown(wait=True)
+        _scheduler = None
+        
+        logger.info("🛑 Scheduler parado com sucesso")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Erro ao parar scheduler: {e}")
+        return False
+
+
+def shutdown_scheduler():
+    """
+    Desliga o scheduler de forma segura (alias para stop_scheduler)
+    """
+    return stop_scheduler()
 
 
 def get_scheduler():
@@ -308,11 +331,11 @@ def get_scheduler_status() -> dict:
    print(status["jobs"])
 
 4. Desligar o scheduler (no shutdown):
-   from app.utils.scheduler import shutdown_scheduler
-   shutdown_scheduler()
+   from app.utils.scheduler import stop_scheduler
+   stop_scheduler()
 
 5. Executar workers manualmente (para testes):
-   from worker_disabled.goal_recurring import process_recurring_goals
+   from app.workers_disabled.goal_recurring import process_recurring_goals
    import asyncio
    asyncio.run(process_recurring_goals())
 """
@@ -334,7 +357,8 @@ def get_scheduler_status() -> dict:
 # ✅ Documentação completa com pendências
 # 🆕 NOVO: Worker de metas recorrentes (00:00)
 # 🆕 NOVO: Worker de notificações de metas (09:00)
-# 🔧 CORRIGIDO: Caminho dos workers para 'worker_disabled'
+# 🔧 CORRIGIDO: Caminho dos workers para 'workers_disabled'
+# 🔧 ADICIONADO: stop_scheduler() para desligar o scheduler
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Dashboard de monitoramento dos workers
@@ -351,6 +375,7 @@ def get_scheduler_status() -> dict:
 #   - v2: Adicionado importação segura, fallback, ambiente (05/07/2026)
 #   - v3: Adicionado i18n, get_scheduler_status() (06/07/2026)
 #   - v4: 🆕 Adicionado workers de metas recorrentes e notificações (11/07/2026)
-#   - v5: 🔧 CORRIGIDO - Caminho dos workers para 'worker_disabled' (12/07/2026)
+#   - v5: 🔧 CORRIGIDO - Caminho dos workers para 'workers_disabled' (12/07/2026)
+#   - v6: 🔧 ADICIONADO - stop_scheduler() para desligar o scheduler (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
