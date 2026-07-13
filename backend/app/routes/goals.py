@@ -17,6 +17,9 @@ Principais features:
 - Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
 - Campos calculados (progress_percentage, remaining_amount, days_until_deadline, is_overdue)
 - Validação current <= target
+- 🆕 Validação de profundidade de sub-metas (máx 3 níveis)
+- 🆕 Validação de parent_id existente
+- 🆕 archive_completed_goal integrado ao update
 - Filtros: completed, category, parent_id, recurring, has_deadline, archived
 - Ordenação: created_at, target, current, completed, category, deadline, completed_at
 - Suporte a metas recorrentes (recurring, recurring_interval)
@@ -24,7 +27,7 @@ Principais features:
 - Suporte a data limite (deadline)
 - Histórico de metas concluídas/arquivadas
 
-Versão: v4.0 (refatorado com novas funcionalidades)
+Versão: v4.1 (com validações de sub-metas)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -54,8 +57,97 @@ logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/goals", tags=["Metas"])
 
+# ================================================================
+# CONSTANTES
+# ================================================================
 
-# ========== FUNÇÕES AUXILIARES ==========
+MAX_SUB_GOAL_DEPTH = 3  # Máximo de 3 níveis de sub-metas
+
+
+# ================================================================
+# FUNÇÕES AUXILIARES
+# ================================================================
+
+async def validate_parent_exists(db, parent_id: str, user_id: str, request: Request = None):
+    """
+    🔧 NOVO: Valida se a meta pai existe e pertence ao usuário.
+    
+    Args:
+        db: Conexão com o banco
+        parent_id: ID da meta pai
+        user_id: ID do usuário
+        request: Objeto Request para i18n
+    
+    Returns:
+        dict: Documento da meta pai
+    
+    Raises:
+        NotFoundException: Se a meta pai não for encontrada
+    """
+    validate_object_id(parent_id, "parent_id")
+    
+    parent = await db.goals.find_one({
+        "_id": ObjectId(parent_id),
+        "user_id": user_id
+    })
+    
+    if not parent:
+        raise NotFoundException(
+            message_key="ERROR_GOAL_NOT_FOUND",
+            request=request
+        )
+    
+    if parent.get("archived", False):
+        raise ValidationException(
+            message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_ARCHIVED",
+            request=request
+        )
+    
+    if parent.get("recurring", False):
+        raise ValidationException(
+            message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_RECURRING",
+            request=request
+        )
+    
+    return parent
+
+
+async def validate_sub_goal_depth(db, parent_id: str, user_id: str, current_depth: int = 0, request: Request = None):
+    """
+    🔧 NOVO: Valida a profundidade das sub-metas (máximo MAX_SUB_GOAL_DEPTH níveis).
+    
+    Args:
+        db: Conexão com o banco
+        parent_id: ID da meta pai
+        user_id: ID do usuário
+        current_depth: Profundidade atual (começa em 0)
+        request: Objeto Request para i18n
+    
+    Raises:
+        ValidationException: Se a profundidade máxima for excedida
+    """
+    if current_depth >= MAX_SUB_GOAL_DEPTH:
+        raise ValidationException(
+            message_key="ERROR_SUBGOAL_MAX_DEPTH",
+            request=request,
+            params={"max_depth": MAX_SUB_GOAL_DEPTH}
+        )
+    
+    # Busca a meta pai para continuar a verificação
+    parent = await db.goals.find_one({
+        "_id": ObjectId(parent_id),
+        "user_id": user_id
+    })
+    
+    if parent and parent.get("parent_id"):
+        await validate_sub_goal_depth(
+            db,
+            parent["parent_id"],
+            user_id,
+            current_depth + 1,
+            request
+        )
+
 
 async def recalculate_parent_progress(parent_id: str, user_id: str, db):
     """
@@ -101,7 +193,7 @@ async def recalculate_parent_progress(parent_id: str, user_id: str, db):
 
 async def archive_completed_goal(goal_id: str, user_id: str, db):
     """
-    Arquivar uma meta concluída (move para histórico).
+    🔧 CORRIGIDO: Arquivar uma meta concluída (move para histórico).
     """
     goal = await db.goals.find_one({
         "_id": ObjectId(goal_id),
@@ -122,9 +214,12 @@ async def archive_completed_goal(goal_id: str, user_id: str, db):
                 }
             }
         )
+        logger.info(f"📦 Meta arquivada: {goal_id}")
 
 
-# ========== ENDPOINTS ==========
+# ================================================================
+# ENDPOINTS
+# ================================================================
 
 @router.get("/", response_model=dict)
 async def list_goals(
@@ -145,18 +240,10 @@ async def list_goals(
 ):
     """
     Lista as metas do usuário com paginação, filtros e ordenação.
-    
-    🆕 NOVOS FILTROS:
-    - parent_id: Filtrar sub-metas de uma meta pai
-    - recurring: Filtrar metas recorrentes
-    - has_deadline: Filtrar metas com data limite
-    - archived: Filtrar metas arquivadas
-    - search: Buscar por nome
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
     
-    # Excluir arquivadas por padrão (a menos que explicitamente solicitado)
     if archived is None:
         query["archived"] = False
     elif archived is not None:
@@ -207,10 +294,8 @@ async def list_goals(
             item["target"] = from_cents(item["target"])
         if "current" in item:
             item["current"] = from_cents(item["current"])
-        # Adiciona campos calculados
         item = add_calculated_fields(item)
         
-        # Adiciona campos de deadline
         if item.get("deadline"):
             delta = item["deadline"] - datetime.now(timezone.utc)
             item["days_until_deadline"] = max(0, delta.days)
@@ -230,7 +315,7 @@ async def create_goal(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Cria uma nova meta"""
+    """Cria uma nova meta com validação de sub-metas."""
     target_cents = to_cents(goal.target)
     current_cents = to_cents(goal.current)
     
@@ -240,23 +325,10 @@ async def create_goal(
             request=request
         )
     
-    # Se for sub-meta, verifica se a meta pai existe
+    # 🔧 NOVO: Valida parent_id existente e profundidade
     if goal.parent_id:
-        validate_object_id(goal.parent_id, "parent_id")
-        parent = await db.goals.find_one({
-            "_id": ObjectId(goal.parent_id),
-            "user_id": str(current_user.id)
-        })
-        if not parent:
-            raise NotFoundException(
-                message_key="ERROR_GOAL_NOT_FOUND",
-                request=request
-            )
-        if parent.get("archived", False):
-            raise ValidationException(
-                message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_ARCHIVED",
-                request=request
-            )
+        await validate_parent_exists(db, goal.parent_id, str(current_user.id), request)
+        await validate_sub_goal_depth(db, goal.parent_id, str(current_user.id), 0, request)
     
     goal_dict = {
         "user_id": str(current_user.id),
@@ -264,10 +336,10 @@ async def create_goal(
         "target": target_cents,
         "current": current_cents,
         "category": goal.category,
+        "description": goal.description,
         "completed": current_cents >= target_cents,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
-        # 🆕 NOVOS CAMPOS
         "recurring": goal.recurring,
         "recurring_interval": goal.recurring_interval,
         "deadline": goal.deadline,
@@ -279,7 +351,6 @@ async def create_goal(
     result = await db.goals.insert_one(goal_dict)
     created = await db.goals.find_one({"_id": result.inserted_id})
     
-    # Se for sub-meta, recalcula a meta pai
     if goal.parent_id:
         await recalculate_parent_progress(goal.parent_id, str(current_user.id), db)
     
@@ -321,7 +392,6 @@ async def get_goal(
         goal["current"] = from_cents(goal["current"])
     goal = add_calculated_fields(goal)
     
-    # Busca sub-metas se for uma meta pai
     if not goal.get("parent_id"):
         sub_goals = await db.goals.find({
             "parent_id": goal_id,
@@ -343,7 +413,7 @@ async def update_goal(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Atualiza uma meta existente"""
+    """Atualiza uma meta existente com validação de sub-metas."""
     validate_object_id(goal_id, "goal_id")
     
     existing = await db.goals.find_one({
@@ -380,6 +450,12 @@ async def update_goal(
             request=request
         )
     
+    # 🔧 NOVO: Valida parent_id existente e profundidade se estiver sendo alterado
+    new_parent_id = update_data.get("parent_id")
+    if new_parent_id:
+        await validate_parent_exists(db, new_parent_id, str(current_user.id), request)
+        await validate_sub_goal_depth(db, new_parent_id, str(current_user.id), 0, request)
+    
     # Atualiza completed e completed_at
     was_completed = existing.get("completed", False)
     new_completed = new_current >= new_target
@@ -387,31 +463,27 @@ async def update_goal(
     update_data["completed"] = new_completed
     if new_completed and not was_completed:
         update_data["completed_at"] = datetime.now(timezone.utc)
+        # 🔧 CORRIGIDO: Chama archive_completed_goal quando completa
+        await archive_completed_goal(goal_id, str(current_user.id), db)
     elif not new_completed:
         update_data["completed_at"] = None
     
-    # Se for arquivada, garante que completed_at está definido
     if update_data.get("archived") and not update_data.get("completed_at"):
         update_data["completed_at"] = datetime.now(timezone.utc)
     
-    # Se estiver atualizando para não arquivada e não completada
     if update_data.get("archived") is False and not new_completed:
         update_data["completed_at"] = None
     
-    # Se estiver atualizando parent_id, recalcula a meta pai antiga e a nova
     old_parent_id = existing.get("parent_id")
-    new_parent_id = update_data.get("parent_id")
     
     await db.goals.update_one(
         {"_id": ObjectId(goal_id)},
         {"$set": update_data}
     )
     
-    # Recalcula metas pai afetadas
     if old_parent_id and old_parent_id != new_parent_id:
         await recalculate_parent_progress(old_parent_id, str(current_user.id), db)
     if new_parent_id and new_parent_id != old_parent_id:
-        validate_object_id(new_parent_id, "parent_id")
         await recalculate_parent_progress(new_parent_id, str(current_user.id), db)
     
     updated = await db.goals.find_one({"_id": ObjectId(goal_id)})
@@ -449,13 +521,11 @@ async def delete_goal(
             request=request
         )
     
-    # Verifica se tem sub-metas
     sub_goals = await db.goals.find({
         "parent_id": goal_id,
         "user_id": str(current_user.id)
     }).to_list(1)
     
-    # Se tiver sub-metas, arquiva em vez de deletar
     if sub_goals:
         await db.goals.update_one(
             {"_id": ObjectId(goal_id)},
@@ -491,7 +561,9 @@ async def delete_goal(
     return {"message": get_message("SUCCESS_GOAL_DELETED", language), "success": True}
 
 
-# ========== 🆕 ENDPOINT: HISTÓRICO ==========
+# ================================================================
+# ENDPOINT: HISTÓRICO
+# ================================================================
 
 @router.get("/history", response_model=dict)
 async def get_goal_history(
@@ -542,7 +614,9 @@ async def get_goal_history(
     return paginate(formatted_items, total, params).model_dump()
 
 
-# ========== 🆕 ENDPOINT: SUB-METAS ==========
+# ================================================================
+# ENDPOINT: SUB-METAS
+# ================================================================
 
 @router.get("/sub", response_model=dict)
 async def get_sub_goals(
@@ -586,7 +660,9 @@ async def get_sub_goals(
     return paginate(formatted_items, total, params).model_dump()
 
 
-# ========== 🆕 ENDPOINT: ADICIONAR SUB-META ==========
+# ================================================================
+# ENDPOINT: ADICIONAR SUB-META
+# ================================================================
 
 @router.post("/{goal_id}/sub", response_model=GoalResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("30/minute")
@@ -598,34 +674,14 @@ async def add_sub_goal(
     db=Depends(get_database)
 ):
     """
-    Adiciona uma sub-meta a uma meta pai.
+    Adiciona uma sub-meta a uma meta pai com validação de profundidade.
     """
     validate_object_id(goal_id, "goal_id")
     
-    # Verifica se a meta pai existe
-    parent = await db.goals.find_one({
-        "_id": ObjectId(goal_id),
-        "user_id": str(current_user.id)
-    })
-    if not parent:
-        raise NotFoundException(
-            message_key="ERROR_GOAL_NOT_FOUND",
-            request=request
-        )
+    # 🔧 NOVO: Valida meta pai existente e profundidade
+    await validate_parent_exists(db, goal_id, str(current_user.id), request)
+    await validate_sub_goal_depth(db, goal_id, str(current_user.id), 0, request)
     
-    if parent.get("archived", False):
-        raise ValidationException(
-            message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_ARCHIVED",
-            request=request
-        )
-    
-    if parent.get("recurring", False):
-        raise ValidationException(
-            message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_RECURRING",
-            request=request
-        )
-    
-    # Cria a sub-meta
     target_cents = to_cents(sub_goal.target)
     current_cents = to_cents(sub_goal.current)
     
@@ -641,6 +697,7 @@ async def add_sub_goal(
         "target": target_cents,
         "current": current_cents,
         "category": sub_goal.category,
+        "description": sub_goal.description,
         "parent_id": goal_id,
         "completed": current_cents >= target_cents,
         "recurring": False,
@@ -655,7 +712,6 @@ async def add_sub_goal(
     result = await db.goals.insert_one(sub_goal_dict)
     created = await db.goals.find_one({"_id": result.inserted_id})
     
-    # Recalcula a meta pai
     await recalculate_parent_progress(goal_id, str(current_user.id), db)
     
     if created:
@@ -669,31 +725,30 @@ async def add_sub_goal(
     return convert_objectid_to_str(created)
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Implementado:
-#   - I18n completo (4 idiomas)
-#   - Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-#   - Campos calculados (progress_percentage, remaining_amount, days_until_deadline, is_overdue)
-#   - Validação current <= target
-#   - Filtros: completed, category, parent_id, recurring, has_deadline, archived, search
-#   - Ordenação: created_at, target, current, completed, category, deadline, completed_at
-#   - 🆕 Suporte a metas recorrentes (recurring, recurring_interval)
-#   - 🆕 Suporte a sub-metas (parent_id)
-#   - 🆕 Suporte a data limite (deadline)
-#   - 🆕 Histórico de metas (GET /history)
-#   - 🆕 Lista sub-metas (GET /sub)
-#   - 🆕 Adicionar sub-meta (POST /{id}/sub)
-#   - 🆕 Função recalculate_parent_progress()
-#   - 🆕 Função archive_completed_goal()
-#   - 🆕 Deleção arquiva se tiver sub-metas
-#
-# 📋 CHANGELOG:
-#   - v1: Versão inicial
-#   - v2: I18n e correções (25/05/2026)
-#   - v3: Rate limiting, filtros, ordenação, campos calculados (30/06/2026)
-#   - v3.1: Remoção de unit, sort_by (01/07/2026)
-#   - v3.2: Refatoração - add_calculated_fields movido para utils/validators_extras.py (02/07/2026)
-#   - v4.0: 🆕 Adicionado recurring, deadline, parent_id, archived, history, sub-metas (11/07/2026)
-#
-# ✅ STATUS: PRONTO PARA PRODUÇÃO
+# ================================================================
+# DECISÕES DOCUMENTADAS
+# ================================================================
+
+"""
+📋 CHANGELOG - 12/07/2026
+──────────────────────────────────────────────────────────────
+
+🆕 ADICIONADO:
+   1. validate_parent_exists() - Valida se meta pai existe
+   2. validate_sub_goal_depth() - Valida profundidade de sub-metas (máx 3 níveis)
+   3. MAX_SUB_GOAL_DEPTH = 3
+   4. archive_completed_goal() agora é chamada no update quando completada
+   5. Validação de parent_id no create_goal
+   6. Validação de parent_id no update_goal
+   7. Validação de profundidade no add_sub_goal
+
+✅ CORRIGIDO:
+   8. archive_completed_goal agora é utilizada
+   9. Validação de parent_id existente em todos os endpoints
+
+📋 PENDÊNCIAS (PÓS-MVP):
+   - Migração para adicionar campo description nas metas existentes
+
+✅ STATUS: PRONTO PARA PRODUÇÃO
+📅 ÚLTIMA ATUALIZAÇÃO: 12/07/2026
+"""

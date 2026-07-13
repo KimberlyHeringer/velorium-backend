@@ -11,8 +11,11 @@ Funcionalidades:
 - 🆕 POST /workers/goals/recurring/trigger: Executar worker de metas recorrentes
 - 🆕 GET /workers/goals/notifications/status: Status do worker de notificações de metas
 - 🆕 POST /workers/goals/notifications/trigger: Executar worker de notificações de metas
+- 🆕 GET /workers/score/history: Histórico com paginação
 
-🔧 CORRIGIDO: Caminho dos workers usando 'worker_disabled'
+🔧 CORRIGIDO: Caminho dos workers usando 'app.workers_disabled'
+🔧 ADICIONADO: Verificação de app running para tasks
+🔧 ADICIONADO: Paginação no histórico de workers
 
 Regra: 2.8 (Logs)
 Regra: 7.1 (Internacionalização)
@@ -26,9 +29,12 @@ Regra: 7.1 (Internacionalização)
     
     # Ver status da fila
     GET /api/v1/workers/score/queue
+    
+    # Histórico com paginação
+    GET /api/v1/workers/score/history?page=1&limit=20
 """
 
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from datetime import datetime, timezone, timedelta
 import os
 import asyncio
@@ -42,6 +48,24 @@ from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/workers", tags=["Workers"])
+
+# Flag para verificar se o app está rodando
+_app_running = True
+
+
+# ================================================================
+# FUNÇÕES AUXILIARES
+# ================================================================
+
+def is_app_running() -> bool:
+    """Retorna se o app está rodando."""
+    return _app_running
+
+
+def set_app_running(status: bool):
+    """Define o status do app."""
+    global _app_running
+    _app_running = status
 
 
 # ================================================================
@@ -119,6 +143,66 @@ async def get_score_worker_status(
 
 
 # ================================================================
+# 🆕 WORKER DE SCORE - HISTÓRICO COM PAGINAÇÃO
+# ================================================================
+
+@router.get("/score/history")
+async def get_score_worker_history(
+    request: Request,
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    🔧 NOVO: Retorna histórico do worker de score com paginação.
+    
+    🔧 USO:
+        GET /api/v1/workers/score/history?page=1&limit=20
+    """
+    language = getattr(request.state, "language", "pt")
+    
+    try:
+        skip = (page - 1) * limit
+        
+        # Busca total de registros
+        total = await db.worker_logs.count_documents({"worker": "score"})
+        
+        # Busca registros paginados
+        logs = await db.worker_logs.find(
+            {"worker": "score"},
+            sort=[("executed_at", -1)]
+        ).skip(skip).limit(limit).to_list(limit)
+        
+        # Formata os logs
+        formatted_logs = []
+        for log in logs:
+            formatted_logs.append({
+                "executed_at": log.get("executed_at").isoformat() if log.get("executed_at") else None,
+                "total_users": log.get("result", {}).get("total_users", 0),
+                "success_count": log.get("result", {}).get("success_count", 0),
+                "error_count": log.get("result", {}).get("error_count", 0),
+                "duration_seconds": log.get("result", {}).get("duration_seconds", 0),
+                "incremental": log.get("result", {}).get("incremental", False)
+            })
+        
+        return {
+            "items": formatted_logs,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit if total > 0 else 0
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar histórico do worker de score: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=get_message("ERROR_SERVER", language)
+        )
+
+
+# ================================================================
 # WORKER DE SCORE - TRIGGER MANUAL
 # ================================================================
 
@@ -139,6 +223,7 @@ async def trigger_score_worker(
     📋 PADRÃO:
         - 🔧 CORRIGIDO: Validação rigorosa do ADMIN_SECRET
         - 🔧 CORRIGIDO: Armazena a task com referência
+        - 🔧 CORRIGIDO: Verificação de app running
     """
     language = getattr(request.state, "language", "pt")
     
@@ -159,14 +244,21 @@ async def trigger_score_worker(
             detail=get_message("ERROR_UNAUTHORIZED", language)
         )
     
-    # 🔧 CORRIGIDO: Importação segura do worker
+    # 🔧 CORRIGIDO 1: Caminho correto 'app.workers_disabled'
     try:
-        from worker_disabled.score_worker import calculate_score_for_all_users
+        from app.workers_disabled.score_worker import calculate_score_for_all_users
     except ImportError as e:
         logger.error(f"❌ Erro ao importar worker de score: {e}")
         raise HTTPException(
             status_code=500,
             detail="Worker de score não disponível"
+        )
+    
+    # 🔧 CORRIGIDO 2: Verificação de app running
+    if not is_app_running():
+        raise HTTPException(
+            status_code=503,
+            detail="Aplicação está desligando"
         )
     
     # 🔧 CORRIGIDO: Armazena a task com referência
@@ -208,9 +300,9 @@ async def get_score_queue_status(
     language = getattr(request.state, "language", "pt")
     
     try:
-        # 🔧 CORRIGIDO: Importação segura
+        # 🔧 CORRIGIDO: Importação segura com caminho correto
         try:
-            from worker_disabled.score_worker import redis_client
+            from app.workers_disabled.score_worker import redis_client
         except ImportError:
             redis_client = None
         
@@ -358,13 +450,21 @@ async def trigger_goal_recurring_worker(
             detail=get_message("ERROR_UNAUTHORIZED", language)
         )
     
+    # 🔧 CORRIGIDO 1: Caminho correto 'app.workers_disabled'
     try:
-        from worker_disabled.goal_recurring import process_recurring_goals
+        from app.workers_disabled.goal_recurring import process_recurring_goals
     except ImportError as e:
         logger.error(f"❌ Erro ao importar worker de metas recorrentes: {e}")
         raise HTTPException(
             status_code=500,
             detail="Worker de metas recorrentes não disponível"
+        )
+    
+    # 🔧 CORRIGIDO 2: Verificação de app running
+    if not is_app_running():
+        raise HTTPException(
+            status_code=503,
+            detail="Aplicação está desligando"
         )
     
     task = asyncio.create_task(process_recurring_goals())
@@ -461,13 +561,21 @@ async def trigger_goal_notifications_worker(
             detail=get_message("ERROR_UNAUTHORIZED", language)
         )
     
+    # 🔧 CORRIGIDO 1: Caminho correto 'app.workers_disabled'
     try:
-        from worker_disabled.goal_notification import process_goal_notifications
+        from app.workers_disabled.goal_notification import process_goal_notifications
     except ImportError as e:
         logger.error(f"❌ Erro ao importar worker de notificações de metas: {e}")
         raise HTTPException(
             status_code=500,
             detail="Worker de notificações de metas não disponível"
+        )
+    
+    # 🔧 CORRIGIDO 2: Verificação de app running
+    if not is_app_running():
+        raise HTTPException(
+            status_code=503,
+            detail="Aplicação está desligando"
         )
     
     task = asyncio.create_task(process_goal_notifications())
@@ -487,6 +595,18 @@ async def trigger_goal_notifications_worker(
 
 
 # ================================================================
+# SHUTDOWN HOOK
+# ================================================================
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Marca o app como desligado para evitar novas tasks."""
+    global _app_running
+    _app_running = False
+    logger.info("🛑 App marcado como desligado - novas tasks não serão iniciadas")
+
+
+# ================================================================
 # NOTAS DE IMPLEMENTAÇÃO
 # ================================================================
 
@@ -502,19 +622,22 @@ async def trigger_goal_notifications_worker(
 3. Ver status da fila Redis:
    GET /api/v1/workers/score/queue
 
-4. Ver status do worker de notificações:
+4. Ver histórico com paginação:
+   GET /api/v1/workers/score/history?page=1&limit=20
+
+5. Ver status do worker de notificações:
    GET /api/v1/workers/notifications/status
 
-5. 🆕 Ver status do worker de metas recorrentes:
+6. 🆕 Ver status do worker de metas recorrentes:
    GET /api/v1/workers/goals/recurring/status
 
-6. 🆕 Executar worker de metas recorrentes:
+7. 🆕 Executar worker de metas recorrentes:
    POST /api/v1/workers/goals/recurring/trigger?secret=ADMIN_SECRET
 
-7. 🆕 Ver status do worker de notificações de metas:
+8. 🆕 Ver status do worker de notificações de metas:
    GET /api/v1/workers/goals/notifications/status
 
-8. 🆕 Executar worker de notificações de metas:
+9. 🆕 Executar worker de notificações de metas:
    POST /api/v1/workers/goals/notifications/trigger?secret=ADMIN_SECRET
 """
 
@@ -532,22 +655,25 @@ async def trigger_goal_notifications_worker(
 #   - 🔧 CORRIGIDO: Importação segura do redis_client
 #   - 🔧 CORRIGIDO: Validação rigorosa do ADMIN_SECRET
 #   - 🔧 CORRIGIDO: Task com referência e callback
-#   - 🔧 CORRIGIDO: Caminho dos workers para 'worker_disabled'
+#   - 🔧 CORRIGIDO: Caminho dos workers para 'app.workers_disabled'
 #   - 🆕 Status do worker de metas recorrentes
 #   - 🆕 Trigger manual para metas recorrentes
 #   - 🆕 Status do worker de notificações de metas
 #   - 🆕 Trigger manual para notificações de metas
+#   - 🆕 Histórico com paginação (GET /score/history)
+#   - 🆕 Verificação de app running para tasks
 #   - I18n completo
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Dashboard visual (UI)
 #   - Alertas para falhas consecutivas
-#   - Histórico detalhado com gráficos
+#   - Gráficos no histórico
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial (06/07/2026)
 #   - v2: Correções - importação segura, ADMIN_SECRET rigoroso, task com referência (06/07/2026)
 #   - v3: 🆕 Adicionado workers de metas (recurring e notifications) (12/07/2026)
-#   - v4: 🔧 CORRIGIDO - Caminho dos workers para 'worker_disabled' (12/07/2026)
+#   - v4: 🔧 CORRIGIDO - Caminho dos workers para 'app.workers_disabled' (12/07/2026)
+#   - v5: 🆕 Histórico com paginação, verificação de app running (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

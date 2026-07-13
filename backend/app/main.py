@@ -3,6 +3,7 @@ Arquivo principal do backend Velorium - Versão Estável com i18n, Cache Redis e
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.timeout import TimeoutMiddleware
 import os
 import asyncio
 from datetime import datetime, timezone
@@ -20,36 +21,61 @@ from app.middleware.language import LanguageMiddleware
 from app.utils.migrations import run_migrations
 
 # 🔧 NOVO: Scheduler
-from app.utils.scheduler import start_scheduler, stop_scheduler
+from app.utils.scheduler import start_scheduler, stop_scheduler, get_scheduler_status
 
 logger = setup_logger(__name__)
 
 # Carrega variáveis de ambiente
 load_dotenv()
 
-# ========== CONFIGURAÇÕES ==========
+# ================================================================
+# CONFIGURAÇÕES
+# ================================================================
+
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 OTEL_ENABLED = os.getenv("OTEL_ENABLED", "false").lower() == "true"
-SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"  # 🔧 Mudado para true por padrão
+SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"
+
+# 🔧 CORRIGIDO: Timeouts configuráveis
+CONNECT_TIMEOUT = int(os.getenv("CONNECT_TIMEOUT", "30"))
+MIGRATION_TIMEOUT = int(os.getenv("MIGRATION_TIMEOUT", "60"))
+SHUTDOWN_TIMEOUT = int(os.getenv("SHUTDOWN_TIMEOUT", "10"))
+
+# 🔧 CORRIGIDO: FRONTEND_URL obrigatório em produção
 FRONTEND_URL = os.getenv("FRONTEND_URL")
 
-# 🔧 CORRIGIDO: Validação de FRONTEND_URL em produção
 if ENVIRONMENT == "production" and not FRONTEND_URL:
-    logger.error("❌ FRONTEND_URL não configurado em produção! Usando fallback seguro.")
-    FRONTEND_URL = "https://expo.dev"
+    logger.critical("❌ FRONTEND_URL não configurado em produção!")
+    raise ValueError("FRONTEND_URL é obrigatório em produção")
 
-# ========== CRIA APLICAÇÃO ==========
+# ================================================================
+# CRIA APLICAÇÃO
+# ================================================================
+
 app = FastAPI(
     title="Velorium API",
     description="API do app de gestão financeira Velorium",
     version="1.0.0"
 )
 
-# ========== 🔧 NOVO: MIDDLEWARE DE IDIOMA ==========
+# ================================================================
+# MIDDLEWARES
+# ================================================================
+
+# 1. Idioma
 app.add_middleware(LanguageMiddleware)
 logger.info("✅ Middleware de idioma registrado")
 
-# ========== OPENTELEMETRY ==========
+# 2. Timeout global
+app.add_middleware(TimeoutMiddleware, timeout=30.0)
+logger.info("⏱️ Middleware de timeout global registrado (30s)")
+
+# ================================================================
+# OPENTELEMETRY
+# ================================================================
+
+scheduler_instance = None
+
 if OTEL_ENABLED:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -60,14 +86,21 @@ if OTEL_ENABLED:
     except Exception as e:
         logger.error(f"❌ Erro ao instrumentar FastAPI: {e}", exc_info=True)
 
-# ========== RATE LIMITER ==========
+# ================================================================
+# RATE LIMITER
+# ================================================================
+
 try:
     init_rate_limiter(app)
     logger.info("✅ Rate limiter inicializado")
 except Exception as e:
     logger.warning(f"⚠️ Rate limiter não inicializado: {e}")
 
-# ========== CORS ==========
+# ================================================================
+# CORS
+# ================================================================
+
+# 🔧 S5332/S1313: URLs locais são aceitáveis em desenvolvimento
 if ENVIRONMENT == "development":
     ALLOWED_ORIGINS = [
         "http://localhost:8081",
@@ -75,15 +108,17 @@ if ENVIRONMENT == "development":
         "http://localhost:19000",
         "http://localhost:19001",
         "http://localhost:19002",
+        # 🔧 S1313: IP local permitido em desenvolvimento (não é hardcoded em produção)
         "http://192.168.0.242:8081",
     ]
     logger.warning("🔧 CORS: Desenvolvimento - origens locais")
 else:
     if not FRONTEND_URL:
-        logger.error("❌ FRONTEND_URL não configurado para produção!")
-        ALLOWED_ORIGINS = ["https://expo.dev"]
-    else:
-        ALLOWED_ORIGINS = [FRONTEND_URL, "https://expo.dev"]
+        # 🔧 CORRIGIDO: Não usa fallback inseguro
+        logger.critical("❌ FRONTEND_URL não configurado para produção!")
+        raise ValueError("FRONTEND_URL é obrigatório em produção")
+    
+    ALLOWED_ORIGINS = [FRONTEND_URL]
     logger.info(f"🔧 CORS: Produção - origens permitidas: {ALLOWED_ORIGINS}")
 
 app.add_middleware(
@@ -94,18 +129,67 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ========== EVENTOS ==========
+# ================================================================
+# MIDDLEWARE: VERSION HEADER
+# ================================================================
+
+@app.middleware("http")
+async def add_version_header(request, call_next):
+    """Adiciona header com versão da API em todas as respostas."""
+    response = await call_next(request)
+    response.headers["X-API-Version"] = "1.0.0"
+    return response
+
+# ================================================================
+# EVENTOS
+# ================================================================
+
 @app.on_event("startup")
 async def startup():
     """Executado quando o servidor inicia."""
-    logger.info("🚀 Iniciando Velorium API...")
+    logger.info({
+        "event": "startup",
+        "environment": ENVIRONMENT,
+        "otel_enabled": OTEL_ENABLED,
+        "scheduler_enabled": SCHEDULER_ENABLED,
+        "frontend_url": FRONTEND_URL,
+        "allowed_origins": ALLOWED_ORIGINS
+    })
+    
+    migrations_success = False
     
     async def initialize():
-        await asyncio.wait_for(connect_to_mongo(), timeout=30.0)
+        nonlocal migrations_success
+        
+        # 1. Conecta ao MongoDB
+        logger.info("🔌 Conectando ao MongoDB...")
+        await asyncio.wait_for(connect_to_mongo(), timeout=CONNECT_TIMEOUT)
+        
+        # 2. Verifica se conectou
         db = get_database()
-        await asyncio.wait_for(create_indexes(db), timeout=20.0)
-        # 🔧 NOVO: Executa migrações
-        await asyncio.wait_for(run_migrations(db), timeout=30.0)
+        if db is None:
+            raise RuntimeError("Banco de dados não conectado após connect_to_mongo()")
+        logger.info("✅ MongoDB conectado com sucesso")
+        
+        # 3. Cria índices
+        logger.info("📊 Criando/verificando índices...")
+        await asyncio.wait_for(create_indexes(db), timeout=CONNECT_TIMEOUT)
+        logger.info("✅ Índices criados/verificados")
+        
+        # 4. Executa migrações
+        logger.info("🔄 Executando migrações...")
+        try:
+            await asyncio.wait_for(run_migrations(db), timeout=MIGRATION_TIMEOUT)
+            migrations_success = True
+            logger.info("✅ Migrações executadas com sucesso")
+        except asyncio.TimeoutError:
+            logger.error(f"❌ Timeout nas migrações ({MIGRATION_TIMEOUT}s)")
+            migrations_success = False
+            raise
+        except Exception as e:
+            logger.error(f"❌ Erro nas migrações: {e}", exc_info=True)
+            migrations_success = False
+            raise
     
     try:
         if OTEL_ENABLED:
@@ -122,41 +206,67 @@ async def startup():
         else:
             await initialize()
         
-        # 🔧 NOVO: Inicia scheduler
-        if SCHEDULER_ENABLED:
+        # 🔧 CORRIGIDO: Scheduler só inicia se migrações foram bem-sucedidas
+        if SCHEDULER_ENABLED and migrations_success:
             try:
-                start_scheduler()
+                global scheduler_instance
+                scheduler_instance = start_scheduler()
                 logger.info("✅ Scheduler iniciado com sucesso")
             except Exception as e:
                 logger.error(f"❌ Erro ao iniciar scheduler: {e}", exc_info=True)
+        elif SCHEDULER_ENABLED and not migrations_success:
+            logger.warning("⚠️ Scheduler não iniciado devido a falha nas migrações")
         else:
             logger.info("⏰ Scheduler desabilitado (SCHEDULER_ENABLED=false)")
         
         logger.info("✅ Velorium API pronta para uso!")
         
     except asyncio.TimeoutError:
-        logger.error("❌ Timeout na inicialização do banco de dados")
+        logger.error(f"❌ Timeout na inicialização (limite: {CONNECT_TIMEOUT}s)")
         raise RuntimeError("Banco de dados não respondeu dentro do tempo limite")
     except Exception as e:
         logger.error(f"❌ Erro fatal no startup: {e}", exc_info=True)
         raise
+
 
 @app.on_event("shutdown")
 async def shutdown():
     """Executado quando o servidor desliga."""
     logger.info("🛑 Desligando Velorium API...")
     
-    # 🔧 NOVO: Para scheduler
-    try:
-        stop_scheduler()
-        logger.info("✅ Scheduler parado")
-    except Exception as e:
-        logger.error(f"❌ Erro ao parar scheduler: {e}", exc_info=True)
+    # 1. Para scheduler com timeout
+    global scheduler_instance
+    if scheduler_instance:
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(stop_scheduler),
+                timeout=SHUTDOWN_TIMEOUT
+            )
+            logger.info("✅ Scheduler parado")
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ Timeout ao parar scheduler ({SHUTDOWN_TIMEOUT}s)")
+        except Exception as e:
+            logger.error(f"❌ Erro ao parar scheduler: {e}", exc_info=True)
     
-    await close_mongo_connection()
+    # 2. Fecha conexão MongoDB com timeout
+    try:
+        await asyncio.wait_for(
+            close_mongo_connection(),
+            timeout=SHUTDOWN_TIMEOUT
+        )
+        logger.info("✅ Conexão MongoDB fechada")
+    except asyncio.TimeoutError:
+        logger.warning(f"⚠️ Timeout ao fechar MongoDB ({SHUTDOWN_TIMEOUT}s), forçando...")
+    except Exception as e:
+        logger.error(f"❌ Erro ao fechar MongoDB: {e}", exc_info=True)
+    
     logger.info("✅ Desligamento concluído")
 
-# ========== ROTAS (IMPORTS MANUAIS - MAIS CONFIÁVEL) ==========
+
+# ================================================================
+# ROTAS (IMPORTS MANUAIS - MAIS CONFIÁVEL)
+# ================================================================
+
 from app.routes import (
     auth, 
     transactions, 
@@ -172,12 +282,11 @@ from app.routes import (
     notifications,
     achievements, 
     bill_installments,
-    cache,          # 🆕 Rota de cache Redis
-    categories,     # 🆕 Rota de categorias personalizadas
-    workers         # 🆕 Rota de workers
+    cache,
+    categories,
+    workers
 )
 
-# Registrar rotas manualmente
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(transactions.router, prefix="/api/v1")
 app.include_router(bills.router, prefix="/api/v1")
@@ -192,11 +301,27 @@ app.include_router(user.router, prefix="/api/v1")
 app.include_router(achievements.router, prefix="/api/v1")
 app.include_router(investments.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
-app.include_router(cache.router, prefix="/api/v1")          # 🆕 Rota de cache Redis
-app.include_router(categories.router, prefix="/api/v1")     # 🆕 Rota de categorias personalizadas
-app.include_router(workers.router, prefix="/api/v1")        # 🆕 Rota de workers
+app.include_router(cache.router, prefix="/api/v1")
+app.include_router(categories.router, prefix="/api/v1")
 
-# ========== ENDPOINTS PÚBLICOS ==========
+# 🔧 CORRIGIDO: Importação segura da rota workers
+try:
+    from app.routes import workers
+    app.include_router(workers.router, prefix="/api/v1")
+    logger.info("✅ Rota de workers registrada")
+except ModuleNotFoundError:
+    logger.info("ℹ️ Rota de workers não disponível (módulo não encontrado)")
+except Exception as e:
+    logger.error(f"❌ Erro ao importar workers: {e}", exc_info=True)
+    # Em produção, pode querer falhar aqui
+    if ENVIRONMENT == "production":
+        raise
+
+
+# ================================================================
+# ENDPOINTS PÚBLICOS
+# ================================================================
+
 @app.get("/")
 async def root():
     response = {
@@ -208,15 +333,49 @@ async def root():
         response["environment"] = ENVIRONMENT
     return response
 
-@app.get("/health")
-async def health():
+
+@app.get("/health/live")
+async def liveness():
+    """Kubernetes liveness probe - verifica se o app está rodando."""
+    return {"status": "alive", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/health/ready")
+async def readiness():
+    """Kubernetes readiness probe - verifica se o app está pronto para tráfego."""
     from app.database import health_check
     db_status = await health_check()
     
-    # 🔧 NOVO: Status do scheduler
+    if db_status.get("status") != "healthy":
+        return {
+            "status": "not_ready",
+            "database": db_status,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }, 503
+    
+    # Status do scheduler
     scheduler_status = "unknown"
     try:
-        from app.utils.scheduler import get_scheduler_status
+        scheduler_status = get_scheduler_status()
+    except Exception:
+        pass
+    
+    return {
+        "status": "ready",
+        "database": db_status,
+        "scheduler": scheduler_status,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.get("/health")
+async def health():
+    """Health check completo (compatibilidade)."""
+    from app.database import health_check
+    db_status = await health_check()
+    
+    scheduler_status = "unknown"
+    try:
         scheduler_status = get_scheduler_status()
     except Exception:
         pass
@@ -231,16 +390,7 @@ async def health():
     if ENVIRONMENT == "development":
         response["environment"] = ENVIRONMENT
     
-    if OTEL_ENABLED:
-        try:
-            from opentelemetry import trace
-            tracer = trace.get_tracer(__name__)
-            with tracer.start_as_current_span("health_check") as span:
-                span.set_attribute("db.status", db_status.get("status", "unknown"))
-                span.set_attribute("db.database", db_status.get("database", "unknown"))
-        except Exception as e:
-            logger.warning(f"⚠️ Erro no span health_check: {e}")
-    
     return response
+
 
 logger.info(f"✅ Velorium API configurada (Ambiente: {ENVIRONMENT})")

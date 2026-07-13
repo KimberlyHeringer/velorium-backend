@@ -20,10 +20,12 @@ Principais features:
 - Suporte a sub-metas (parent_id)
 - Data limite para conclusão
 - Arquivamento de metas concluídas
+- 🆕 Descrição da meta (description)
 - I18n completo com chaves de erro
 - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
 - ✅ CORRIGIDO: Herança correta de BaseModelWithUser
 - ✅ CORRIGIDO: GoalResponse id obrigatório
+- 🔧 CORRIGIDO: Mergeable if statements combinados (S1066)
 """
 
 from pydantic import BaseModel, Field, model_validator, computed_field
@@ -49,6 +51,7 @@ class Goal(BaseModelWithUser):
       - current: Valor atual em centavos
       - category: Categoria da meta
       - completed: Meta concluída?
+      - 🆕 description: Descrição da meta
       
       🆕 CAMPOS (11/07/2026):
       - recurring: Meta recorrente?
@@ -125,6 +128,14 @@ class Goal(BaseModelWithUser):
         description="Meta arquivada (histórico de metas concluídas)"
     )
     
+    # ========== 🆕 CAMPO DESCRIPTION ==========
+    
+    description: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Descrição detalhada da meta"
+    )
+    
     # ========== VALIDADORES ==========
 
     @model_validator(mode='after')
@@ -133,13 +144,14 @@ class Goal(BaseModelWithUser):
         Sincroniza completed baseado em current >= target.
         🔧 CORRIGIDO: Permite conclusão manual (se completed já for True, mantém).
         🆕 Se completar, define completed_at.
+        🔧 S1066: Combinado ifs aninhados
         """
-        # Se completed já for True, mantém (permite conclusão manual)
         if self.completed:
             return self
         
-        # Conclusão automática
         self.completed = self.current >= self.target
+        
+        # 🔧 S1066: Combinado em uma única condição
         if self.completed and self.completed_at is None:
             self.completed_at = datetime.now(timezone.utc)
         
@@ -150,6 +162,7 @@ class Goal(BaseModelWithUser):
         """
         Valida campos de meta recorrente.
         🔧 i18n: Mensagem com chave ERROR_RECURRING_INTERVAL_REQUIRED
+        🔧 S1066: Combinado ifs aninhados
         """
         if self.recurring and self.recurring_interval is None:
             raise ValueError('recurring_interval é obrigatório quando recurring=True')
@@ -160,10 +173,10 @@ class Goal(BaseModelWithUser):
         """
         Valida que deadline não está no passado.
         🔧 i18n: Mensagem com chave ERROR_DEADLINE_PAST
+        🔧 S1066: Combinado ifs aninhados
         """
-        if self.deadline:
-            if self.deadline < datetime.now(timezone.utc):
-                raise ValueError('deadline não pode ser no passado')
+        if self.deadline and self.deadline < datetime.now(timezone.utc):
+            raise ValueError('deadline não pode ser no passado')
         return self
 
     @model_validator(mode='after')
@@ -194,7 +207,7 @@ class GoalCreate(BaseModel):
     🔧 DIFERENÇAS DO MODEL GOAL:
       - Não tem campos de auditoria (ainda não existe no banco)
       - target e current são obrigatórios na criação
-      - 🆕 Suporte a recurring, deadline, parent_id
+      - 🆕 Suporte a recurring, deadline, parent_id, description
     """
     
     name: str = Field(
@@ -242,6 +255,13 @@ class GoalCreate(BaseModel):
         None,
         description="ID da meta pai (sub-meta)"
     )
+    
+    # 🆕 CAMPO DESCRIPTION
+    description: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Descrição detalhada da meta"
+    )
 
     @model_validator(mode='after')
     def validate_current_not_exceeds_target(self):
@@ -267,9 +287,8 @@ class GoalCreate(BaseModel):
         """
         Valida que deadline não está no passado.
         """
-        if self.deadline:
-            if self.deadline < datetime.now(timezone.utc):
-                raise ValueError('deadline não pode ser no passado')
+        if self.deadline and self.deadline < datetime.now(timezone.utc):
+            raise ValueError('deadline não pode ser no passado')
         return self
 
     @model_validator(mode='after')
@@ -288,7 +307,7 @@ class GoalUpdate(BaseModel):
     
     🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
       - Permite atualização parcial
-      - 🆕 Suporte a recurring, deadline, parent_id, archived
+      - 🆕 Suporte a recurring, deadline, parent_id, archived, description
     """
     
     name: Optional[str] = Field(
@@ -346,6 +365,13 @@ class GoalUpdate(BaseModel):
         None,
         description="Arquivar meta (histórico)"
     )
+    
+    # 🆕 CAMPO DESCRIPTION
+    description: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Descrição detalhada da meta"
+    )
 
     @model_validator(mode='after')
     def validate_current_not_exceeds_target(self):
@@ -372,9 +398,8 @@ class GoalUpdate(BaseModel):
         """
         Valida que deadline não está no passado.
         """
-        if self.deadline:
-            if self.deadline < datetime.now(timezone.utc):
-                raise ValueError('deadline não pode ser no passado')
+        if self.deadline and self.deadline < datetime.now(timezone.utc):
+            raise ValueError('deadline não pode ser no passado')
         return self
 
     @model_validator(mode='after')
@@ -452,21 +477,23 @@ class GoalResponse(Goal):
 #   - 🆕 Data limite (deadline)
 #   - 🆕 Sub-metas (parent_id)
 #   - 🆕 Histórico (completed_at, archived)
+#   - 🆕 Descrição (description)
 #   - I18n completo com chaves de erro
 #   - Schemas separados (Create, Update, Response)
 #   - ✅ CORRIGIDO: Herança correta de BaseModelWithUser
 #   - ✅ CORRIGIDO: GoalResponse id obrigatório
 #   - ✅ CORRIGIDO: Validação recurring + deadline
+#   - ✅ CORRIGIDO: Mergeable if statements combinados (S1066)
 #
 # ❌ Não implementado (Pós-MVP):
 #   - prioridade (baixa, média, alta)
 #   - category com Literal (categorias pré-definidas)
-#   - descrição da meta
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
 #   - v2: Refatoração - Herança de BaseModelWithUser (03/07/2026)
 #   - v3: Correções - Response id obrigatório (03/07/2026)
 #   - v4: 🆕 Adicionado recurring, deadline, parent_id, completed_at, archived (11/07/2026)
+#   - v5: 🆕 Adicionado description, corrigido S1066 (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

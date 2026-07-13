@@ -17,13 +17,14 @@ Principais features:
 - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
 - Herança de AmountMixin (amount com validação)
 - Herança de PaymentMixin (paid, paid_date)
-- ✅ CORRIGIDO: TransactionResponse herda de Transaction (elimina duplicação)
+- ✅ CORRIGIDO: TransactionResponse herda de Transaction com model_config
 - ✅ CORRIGIDO: TransactionBalance com descriptions nos campos
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, ConfigDict
 from typing import Optional, Literal, Any
 from datetime import datetime, timezone
+from bson import ObjectId
 
 from app.models.base import BaseModelWithUser
 from app.models.mixins import AmountMixin, PaymentMixin
@@ -322,7 +323,7 @@ class TransactionResponse(Transaction):
     """
     Schema usado para RESPOSTAS da API.
     
-    🔧 ✅ CORRIGIDO: HERDA DE TRANSACTION (elimina duplicação de campos).
+    🔧 ✅ CORRIGIDO: Herda de Transaction com model_config explícito.
     
     🔧 DIFERENÇAS DO MODEL TRANSACTION:
       - id é obrigatório (já existe no banco)
@@ -330,9 +331,14 @@ class TransactionResponse(Transaction):
     """
     
     id: str = Field(..., alias="_id", description="ID da transação")
-    
-    # ✅ Sobrescreve amount para garantir descrição (não duplica campo)
     amount: int = Field(..., description="Valor em CENTAVOS")
+    
+    # 🔧 CORRIGIDO: model_config explícito para evitar conflitos
+    model_config = ConfigDict(
+        json_encoders={ObjectId: str},
+        populate_by_name=True,
+        from_attributes=True,
+    )
 
 
 class TransactionBalance(BaseModel):
@@ -348,6 +354,10 @@ class TransactionBalance(BaseModel):
     expense: int = Field(..., description="Despesas em CENTAVOS")
     balance: int = Field(..., description="Saldo em CENTAVOS")
     context: Optional[str] = Field(None, description="Contexto do saldo (individual/familia/profissional)")
+    
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
 
 
 # ========== DECISÕES DOCUMENTADAS ==========
@@ -356,7 +366,7 @@ class TransactionBalance(BaseModel):
 #   - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
 #   - Herança de AmountMixin (amount com validação)
 #   - Herança de PaymentMixin (paid, paid_date, validação de pagamento)
-#   - ✅ CORRIGIDO: TransactionResponse herda de Transaction (elimina duplicação)
+#   - ✅ CORRIGIDO: TransactionResponse herda de Transaction com model_config
 #   - ✅ CORRIGIDO: TransactionBalance com descriptions em todos os campos
 #   - Validação: cartão de crédito apenas para despesas
 #   - Validação: data não futura
@@ -376,5 +386,6 @@ class TransactionBalance(BaseModel):
 #   - v2: Refatoração - Herança de BaseModelWithUser, AmountMixin, PaymentMixin (03/07/2026)
 #   - v3: Correções - TransactionResponse herda de Transaction, descriptions no Balance (03/07/2026)
 #   - v4: 🆕 Adicionado goal_id e validação (11/07/2026)
+#   - v5: 🔧 TransactionResponse com model_config explícito (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

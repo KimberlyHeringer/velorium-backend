@@ -18,8 +18,10 @@ Funcionalidades:
 - 🔧 NOVO: Função get_scheduler_status() para monitoramento
 - 🆕 NOVO: Worker de metas recorrentes (goal_recurring)
 - 🆕 NOVO: Worker de notificações de metas (goal_notifications)
-- 🔧 CORRIGIDO: Caminho dos workers usando 'workers_disabled'
+- 🔧 CORRIGIDO: Caminho dos workers mantido como 'workers_disabled'
 - 🔧 ADICIONADO: stop_scheduler() para desligar o scheduler
+- 🔧 ADICIONADO: Validação de timezone com fallback para UTC
+- 🔧 ADICIONADO: Log dos jobs registrados no startup
 
 🔧 REGRA 3.1: Score Financeiro - Worker Diário (03:00)
 🔧 REGRA 4.1: Notificações Proativas - Worker Diário (09:00)
@@ -55,11 +57,39 @@ _scheduler = None
 PRODUCTION = os.getenv("PRODUCTION", "false").lower() == "true"
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
+# ================================================================
+# 🔧 CORREÇÃO 2: VALIDAÇÃO DE TIMEZONE
+# ================================================================
+
+def get_timezone():
+    """
+    Retorna o timezone configurado com fallback para UTC.
+    """
+    try:
+        import pytz
+        tz = pytz.timezone("America/Sao_Paulo")
+        logger.info("🌐 Timezone configurado: America/Sao_Paulo")
+        return tz
+    except ImportError:
+        logger.warning("⚠️ pytz não instalado, usando UTC")
+        from datetime import timezone
+        return timezone.utc
+    except Exception as e:
+        logger.warning(f"⚠️ Erro ao configurar timezone: {e}, usando UTC")
+        from datetime import timezone
+        return timezone.utc
+
+
+# ================================================================
+# FUNÇÕES DE IMPORTAÇÃO
+# ================================================================
 
 def _safe_import_workers():
     """
     Importa os workers de forma segura.
     Se não estiverem disponíveis, retorna None.
+    
+    🔧 CORRIGIDO: Mantido caminho 'workers_disabled'
     """
     workers = {
         "score": None,
@@ -111,6 +141,10 @@ def _safe_import_workers():
     return workers
 
 
+# ================================================================
+# FUNÇÕES PRINCIPAIS
+# ================================================================
+
 def init_scheduler():
     """
     Inicializa o scheduler com todos os workers.
@@ -139,7 +173,10 @@ def init_scheduler():
     
     logger.info(f"📊 Workers disponíveis: {', '.join(available_workers)}")
     
-    _scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
+    # 🔧 CORREÇÃO 2: Obtém timezone com fallback
+    timezone = get_timezone()
+    
+    _scheduler = BackgroundScheduler(timezone=timezone)
     
     # ================================================================
     # 1. Worker de Score (03:00)
@@ -210,6 +247,10 @@ def init_scheduler():
         _scheduler.start()
         logger.info(get_message("SCHEDULER_STARTED", "pt"))
         
+        # 🔧 CORREÇÃO 3: Log dos jobs registrados
+        for job in _scheduler.get_jobs():
+            logger.info(f"📋 Job registrado: {job.id} - Próxima execução: {job.next_run_time}")
+        
         # Garante que o scheduler será desligado ao final do processo
         atexit.register(lambda: shutdown_scheduler())
     else:
@@ -225,10 +266,6 @@ def start_scheduler():
     """
     return init_scheduler()
 
-
-# ================================================================
-# 🔧 NOVO: stop_scheduler()
-# ================================================================
 
 def stop_scheduler():
     """
@@ -279,7 +316,7 @@ def is_scheduler_running() -> bool:
 
 def get_scheduler_status() -> dict:
     """
-    🔧 NOVO: Retorna o status atual do scheduler para monitoramento.
+    Retorna o status atual do scheduler para monitoramento.
     
     Returns:
         dict: Status do scheduler com jobs e informações
@@ -357,8 +394,10 @@ def get_scheduler_status() -> dict:
 # ✅ Documentação completa com pendências
 # 🆕 NOVO: Worker de metas recorrentes (00:00)
 # 🆕 NOVO: Worker de notificações de metas (09:00)
-# 🔧 CORRIGIDO: Caminho dos workers para 'workers_disabled'
+# 🔧 CORRIGIDO: Caminho dos workers mantido como 'workers_disabled'
 # 🔧 ADICIONADO: stop_scheduler() para desligar o scheduler
+# 🔧 ADICIONADO: Validação de timezone com fallback para UTC
+# 🔧 ADICIONADO: Log dos jobs registrados no startup
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Dashboard de monitoramento dos workers
@@ -375,7 +414,7 @@ def get_scheduler_status() -> dict:
 #   - v2: Adicionado importação segura, fallback, ambiente (05/07/2026)
 #   - v3: Adicionado i18n, get_scheduler_status() (06/07/2026)
 #   - v4: 🆕 Adicionado workers de metas recorrentes e notificações (11/07/2026)
-#   - v5: 🔧 CORRIGIDO - Caminho dos workers para 'workers_disabled' (12/07/2026)
-#   - v6: 🔧 ADICIONADO - stop_scheduler() para desligar o scheduler (12/07/2026)
+#   - v5: 🔧 CORRIGIDO - Caminho dos workers mantido como 'workers_disabled' (12/07/2026)
+#   - v6: 🔧 ADICIONADO - stop_scheduler(), validação timezone, log jobs (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

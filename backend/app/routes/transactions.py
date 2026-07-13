@@ -23,16 +23,19 @@ Principais features:
 - Categorias centralizadas
 - Índices otimizados
 - 🆕 Integração com metas (goal_id)
-- 🆕 Atualização automática do progresso da meta
+- 🆕 Atualização automática do progresso da meta (em background)
+- 🔧 CORRIGIDO: ObjectId com validação no CSV
+- 🔧 CORRIGIDO: BackgroundTasks para update_goal_progress
 - 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
 
-Versão: v4.0 (com integração com metas)
+Versão: v4.1 (com background tasks e validações)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
+from bson.errors import InvalidId  # 🆕 Import para validação de ObjectId
 import os
 import json
 import csv
@@ -90,15 +93,19 @@ except Exception as e:
 
 # ========== FUNÇÕES AUXILIARES ==========
 
-async def update_goal_progress(user_id: str, goal_id: str, db, request: Request = None):
+async def update_goal_progress(user_id: str, goal_id: str, db):
     """
     🆕 Atualiza o progresso de uma meta baseado nas transações associadas.
-    Soma todas as transações com goal_id e atualiza o current da meta.
+    🔧 CORRIGIDO: Removido parâmetro Request (não usado)
     """
     if not goal_id:
         return
     
-    validate_object_id(goal_id, "goal_id")
+    try:
+        validate_object_id(goal_id, "goal_id")
+    except HTTPException:
+        logger.warning(f"⚠️ goal_id inválido ao atualizar progresso: {goal_id}")
+        return
     
     # Busca a meta
     goal = await db.goals.find_one({
@@ -280,6 +287,7 @@ async def delete_credit_card_purchase_from_transaction(
 @limiter.limit("30/minute", key_func=get_user_rate_limit_key)
 async def create_transaction(
     request: Request,
+    background_tasks: BackgroundTasks,  # 🆕 Para tasks em background
     transaction_data: TransactionCreate,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -341,9 +349,14 @@ async def create_transaction(
                 request
             )
         
-        # 🆕 Atualiza progresso da meta se associada
+        # 🆕 Atualiza progresso da meta em BACKGROUND (não bloqueia)
         if goal_id:
-            await update_goal_progress(str(current_user.id), goal_id, db, request)
+            background_tasks.add_task(
+                update_goal_progress,
+                str(current_user.id),
+                goal_id,
+                db
+            )
         
         await invalidate_balance_cache(str(current_user.id))
         
@@ -627,6 +640,7 @@ async def get_transaction(
 @limiter.limit("20/minute", key_func=get_user_rate_limit_key)
 async def update_transaction(
     request: Request,
+    background_tasks: BackgroundTasks,  # 🆕 Para tasks em background
     transaction_id: str,
     transaction_update: TransactionUpdate,
     current_user: UserResponse = Depends(get_current_user),
@@ -691,12 +705,12 @@ async def update_transaction(
             request=request
     )
     
-    # 🆕 Atualiza progresso das metas afetadas
+    # 🆕 Atualiza progresso das metas em BACKGROUND
     user_id = str(current_user.id)
     if old_goal_id and old_goal_id != new_goal_id:
-        await update_goal_progress(user_id, old_goal_id, db, request)
+        background_tasks.add_task(update_goal_progress, user_id, old_goal_id, db)
     if new_goal_id and new_goal_id != old_goal_id:
-        await update_goal_progress(user_id, new_goal_id, db, request)
+        background_tasks.add_task(update_goal_progress, user_id, new_goal_id, db)
     
     await invalidate_balance_cache(str(current_user.id))
     
@@ -713,6 +727,7 @@ async def update_transaction(
 @limiter.limit("10/minute", key_func=get_user_rate_limit_key)
 async def delete_transaction(
     request: Request,
+    background_tasks: BackgroundTasks,  # 🆕 Para tasks em background
     transaction_id: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
@@ -760,9 +775,14 @@ async def delete_transaction(
             request=request
         )
     
-    # 🆕 Atualiza progresso da meta se associada
+    # 🆕 Atualiza progresso da meta em BACKGROUND
     if goal_id:
-        await update_goal_progress(str(current_user.id), goal_id, db, request)
+        background_tasks.add_task(
+            update_goal_progress,
+            str(current_user.id),
+            goal_id,
+            db
+        )
     
     await invalidate_balance_cache(str(current_user.id))
     
@@ -894,12 +914,15 @@ async def export_transactions_csv(
         amount = from_cents(t.get("amount", 0))
         date_str = t.get("date").strftime("%Y-%m-%d %H:%M:%S") if t.get("date") else ""
         
-        # Busca nome da meta se associada
+        # 🔧 CORRIGIDO: Busca nome da meta com validação de ObjectId
         goal_name = ""
         if t.get("goal_id"):
-            goal = await db.goals.find_one({"_id": ObjectId(t["goal_id"])})
-            if goal:
-                goal_name = goal.get("name", "")
+            try:
+                goal = await db.goals.find_one({"_id": ObjectId(t["goal_id"])})
+                if goal:
+                    goal_name = goal.get("name", "")
+            except (InvalidId, TypeError) as e:
+                logger.warning(f"⚠️ goal_id inválido no CSV: {t.get('goal_id')} - {e}")
         
         writer.writerow([
             str(t.get("_id")),
@@ -940,11 +963,13 @@ async def export_transactions_csv(
 #   - Índices otimizados
 #   - Funções auxiliares centralizadas
 #   - 🆕 Integração com metas (goal_id)
-#   - 🆕 Atualização automática do progresso da meta
+#   - 🆕 Atualização automática do progresso da meta (em background)
 #   - 🆕 Filtro por goal_id nas listagens
 #   - 🆕 Validação: apenas receitas podem ser associadas a metas
 #   - 🆕 Atualização de progresso ao criar/atualizar/deletar transação
 #   - 🆕 Coluna "Meta" no CSV exportado
+#   - 🔧 CORRIGIDO: ObjectId com validação no CSV
+#   - 🔧 CORRIGIDO: BackgroundTasks para update_goal_progress
 #   - 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
 #
 # ❌ Não implementado (Pós-MVP):
@@ -959,5 +984,6 @@ async def export_transactions_csv(
 #   - v3.2: Refatoração - constants, rate_limiter, date_utils, installments, balance_cache (02/07/2026)
 #   - v3.3: Removidas variáveis language não utilizadas (SonarQube) (06/07/2026)
 #   - v4.0: 🆕 Integração com metas (goal_id, update_goal_progress) (11/07/2026)
+#   - v4.1: 🔧 BackgroundTasks, validação ObjectId no CSV (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
