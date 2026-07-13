@@ -230,6 +230,14 @@ async def shutdown():
     """Executado quando o servidor desliga."""
     logger.info("🛑 Desligando Velorium API...")
     
+    # 🔧 NOVO: Marca workers como desligados (evita novas tasks)
+    try:
+        from app.routes.workers import set_app_running
+        set_app_running(False)
+        logger.info("✅ Workers marcados como desligados")
+    except Exception as e:
+        logger.warning(f"⚠️ Erro ao marcar workers como desligados: {e}")
+    
     # 1. Para scheduler com timeout
     global scheduler_instance
     if scheduler_instance:
