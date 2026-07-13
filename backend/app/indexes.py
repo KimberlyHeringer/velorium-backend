@@ -35,6 +35,9 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para cache (expires_at TTL, user_id+key unique, key)
 - 🆕 NOVO: Índices para custom_categories (user_id+name unique, user_id+type, is_deleted)
 - 🆕 NOVO: Índice unique custom_categories.(user_id, value) para slug único por usuário
+- 🆕 NOVO: Índices para goals (user_id + completed, user_id + category, user_id + recurring, user_id + parent_id, user_id + archived, user_id + deadline, name text)
+- 🆕 NOVO: Índices para goal_notifications (goal_id + threshold + sent_at, user_id + sent_at, sent_at TTL)
+- 🆕 NOVO: Índice para transactions (user_id + goal_id)
 """
 
 from app.utils.logger import setup_logger
@@ -85,6 +88,8 @@ async def create_indexes(db):
         ("transactions", [("date", -1)]),
         ("transactions", [("user_id", 1), ("date", -1), ("type", 1)]),
         ("transactions", [("user_id", 1), ("category", 1)]),
+        # 🆕 Índice para goal_id
+        ("transactions", [("user_id", 1), ("goal_id", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -114,11 +119,19 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 4. METAS (GOALS)
+    # 4. METAS (GOALS) - 🆕 ATUALIZADO
     # ================================================================
     indexes = [
+        # Índices existentes
         ("goals", [("user_id", 1), ("completed", 1), ("created_at", -1)]),
         ("goals", [("user_id", 1), ("category", 1)]),
+        # 🆕 Novos índices para funcionalidades de Goals
+        ("goals", [("user_id", 1), ("recurring", 1)]),
+        ("goals", [("user_id", 1), ("parent_id", 1)]),
+        ("goals", [("user_id", 1), ("archived", 1)]),
+        ("goals", [("user_id", 1), ("deadline", 1)]),
+        ("goals", [("name", "text")]),  # Busca por texto
+        ("goals", [("user_id", 1), ("completed", 1), ("archived", 1)]),
     ]
     
     for collection_name, keys in indexes:
@@ -130,7 +143,38 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 5. PERFIL DO USUÁRIO (USER_PROFILES) 🔧 CORRIGIDO
+    # 5. NOTIFICAÇÕES DE METAS (GOAL_NOTIFICATIONS) - 🆕 NOVO
+    # ================================================================
+    try:
+        await db.goal_notifications.create_index([
+            ("goal_id", 1),
+            ("threshold", 1),
+            ("sent_at", -1),
+        ])
+        logger.info("✅ Índice goal_notifications.(goal_id, threshold, sent_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice goal_notifications.(goal_id, threshold, sent_at): {e}", exc_info=True)
+    
+    try:
+        await db.goal_notifications.create_index([
+            ("user_id", 1),
+            ("sent_at", -1),
+        ])
+        logger.info("✅ Índice goal_notifications.(user_id, sent_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice goal_notifications.(user_id, sent_at): {e}", exc_info=True)
+    
+    try:
+        await db.goal_notifications.create_index(
+            [("sent_at", 1)],
+            expireAfterSeconds=2592000,  # 30 dias
+        )
+        logger.info("✅ Índice TTL goal_notifications.sent_at criado (30 dias)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice TTL goal_notifications.sent_at: {e}", exc_info=True)
+    
+    # ================================================================
+    # 6. PERFIL DO USUÁRIO (USER_PROFILES)
     # ================================================================
     try:
         await db.user_profiles.create_index([("user_id", 1)], unique=True)
@@ -165,7 +209,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice user_profiles.is_complete: {e}", exc_info=True)
     
     # ================================================================
-    # 6. HISTÓRICO DE SCORE
+    # 7. HISTÓRICO DE SCORE
     # ================================================================
     try:
         await db.score_history.create_index([("user_id", 1), ("date", -1)])
@@ -174,7 +218,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice score_history: {e}", exc_info=True)
     
     # ================================================================
-    # 7. CARTÕES DE CRÉDITO
+    # 8. CARTÕES DE CRÉDITO
     # ================================================================
     indexes = [
         ("credit_cards", [("user_id", 1)]),
@@ -190,7 +234,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 8. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES)
+    # 9. COMPRAS PARCELADAS (CREDIT_CARD_PURCHASES)
     # ================================================================
     indexes = [
         ("credit_card_purchases", [("card_id", 1), ("created_at", -1)]),
@@ -211,7 +255,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 9. PARCELAS DE CARTÃO DE CRÉDITO (CREDIT_CARD_INSTALLMENTS)
+    # 10. PARCELAS DE CARTÃO DE CRÉDITO (CREDIT_CARD_INSTALLMENTS)
     # ================================================================
     indexes = [
         ("credit_card_installments", [("user_id", 1), ("paid", 1), ("due_date", 1)]),
@@ -230,27 +274,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 10. PARCELAS DE CONTAS A PAGAR (BILL_INSTALLMENTS)
-    # ================================================================
-    indexes = [
-        ("bill_installments", [("user_id", 1), ("due_date", -1)]),
-        ("bill_installments", [("bill_id", 1), ("user_id", 1)]),
-        ("bill_installments", [("user_id", 1), ("paid", 1)]),
-        ("bill_installments", [("user_id", 1), ("due_date", 1), ("paid", 1)]),
-        ("bill_installments", [("user_id", 1), ("paid_by", 1)]),
-        ("bill_installments", [("history.action", 1), ("history.timestamp", -1)]),
-    ]
-    
-    for collection_name, keys in indexes:
-        try:
-            collection = db[collection_name]
-            await collection.create_index(keys)
-            logger.info(f"✅ Índice {collection_name}.{keys} criado")
-        except Exception as e:
-            logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
-    
-    # ================================================================
-    # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS) 🔧 CORRIGIDO
+    # 11. TTL PARA HISTÓRICO ANTIGO (BILL_INSTALLMENTS)
     # ================================================================
     try:
         await db.bill_installments.create_index(
@@ -391,9 +415,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice notification_logs.type + sent_at: {e}", exc_info=True)
     
-    # ================================================================
-    # 19.5 🔧 NOVO: LOGS DE NOTIFICAÇÕES - ÍNDICE COMPOSTO
-    # ================================================================
     try:
         await db.notification_logs.create_index([
             ("user_id", 1),
@@ -405,7 +426,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice notification_logs.(user_id, type, sent_at): {e}", exc_info=True)
     
     # ================================================================
-    # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS) 🔧 CORRIGIDO
+    # 20. TOKENS DE EXCLUSÃO (DELETE_TOKENS)
     # ================================================================
     try:
         await db.delete_tokens.create_index(
@@ -440,7 +461,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice delete_requests.user_id: {e}", exc_info=True)
     
     # ================================================================
-    # 22. MÉTRICAS DA IA (IA_METRICS) 🔧 CORRIGIDO
+    # 22. MÉTRICAS DA IA (IA_METRICS)
     # ================================================================
     try:
         await db.ia_metrics.create_index([
@@ -540,7 +561,7 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice migrations.name: {e}", exc_info=True)
 
     # ================================================================
-    # 🆕 28. CACHE (Redis Fallback MongoDB)
+    # 28. CACHE (Redis Fallback MongoDB)
     # ================================================================
     try:
         await db.cache.create_index(
@@ -571,9 +592,8 @@ async def create_indexes(db):
         logger.warning(f"⚠️ Índice cache.key: {e}", exc_info=True)
 
     # ================================================================
-    # 🆕 29. CATEGORIAS PERSONALIZADAS (CUSTOM_CATEGORIES)
+    # 29. CATEGORIAS PERSONALIZADAS (CUSTOM_CATEGORIES)
     # ================================================================
-    # Índice único para (user_id, value) - slug único por usuário
     try:
         await db.custom_categories.create_index(
             [("user_id", 1), ("value", 1)],
@@ -584,7 +604,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice custom_categories.(user_id, value): {e}", exc_info=True)
 
-    # Índice para buscas por nome
     try:
         await db.custom_categories.create_index(
             [("user_id", 1), ("name", 1)],
@@ -594,7 +613,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice custom_categories.(user_id, name): {e}", exc_info=True)
 
-    # Índice para buscas por tipo
     try:
         await db.custom_categories.create_index(
             [("user_id", 1), ("type", 1)]
@@ -603,7 +621,6 @@ async def create_indexes(db):
     except Exception as e:
         logger.warning(f"⚠️ Índice custom_categories.(user_id, type): {e}", exc_info=True)
 
-    # Índice para soft delete
     try:
         await db.custom_categories.create_index(
             [("is_deleted", 1)]
@@ -611,6 +628,26 @@ async def create_indexes(db):
         logger.info("✅ Índice custom_categories.is_deleted criado")
     except Exception as e:
         logger.warning(f"⚠️ Índice custom_categories.is_deleted: {e}", exc_info=True)
+
+    # ================================================================
+    # 30. PARCELAS DE CONTAS A PAGAR (BILL_INSTALLMENTS) - Complemento
+    # ================================================================
+    indexes_bill_installments = [
+        ("bill_installments", [("user_id", 1), ("due_date", -1)]),
+        ("bill_installments", [("bill_id", 1), ("user_id", 1)]),
+        ("bill_installments", [("user_id", 1), ("paid", 1)]),
+        ("bill_installments", [("user_id", 1), ("due_date", 1), ("paid", 1)]),
+        ("bill_installments", [("user_id", 1), ("paid_by", 1)]),
+        ("bill_installments", [("history.action", 1), ("history.timestamp", -1)]),
+    ]
+    
+    for collection_name, keys in indexes_bill_installments:
+        try:
+            collection = db[collection_name]
+            await collection.create_index(keys)
+            logger.info(f"✅ Índice {collection_name}.{keys} criado")
+        except Exception as e:
+            logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
 
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 

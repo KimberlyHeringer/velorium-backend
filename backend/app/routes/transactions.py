@@ -3,7 +3,7 @@ Rotas de Transações Financeiras (Receitas e Despesas)
 Arquivo: backend/app/routes/transactions.py
 
 Funcionalidades:
-- POST /transactions: Criar transação (com suporte a cartão)
+- POST /transactions: Criar transação (com suporte a cartão e meta)
 - GET /transactions: Listar transações com paginação, filtros e ordenação
 - GET /transactions/balance: Saldo do mês atual com cache
 - GET /transactions/total-balance: Saldo total com cache
@@ -22,9 +22,11 @@ Principais features:
 - Exportação CSV (LGPD)
 - Categorias centralizadas
 - Índices otimizados
+- 🆕 Integração com metas (goal_id)
+- 🆕 Atualização automática do progresso da meta
 - 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
 
-Versão: v3.3 (corrigido)
+Versão: v4.0 (com integração com metas)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
@@ -87,6 +89,69 @@ except Exception as e:
 
 
 # ========== FUNÇÕES AUXILIARES ==========
+
+async def update_goal_progress(user_id: str, goal_id: str, db, request: Request = None):
+    """
+    🆕 Atualiza o progresso de uma meta baseado nas transações associadas.
+    Soma todas as transações com goal_id e atualiza o current da meta.
+    """
+    if not goal_id:
+        return
+    
+    validate_object_id(goal_id, "goal_id")
+    
+    # Busca a meta
+    goal = await db.goals.find_one({
+        "_id": ObjectId(goal_id),
+        "user_id": user_id
+    })
+    if not goal:
+        logger.warning(f"⚠️ Meta não encontrada: {goal_id}")
+        return
+    
+    # Soma todas as transações associadas a esta meta (apenas receitas/contribuições)
+    pipeline = [
+        {
+            "$match": {
+                "user_id": user_id,
+                "goal_id": goal_id,
+                "type": "income"
+            }
+        },
+        {
+            "$group": {
+                "_id": None,
+                "total": {"$sum": "$amount"}
+            }
+        }
+    ]
+    
+    result = await db.transactions.aggregate(pipeline).to_list(1)
+    total_contribuido = result[0]["total"] if result else 0
+    
+    # Atualiza a meta com o novo valor
+    target = goal.get("target", 0)
+    current = total_contribuido
+    completed = current >= target
+    
+    update_data = {
+        "current": current,
+        "completed": completed,
+        "updated_at": datetime.now(timezone.utc)
+    }
+    
+    if completed and not goal.get("completed_at"):
+        update_data["completed_at"] = datetime.now(timezone.utc)
+    elif not completed:
+        update_data["completed_at"] = None
+    
+    await db.goals.update_one(
+        {"_id": ObjectId(goal_id)},
+        {"$set": update_data}
+    )
+    
+    logger.info(f"✅ Progresso da meta {goal_id} atualizado: {current}/{target}")
+
 
 async def create_credit_card_purchase_from_transaction(
     transaction_id: str,
@@ -219,7 +284,7 @@ async def create_transaction(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Cria uma nova transação (receita ou despesa)"""
+    """Cria uma nova transação (receita ou despesa) com suporte a meta"""
     request.state.user_id = str(current_user.id)
     
     try:
@@ -232,6 +297,31 @@ async def create_transaction(
         transaction_dict["amount"] = to_cents(transaction_dict["amount"])
         transaction_dict["created_at"] = datetime.now(timezone.utc)
         transaction_dict["updated_at"] = datetime.now(timezone.utc)
+
+        # 🆕 Valida meta associada
+        goal_id = transaction_dict.get("goal_id")
+        if goal_id:
+            validate_object_id(goal_id, "goal_id")
+            goal = await db.goals.find_one({
+                "_id": ObjectId(goal_id),
+                "user_id": str(current_user.id)
+            })
+            if not goal:
+                raise NotFoundException(
+                    message_key="ERROR_GOAL_NOT_FOUND",
+                    request=request
+                )
+            if goal.get("archived", False):
+                raise ValidationException(
+                    message_key="ERROR_GOAL_ARCHIVED",
+                    request=request
+                )
+            # Apenas receitas podem ser associadas a metas
+            if transaction_dict.get("type") != "income":
+                raise ValidationException(
+                    message_key="ERROR_ONLY_INCOME_FOR_GOAL",
+                    request=request
+                )
 
         is_credit_card_expense = (
             transaction_dict.get("type") == "expense" and
@@ -250,6 +340,10 @@ async def create_transaction(
                 db,
                 request
             )
+        
+        # 🆕 Atualiza progresso da meta se associada
+        if goal_id:
+            await update_goal_progress(str(current_user.id), goal_id, db, request)
         
         await invalidate_balance_cache(str(current_user.id))
         
@@ -283,6 +377,7 @@ async def get_transactions(
     context: Optional[str] = Query(None, regex="^(individual|familia|profissional)$", description="Contexto"),
     type: Optional[str] = Query(None, regex="^(income|expense)$", description="Tipo de transação"),
     category: Optional[str] = Query(None, description="Filtrar por categoria"),
+    goal_id: Optional[str] = Query(None, description="🆕 Filtrar transações associadas a uma meta"),
     start_date: Optional[datetime] = Query(None, description="Data inicial"),
     end_date: Optional[datetime] = Query(None, description="Data final"),
     sort_by: str = Query("date", description="Campo para ordenação (date, amount, type, category)"),
@@ -292,6 +387,7 @@ async def get_transactions(
 ):
     """
     Lista transações do usuário com paginação, filtros e ordenação.
+    🆕 Novo filtro: goal_id
     """
     request.state.user_id = str(current_user.id)
     
@@ -314,6 +410,10 @@ async def get_transactions(
     
     if category:
         query["category"] = category
+    
+    if goal_id:
+        validate_object_id(goal_id, "goal_id")
+        query["goal_id"] = goal_id
     
     if start_date or end_date:
         query["date"] = {}
@@ -560,6 +660,27 @@ async def update_transaction(
     
     update_data["updated_at"] = datetime.now(timezone.utc)
 
+    # 🆕 Se goal_id mudou, atualiza progresso da meta antiga e nova
+    old_goal_id = original.get("goal_id")
+    new_goal_id = update_data.get("goal_id")
+    
+    if new_goal_id:
+        validate_object_id(new_goal_id, "goal_id")
+        goal = await db.goals.find_one({
+            "_id": ObjectId(new_goal_id),
+            "user_id": str(current_user.id)
+        })
+        if not goal:
+            raise NotFoundException(
+                message_key="ERROR_GOAL_NOT_FOUND",
+                request=request
+            )
+        if goal.get("archived", False):
+            raise ValidationException(
+                message_key="ERROR_GOAL_ARCHIVED",
+                request=request
+            )
+
     result = await db.transactions.update_one(
         {"_id": obj_id, "user_id": str(current_user.id)},
         {"$set": update_data}
@@ -569,6 +690,13 @@ async def update_transaction(
             message_key="ERROR_TRANSACTION_NOT_FOUND",
             request=request
     )
+    
+    # 🆕 Atualiza progresso das metas afetadas
+    user_id = str(current_user.id)
+    if old_goal_id and old_goal_id != new_goal_id:
+        await update_goal_progress(user_id, old_goal_id, db, request)
+    if new_goal_id and new_goal_id != old_goal_id:
+        await update_goal_progress(user_id, new_goal_id, db, request)
     
     await invalidate_balance_cache(str(current_user.id))
     
@@ -606,6 +734,9 @@ async def delete_transaction(
             request=request
         )
     
+    # 🆕 Guarda goal_id antes de deletar
+    goal_id = transaction.get("goal_id")
+    
     is_credit_card_expense = (
         transaction.get("type") == "expense" and
         transaction.get("payment_method") == PAYMENT_METHOD_CREDIT_CARD
@@ -628,6 +759,10 @@ async def delete_transaction(
             message_key="ERROR_TRANSACTION_NOT_FOUND",
             request=request
         )
+    
+    # 🆕 Atualiza progresso da meta se associada
+    if goal_id:
+        await update_goal_progress(str(current_user.id), goal_id, db, request)
     
     await invalidate_balance_cache(str(current_user.id))
     
@@ -752,12 +887,19 @@ async def export_transactions_csv(
     
     writer.writerow([
         "ID", "Data", "Descrição", "Categoria", "Tipo", "Valor (R$)",
-        "Método de Pagamento", "Contexto", "Parcelas", "Cartão", "Notas"
+        "Método de Pagamento", "Contexto", "Parcelas", "Cartão", "Meta", "Notas"
     ])
     
     for t in transactions:
         amount = from_cents(t.get("amount", 0))
         date_str = t.get("date").strftime("%Y-%m-%d %H:%M:%S") if t.get("date") else ""
+        
+        # Busca nome da meta se associada
+        goal_name = ""
+        if t.get("goal_id"):
+            goal = await db.goals.find_one({"_id": ObjectId(t["goal_id"])})
+            if goal:
+                goal_name = goal.get("name", "")
         
         writer.writerow([
             str(t.get("_id")),
@@ -770,6 +912,7 @@ async def export_transactions_csv(
             t.get("context", "individual"),
             t.get("installments", 1),
             t.get("card_id", ""),
+            goal_name,
             t.get("notes", "")
         ])
     
@@ -796,6 +939,12 @@ async def export_transactions_csv(
 #   - Categorias centralizadas
 #   - Índices otimizados
 #   - Funções auxiliares centralizadas
+#   - 🆕 Integração com metas (goal_id)
+#   - 🆕 Atualização automática do progresso da meta
+#   - 🆕 Filtro por goal_id nas listagens
+#   - 🆕 Validação: apenas receitas podem ser associadas a metas
+#   - 🆕 Atualização de progresso ao criar/atualizar/deletar transação
+#   - 🆕 Coluna "Meta" no CSV exportado
 #   - 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
 #
 # ❌ Não implementado (Pós-MVP):
@@ -809,5 +958,6 @@ async def export_transactions_csv(
 #   - v3.1: Correções de request, scan_iter (01/07/2026)
 #   - v3.2: Refatoração - constants, rate_limiter, date_utils, installments, balance_cache (02/07/2026)
 #   - v3.3: Removidas variáveis language não utilizadas (SonarQube) (06/07/2026)
+#   - v4.0: 🆕 Integração com metas (goal_id, update_goal_progress) (11/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

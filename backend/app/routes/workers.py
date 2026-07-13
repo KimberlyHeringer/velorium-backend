@@ -7,6 +7,12 @@ Funcionalidades:
 - POST /workers/score/trigger: Executar worker manualmente
 - GET /workers/score/queue: Status da fila Redis
 - GET /workers/notifications/status: Status do worker de notificações
+- 🆕 GET /workers/goals/recurring/status: Status do worker de metas recorrentes
+- 🆕 POST /workers/goals/recurring/trigger: Executar worker de metas recorrentes
+- 🆕 GET /workers/goals/notifications/status: Status do worker de notificações de metas
+- 🆕 POST /workers/goals/notifications/trigger: Executar worker de notificações de metas
+
+🔧 CORRIGIDO: Caminho dos workers usando 'worker_disabled'
 
 Regra: 2.8 (Logs)
 Regra: 7.1 (Internacionalização)
@@ -155,7 +161,7 @@ async def trigger_score_worker(
     
     # 🔧 CORRIGIDO: Importação segura do worker
     try:
-        from workers.score_worker import calculate_score_for_all_users
+        from worker_disabled.score_worker import calculate_score_for_all_users
     except ImportError as e:
         logger.error(f"❌ Erro ao importar worker de score: {e}")
         raise HTTPException(
@@ -204,7 +210,7 @@ async def get_score_queue_status(
     try:
         # 🔧 CORRIGIDO: Importação segura
         try:
-            from workers.score_worker import redis_client
+            from worker_disabled.score_worker import redis_client
         except ImportError:
             redis_client = None
         
@@ -274,6 +280,213 @@ async def get_notifications_worker_status(
 
 
 # ================================================================
+# 🆕 WORKER DE METAS RECORRENTES - STATUS
+# ================================================================
+
+@router.get("/goals/recurring/status")
+async def get_goal_recurring_status(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Retorna o status do worker de metas recorrentes.
+    
+    🔧 USO:
+        GET /api/v1/workers/goals/recurring/status
+    """
+    language = getattr(request.state, "language", "pt")
+    
+    try:
+        last_run = await db.worker_logs.find_one(
+            {"worker": "goal_recurring"},
+            sort=[("executed_at", -1)]
+        )
+        
+        return {
+            "status": "operational",
+            "last_run": {
+                "executed_at": last_run.get("executed_at").isoformat() if last_run else None,
+                "total_processed": last_run.get("result", {}).get("total_processed", 0) if last_run else 0,
+                "total_created": last_run.get("result", {}).get("total_created", 0) if last_run else 0,
+                "total_archived": last_run.get("result", {}).get("total_archived", 0) if last_run else 0,
+                "total_errors": last_run.get("result", {}).get("total_errors", 0) if last_run else 0
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar status do worker de metas recorrentes: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=get_message("ERROR_SERVER", language)
+        )
+
+
+# ================================================================
+# 🆕 WORKER DE METAS RECORRENTES - TRIGGER MANUAL
+# ================================================================
+
+@router.post("/goals/recurring/trigger")
+@limiter.limit("5/minute", key_func=get_user_rate_limit_key)
+async def trigger_goal_recurring_worker(
+    request: Request,
+    secret: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Executa o worker de metas recorrentes manualmente.
+    
+    🔧 USO:
+        POST /api/v1/workers/goals/recurring/trigger?secret=ADMIN_SECRET
+    """
+    language = getattr(request.state, "language", "pt")
+    
+    ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
+    
+    if not ADMIN_SECRET:
+        logger.error("❌ ADMIN_SECRET não configurado no .env")
+        raise HTTPException(
+            status_code=500,
+            detail="ADMIN_SECRET not configured"
+        )
+    
+    if secret != ADMIN_SECRET:
+        logger.warning(f"⚠️ Tentativa de acesso com ADMIN_SECRET inválido")
+        raise HTTPException(
+            status_code=403,
+            detail=get_message("ERROR_UNAUTHORIZED", language)
+        )
+    
+    try:
+        from worker_disabled.goal_recurring import process_recurring_goals
+    except ImportError as e:
+        logger.error(f"❌ Erro ao importar worker de metas recorrentes: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Worker de metas recorrentes não disponível"
+        )
+    
+    task = asyncio.create_task(process_recurring_goals())
+    task.add_done_callback(
+        lambda t: logger.info(
+            f"✅ Worker de metas recorrentes finalizado com status: "
+            f"{'sucesso' if not t.exception() else f'erro: {t.exception()}'}"
+        )
+    )
+    
+    logger.info(f"🚀 Worker de metas recorrentes acionado manualmente por {current_user.id}")
+    
+    return {
+        "message": "Worker de metas recorrentes iniciado",
+        "started_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+# ================================================================
+# 🆕 WORKER DE NOTIFICAÇÕES DE METAS - STATUS
+# ================================================================
+
+@router.get("/goals/notifications/status")
+async def get_goal_notifications_status(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Retorna o status do worker de notificações de metas.
+    
+    🔧 USO:
+        GET /api/v1/workers/goals/notifications/status
+    """
+    language = getattr(request.state, "language", "pt")
+    
+    try:
+        last_run = await db.worker_logs.find_one(
+            {"worker": "goal_notifications"},
+            sort=[("executed_at", -1)]
+        )
+        
+        return {
+            "status": "operational",
+            "last_run": {
+                "executed_at": last_run.get("executed_at").isoformat() if last_run else None,
+                "total_processed": last_run.get("result", {}).get("total_processed", 0) if last_run else 0,
+                "total_notifications_sent": last_run.get("result", {}).get("total_notifications_sent", 0) if last_run else 0,
+                "total_errors": last_run.get("result", {}).get("total_errors", 0) if last_run else 0
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar status do worker de notificações de metas: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=get_message("ERROR_SERVER", language)
+        )
+
+
+# ================================================================
+# 🆕 WORKER DE NOTIFICAÇÕES DE METAS - TRIGGER MANUAL
+# ================================================================
+
+@router.post("/goals/notifications/trigger")
+@limiter.limit("5/minute", key_func=get_user_rate_limit_key)
+async def trigger_goal_notifications_worker(
+    request: Request,
+    secret: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Executa o worker de notificações de metas manualmente.
+    
+    🔧 USO:
+        POST /api/v1/workers/goals/notifications/trigger?secret=ADMIN_SECRET
+    """
+    language = getattr(request.state, "language", "pt")
+    
+    ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
+    
+    if not ADMIN_SECRET:
+        logger.error("❌ ADMIN_SECRET não configurado no .env")
+        raise HTTPException(
+            status_code=500,
+            detail="ADMIN_SECRET not configured"
+        )
+    
+    if secret != ADMIN_SECRET:
+        logger.warning(f"⚠️ Tentativa de acesso com ADMIN_SECRET inválido")
+        raise HTTPException(
+            status_code=403,
+            detail=get_message("ERROR_UNAUTHORIZED", language)
+        )
+    
+    try:
+        from worker_disabled.goal_notification import process_goal_notifications
+    except ImportError as e:
+        logger.error(f"❌ Erro ao importar worker de notificações de metas: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Worker de notificações de metas não disponível"
+        )
+    
+    task = asyncio.create_task(process_goal_notifications())
+    task.add_done_callback(
+        lambda t: logger.info(
+            f"✅ Worker de notificações de metas finalizado com status: "
+            f"{'sucesso' if not t.exception() else f'erro: {t.exception()}'}"
+        )
+    )
+    
+    logger.info(f"🚀 Worker de notificações de metas acionado manualmente por {current_user.id}")
+    
+    return {
+        "message": "Worker de notificações de metas iniciado",
+        "started_at": datetime.now(timezone.utc).isoformat()
+    }
+
+
+# ================================================================
 # NOTAS DE IMPLEMENTAÇÃO
 # ================================================================
 
@@ -282,19 +495,27 @@ async def get_notifications_worker_status(
 
 1. Ver status do worker de score:
    GET /api/v1/workers/score/status
-   → Retorna última execução, total de usuários, sucessos, erros
 
-2. Executar worker manualmente:
+2. Executar worker de score manualmente:
    POST /api/v1/workers/score/trigger?secret=ADMIN_SECRET
-   → Inicia o worker em background
 
 3. Ver status da fila Redis:
    GET /api/v1/workers/score/queue
-   → Retorna tamanho da fila
 
 4. Ver status do worker de notificações:
    GET /api/v1/workers/notifications/status
-   → Retorna última execução
+
+5. 🆕 Ver status do worker de metas recorrentes:
+   GET /api/v1/workers/goals/recurring/status
+
+6. 🆕 Executar worker de metas recorrentes:
+   POST /api/v1/workers/goals/recurring/trigger?secret=ADMIN_SECRET
+
+7. 🆕 Ver status do worker de notificações de metas:
+   GET /api/v1/workers/goals/notifications/status
+
+8. 🆕 Executar worker de notificações de metas:
+   POST /api/v1/workers/goals/notifications/trigger?secret=ADMIN_SECRET
 """
 
 
@@ -311,6 +532,11 @@ async def get_notifications_worker_status(
 #   - 🔧 CORRIGIDO: Importação segura do redis_client
 #   - 🔧 CORRIGIDO: Validação rigorosa do ADMIN_SECRET
 #   - 🔧 CORRIGIDO: Task com referência e callback
+#   - 🔧 CORRIGIDO: Caminho dos workers para 'worker_disabled'
+#   - 🆕 Status do worker de metas recorrentes
+#   - 🆕 Trigger manual para metas recorrentes
+#   - 🆕 Status do worker de notificações de metas
+#   - 🆕 Trigger manual para notificações de metas
 #   - I18n completo
 #
 # ❌ Não implementado (Pós-MVP):
@@ -321,5 +547,7 @@ async def get_notifications_worker_status(
 # 📋 CHANGELOG:
 #   - v1: Versão inicial (06/07/2026)
 #   - v2: Correções - importação segura, ADMIN_SECRET rigoroso, task com referência (06/07/2026)
+#   - v3: 🆕 Adicionado workers de metas (recurring e notifications) (12/07/2026)
+#   - v4: 🔧 CORRIGIDO - Caminho dos workers para 'worker_disabled' (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

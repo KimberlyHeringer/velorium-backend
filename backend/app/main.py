@@ -19,6 +19,9 @@ from app.middleware.language import LanguageMiddleware
 # 🔧 NOVO: Migrations
 from app.utils.migrations import run_migrations
 
+# 🔧 NOVO: Scheduler
+from app.utils.scheduler import start_scheduler, stop_scheduler
+
 logger = setup_logger(__name__)
 
 # Carrega variáveis de ambiente
@@ -27,7 +30,7 @@ load_dotenv()
 # ========== CONFIGURAÇÕES ==========
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 OTEL_ENABLED = os.getenv("OTEL_ENABLED", "false").lower() == "true"
-SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "false").lower() == "true"
+SCHEDULER_ENABLED = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"  # 🔧 Mudado para true por padrão
 FRONTEND_URL = os.getenv("FRONTEND_URL")
 
 # 🔧 CORRIGIDO: Validação de FRONTEND_URL em produção
@@ -91,24 +94,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ========== SCHEDULER ==========
-def start_scheduler():
-    """Inicia o scheduler se habilitado."""
-    if not SCHEDULER_ENABLED:
-        logger.info("⏰ Scheduler desabilitado (SCHEDULER_ENABLED=false)")
-        return None
-    
-    try:
-        from app.scheduler import start_scheduler as start
-        logger.info("✅ Scheduler iniciado")
-        return start()
-    except ImportError:
-        logger.warning("⚠️ Scheduler não disponível")
-        return None
-    except Exception as e:
-        logger.error(f"❌ Erro ao iniciar scheduler: {e}", exc_info=True)
-        return None
-
 # ========== EVENTOS ==========
 @app.on_event("startup")
 async def startup():
@@ -137,7 +122,16 @@ async def startup():
         else:
             await initialize()
         
-        start_scheduler()
+        # 🔧 NOVO: Inicia scheduler
+        if SCHEDULER_ENABLED:
+            try:
+                start_scheduler()
+                logger.info("✅ Scheduler iniciado com sucesso")
+            except Exception as e:
+                logger.error(f"❌ Erro ao iniciar scheduler: {e}", exc_info=True)
+        else:
+            logger.info("⏰ Scheduler desabilitado (SCHEDULER_ENABLED=false)")
+        
         logger.info("✅ Velorium API pronta para uso!")
         
     except asyncio.TimeoutError:
@@ -151,6 +145,14 @@ async def startup():
 async def shutdown():
     """Executado quando o servidor desliga."""
     logger.info("🛑 Desligando Velorium API...")
+    
+    # 🔧 NOVO: Para scheduler
+    try:
+        stop_scheduler()
+        logger.info("✅ Scheduler parado")
+    except Exception as e:
+        logger.error(f"❌ Erro ao parar scheduler: {e}", exc_info=True)
+    
     await close_mongo_connection()
     logger.info("✅ Desligamento concluído")
 
@@ -171,7 +173,8 @@ from app.routes import (
     achievements, 
     bill_installments,
     cache,          # 🆕 Rota de cache Redis
-    categories      # 🆕 Rota de categorias personalizadas
+    categories,     # 🆕 Rota de categorias personalizadas
+    workers         # 🆕 Rota de workers
 )
 
 # Registrar rotas manualmente
@@ -191,14 +194,7 @@ app.include_router(investments.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(cache.router, prefix="/api/v1")          # 🆕 Rota de cache Redis
 app.include_router(categories.router, prefix="/api/v1")     # 🆕 Rota de categorias personalizadas
-
-# 🔧 NOVO: Rota de workers (status dos workers)
-try:
-    from app.routes import workers
-    app.include_router(workers.router, prefix="/api/v1")
-    logger.info("✅ Rota de workers registrada")
-except ImportError as e:
-    logger.warning(f"⚠️ Rota de workers não disponível: {e}")
+app.include_router(workers.router, prefix="/api/v1")        # 🆕 Rota de workers
 
 # ========== ENDPOINTS PÚBLICOS ==========
 @app.get("/")
@@ -217,9 +213,18 @@ async def health():
     from app.database import health_check
     db_status = await health_check()
     
+    # 🔧 NOVO: Status do scheduler
+    scheduler_status = "unknown"
+    try:
+        from app.utils.scheduler import get_scheduler_status
+        scheduler_status = get_scheduler_status()
+    except Exception:
+        pass
+    
     response = {
         "status": "ok",
         "database": db_status,
+        "scheduler": scheduler_status,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     

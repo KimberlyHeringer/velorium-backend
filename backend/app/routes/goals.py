@@ -8,23 +8,30 @@ Funcionalidades:
 - GET /goals/{id}: Buscar meta específica
 - PUT /goals/{id}: Atualizar meta
 - DELETE /goals/{id}: Remover meta
+- GET /goals/history: Listar metas arquivadas (histórico)
+- GET /goals/sub: Buscar sub-metas de uma meta pai
+- POST /goals/{id}/sub: Adicionar sub-meta
 
 Principais features:
 - I18n completo com suporte a 4 idiomas
 - Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-- Campos calculados (progress_percentage, remaining_amount)
+- Campos calculados (progress_percentage, remaining_amount, days_until_deadline, is_overdue)
 - Validação current <= target
-- Filtros por status (completed) e categoria
-- Ordenação personalizada (sort_by, sort_order)
-- SEM history e SEM TTL (modo individual)
+- Filtros: completed, category, parent_id, recurring, has_deadline, archived
+- Ordenação: created_at, target, current, completed, category, deadline, completed_at
+- Suporte a metas recorrentes (recurring, recurring_interval)
+- Suporte a sub-metas (parent_id)
+- Suporte a data limite (deadline)
+- Histórico de metas concluídas/arquivadas
 
-Versão: v3.2 (refatorado)
+Versão: v4.0 (refatorado com novas funcionalidades)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from typing import Optional, List
 from datetime import datetime, timezone
 from bson import ObjectId
+from dateutil.relativedelta import relativedelta
 
 from app.utils.auth import get_current_user
 from app.models.user import UserResponse
@@ -48,6 +55,75 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/goals", tags=["Metas"])
 
 
+# ========== FUNÇÕES AUXILIARES ==========
+
+async def recalculate_parent_progress(parent_id: str, user_id: str, db):
+    """
+    Recalcula o progresso da meta pai baseado nas sub-metas.
+    Soma os valores atuais de todas as sub-metas e atualiza a meta pai.
+    """
+    sub_goals = await db.goals.find({
+        "parent_id": parent_id,
+        "user_id": user_id,
+        "archived": False
+    }).to_list(100)
+    
+    if not sub_goals:
+        return
+    
+    total_current = sum(g.get("current", 0) for g in sub_goals)
+    total_target = sum(g.get("target", 0) for g in sub_goals)
+    
+    parent = await db.goals.find_one({
+        "_id": ObjectId(parent_id),
+        "user_id": user_id
+    })
+    
+    if not parent:
+        return
+    
+    # Atualiza a meta pai com a soma das sub-metas
+    update_data = {
+        "current": total_current,
+        "target": total_target,
+        "updated_at": datetime.now(timezone.utc),
+        "completed": total_current >= total_target
+    }
+    
+    if update_data["completed"] and parent.get("completed_at") is None:
+        update_data["completed_at"] = datetime.now(timezone.utc)
+    
+    await db.goals.update_one(
+        {"_id": ObjectId(parent_id)},
+        {"$set": update_data}
+    )
+
+
+async def archive_completed_goal(goal_id: str, user_id: str, db):
+    """
+    Arquivar uma meta concluída (move para histórico).
+    """
+    goal = await db.goals.find_one({
+        "_id": ObjectId(goal_id),
+        "user_id": user_id
+    })
+    
+    if not goal:
+        return
+    
+    if goal.get("completed", False) and not goal.get("archived", False):
+        await db.goals.update_one(
+            {"_id": ObjectId(goal_id)},
+            {
+                "$set": {
+                    "archived": True,
+                    "completed_at": goal.get("completed_at") or datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+
+
 # ========== ENDPOINTS ==========
 
 @router.get("/", response_model=dict)
@@ -57,16 +133,34 @@ async def list_goals(
     limit: int = Query(20, ge=1, le=100, description="Itens por página"),
     completed: Optional[bool] = Query(None, description="Filtrar por concluídas"),
     category: Optional[str] = Query(None, description="Filtrar por categoria"),
-    sort_by: str = Query("created_at", description="Campo para ordenação (created_at, target, current, completed, category)"),
+    parent_id: Optional[str] = Query(None, description="Filtrar sub-metas de uma meta pai"),
+    recurring: Optional[bool] = Query(None, description="Filtrar metas recorrentes"),
+    has_deadline: Optional[bool] = Query(None, description="Filtrar metas com data limite"),
+    archived: Optional[bool] = Query(False, description="Filtrar metas arquivadas"),
+    search: Optional[str] = Query(None, description="Buscar por nome"),
+    sort_by: str = Query("created_at", description="Campo para ordenação (created_at, target, current, completed, category, deadline, completed_at, progress_percentage)"),
     sort_order: str = Query("desc", regex="^(asc|desc)$", description="Ordem (asc/desc)"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
     """
     Lista as metas do usuário com paginação, filtros e ordenação.
+    
+    🆕 NOVOS FILTROS:
+    - parent_id: Filtrar sub-metas de uma meta pai
+    - recurring: Filtrar metas recorrentes
+    - has_deadline: Filtrar metas com data limite
+    - archived: Filtrar metas arquivadas
+    - search: Buscar por nome
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
+    
+    # Excluir arquivadas por padrão (a menos que explicitamente solicitado)
+    if archived is None:
+        query["archived"] = False
+    elif archived is not None:
+        query["archived"] = archived
     
     if completed is not None:
         query["completed"] = completed
@@ -74,12 +168,32 @@ async def list_goals(
     if category:
         query["category"] = category
     
+    if parent_id:
+        validate_object_id(parent_id, "parent_id")
+        query["parent_id"] = parent_id
+    
+    if recurring is not None:
+        query["recurring"] = recurring
+    
+    if has_deadline is not None:
+        if has_deadline:
+            query["deadline"] = {"$ne": None}
+        else:
+            query["deadline"] = None
+    
+    if search:
+        query["$text"] = {"$search": search}
+    
     sort_field_mapping = {
         "created_at": "created_at",
         "target": "target",
         "current": "current",
         "completed": "completed",
-        "category": "category"
+        "category": "category",
+        "deadline": "deadline",
+        "completed_at": "completed_at",
+        "progress_percentage": "progress_percentage",
+        "updated_at": "updated_at"
     }
     sort_field = sort_field_mapping.get(sort_by, "created_at")
     sort_direction = -1 if sort_order == "desc" else 1
@@ -93,8 +207,14 @@ async def list_goals(
             item["target"] = from_cents(item["target"])
         if "current" in item:
             item["current"] = from_cents(item["current"])
-        # 🆕 Adiciona campos calculados
+        # Adiciona campos calculados
         item = add_calculated_fields(item)
+        
+        # Adiciona campos de deadline
+        if item.get("deadline"):
+            delta = item["deadline"] - datetime.now(timezone.utc)
+            item["days_until_deadline"] = max(0, delta.days)
+            item["is_overdue"] = datetime.now(timezone.utc) > item["deadline"] and not item.get("completed", False)
     
     formatted_items = [convert_objectid_to_str(item) for item in items]
     
@@ -120,6 +240,24 @@ async def create_goal(
             request=request
         )
     
+    # Se for sub-meta, verifica se a meta pai existe
+    if goal.parent_id:
+        validate_object_id(goal.parent_id, "parent_id")
+        parent = await db.goals.find_one({
+            "_id": ObjectId(goal.parent_id),
+            "user_id": str(current_user.id)
+        })
+        if not parent:
+            raise NotFoundException(
+                message_key="ERROR_GOAL_NOT_FOUND",
+                request=request
+            )
+        if parent.get("archived", False):
+            raise ValidationException(
+                message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_ARCHIVED",
+                request=request
+            )
+    
     goal_dict = {
         "user_id": str(current_user.id),
         "name": goal.name,
@@ -128,11 +266,22 @@ async def create_goal(
         "category": goal.category,
         "completed": current_cents >= target_cents,
         "created_at": datetime.now(timezone.utc),
-        "updated_at": datetime.now(timezone.utc)
+        "updated_at": datetime.now(timezone.utc),
+        # 🆕 NOVOS CAMPOS
+        "recurring": goal.recurring,
+        "recurring_interval": goal.recurring_interval,
+        "deadline": goal.deadline,
+        "parent_id": goal.parent_id,
+        "completed_at": datetime.now(timezone.utc) if current_cents >= target_cents else None,
+        "archived": False,
     }
     
     result = await db.goals.insert_one(goal_dict)
     created = await db.goals.find_one({"_id": result.inserted_id})
+    
+    # Se for sub-meta, recalcula a meta pai
+    if goal.parent_id:
+        await recalculate_parent_progress(goal.parent_id, str(current_user.id), db)
     
     if created:
         if "target" in created:
@@ -171,6 +320,15 @@ async def get_goal(
     if "current" in goal:
         goal["current"] = from_cents(goal["current"])
     goal = add_calculated_fields(goal)
+    
+    # Busca sub-metas se for uma meta pai
+    if not goal.get("parent_id"):
+        sub_goals = await db.goals.find({
+            "parent_id": goal_id,
+            "user_id": str(current_user.id),
+            "archived": False
+        }).to_list(100)
+        goal["children"] = [convert_objectid_to_str(add_calculated_fields(sg)) for sg in sub_goals]
     
     logger.debug(f"📊 Meta recuperada: {goal_id} para usuário {current_user.id}")
     return convert_objectid_to_str(goal)
@@ -222,12 +380,39 @@ async def update_goal(
             request=request
         )
     
-    update_data["completed"] = new_current >= new_target
+    # Atualiza completed e completed_at
+    was_completed = existing.get("completed", False)
+    new_completed = new_current >= new_target
+    
+    update_data["completed"] = new_completed
+    if new_completed and not was_completed:
+        update_data["completed_at"] = datetime.now(timezone.utc)
+    elif not new_completed:
+        update_data["completed_at"] = None
+    
+    # Se for arquivada, garante que completed_at está definido
+    if update_data.get("archived") and not update_data.get("completed_at"):
+        update_data["completed_at"] = datetime.now(timezone.utc)
+    
+    # Se estiver atualizando para não arquivada e não completada
+    if update_data.get("archived") is False and not new_completed:
+        update_data["completed_at"] = None
+    
+    # Se estiver atualizando parent_id, recalcula a meta pai antiga e a nova
+    old_parent_id = existing.get("parent_id")
+    new_parent_id = update_data.get("parent_id")
     
     await db.goals.update_one(
         {"_id": ObjectId(goal_id)},
         {"$set": update_data}
     )
+    
+    # Recalcula metas pai afetadas
+    if old_parent_id and old_parent_id != new_parent_id:
+        await recalculate_parent_progress(old_parent_id, str(current_user.id), db)
+    if new_parent_id and new_parent_id != old_parent_id:
+        validate_object_id(new_parent_id, "parent_id")
+        await recalculate_parent_progress(new_parent_id, str(current_user.id), db)
     
     updated = await db.goals.find_one({"_id": ObjectId(goal_id)})
     
@@ -250,15 +435,51 @@ async def delete_goal(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Remove uma meta"""
+    """Remove uma meta (ou arquiva se tiver sub-metas)"""
     validate_object_id(goal_id, "goal_id")
+    
+    existing = await db.goals.find_one({
+        "_id": ObjectId(goal_id),
+        "user_id": str(current_user.id)
+    })
+    if not existing:
+        logger.warning(f"⚠️ Meta não encontrada para deleção: {goal_id} para usuário {current_user.id}")
+        raise NotFoundException(
+            message_key="ERROR_GOAL_NOT_FOUND",
+            request=request
+        )
+    
+    # Verifica se tem sub-metas
+    sub_goals = await db.goals.find({
+        "parent_id": goal_id,
+        "user_id": str(current_user.id)
+    }).to_list(1)
+    
+    # Se tiver sub-metas, arquiva em vez de deletar
+    if sub_goals:
+        await db.goals.update_one(
+            {"_id": ObjectId(goal_id)},
+            {
+                "$set": {
+                    "archived": True,
+                    "completed": True,
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        language = getattr(request.state, "language", "pt")
+        return {
+            "message": get_message("SUCCESS_GOAL_ARCHIVED", language),
+            "success": True,
+            "archived": True
+        }
     
     result = await db.goals.delete_one({
         "_id": ObjectId(goal_id),
         "user_id": str(current_user.id)
     })
     if result.deleted_count == 0:
-        logger.warning(f"⚠️ Meta não encontrada para deleção: {goal_id} para usuário {current_user.id}")
         raise NotFoundException(
             message_key="ERROR_GOAL_NOT_FOUND",
             request=request
@@ -270,23 +491,202 @@ async def delete_goal(
     return {"message": get_message("SUCCESS_GOAL_DELETED", language), "success": True}
 
 
+# ========== 🆕 ENDPOINT: HISTÓRICO ==========
+
+@router.get("/history", response_model=dict)
+async def get_goal_history(
+    request: Request,
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
+    category: Optional[str] = Query(None, description="Filtrar por categoria"),
+    sort_by: str = Query("completed_at", description="Campo para ordenação (completed_at, target, category)"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$", description="Ordem (asc/desc)"),
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Lista metas arquivadas (histórico de metas concluídas).
+    """
+    params = PaginationParams(page=page, limit=limit)
+    query = {
+        "user_id": str(current_user.id),
+        "archived": True
+    }
+    
+    if category:
+        query["category"] = category
+    
+    sort_field_mapping = {
+        "completed_at": "completed_at",
+        "target": "target",
+        "category": "category",
+        "created_at": "created_at"
+    }
+    sort_field = sort_field_mapping.get(sort_by, "completed_at")
+    sort_direction = -1 if sort_order == "desc" else 1
+
+    items, total = await paginate_query(
+        db.goals, query, params, sort=[(sort_field, sort_direction)]
+    )
+    
+    for item in items:
+        if "target" in item:
+            item["target"] = from_cents(item["target"])
+        if "current" in item:
+            item["current"] = from_cents(item["current"])
+        item = add_calculated_fields(item)
+    
+    formatted_items = [convert_objectid_to_str(item) for item in items]
+    
+    logger.debug(f"📊 Listadas {len(formatted_items)} metas no histórico para usuário {current_user.id}")
+    return paginate(formatted_items, total, params).model_dump()
+
+
+# ========== 🆕 ENDPOINT: SUB-METAS ==========
+
+@router.get("/sub", response_model=dict)
+async def get_sub_goals(
+    request: Request,
+    parent_id: str = Query(..., description="ID da meta pai"),
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
+    completed: Optional[bool] = Query(None, description="Filtrar por concluídas"),
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Lista sub-metas de uma meta pai.
+    """
+    validate_object_id(parent_id, "parent_id")
+    
+    params = PaginationParams(page=page, limit=limit)
+    query = {
+        "user_id": str(current_user.id),
+        "parent_id": parent_id,
+        "archived": False
+    }
+    
+    if completed is not None:
+        query["completed"] = completed
+    
+    items, total = await paginate_query(
+        db.goals, query, params, sort=[("created_at", 1)]
+    )
+    
+    for item in items:
+        if "target" in item:
+            item["target"] = from_cents(item["target"])
+        if "current" in item:
+            item["current"] = from_cents(item["current"])
+        item = add_calculated_fields(item)
+    
+    formatted_items = [convert_objectid_to_str(item) for item in items]
+    
+    logger.debug(f"📊 Listadas {len(formatted_items)} sub-metas para meta pai {parent_id}")
+    return paginate(formatted_items, total, params).model_dump()
+
+
+# ========== 🆕 ENDPOINT: ADICIONAR SUB-META ==========
+
+@router.post("/{goal_id}/sub", response_model=GoalResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")
+async def add_sub_goal(
+    request: Request,
+    goal_id: str,
+    sub_goal: GoalCreate,
+    current_user: UserResponse = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Adiciona uma sub-meta a uma meta pai.
+    """
+    validate_object_id(goal_id, "goal_id")
+    
+    # Verifica se a meta pai existe
+    parent = await db.goals.find_one({
+        "_id": ObjectId(goal_id),
+        "user_id": str(current_user.id)
+    })
+    if not parent:
+        raise NotFoundException(
+            message_key="ERROR_GOAL_NOT_FOUND",
+            request=request
+        )
+    
+    if parent.get("archived", False):
+        raise ValidationException(
+            message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_ARCHIVED",
+            request=request
+        )
+    
+    if parent.get("recurring", False):
+        raise ValidationException(
+            message_key="ERROR_CANNOT_ADD_SUBGOAL_TO_RECURRING",
+            request=request
+        )
+    
+    # Cria a sub-meta
+    target_cents = to_cents(sub_goal.target)
+    current_cents = to_cents(sub_goal.current)
+    
+    if current_cents > target_cents:
+        raise ValidationException(
+            message_key="ERROR_GOAL_CURRENT_EXCEEDS_TARGET",
+            request=request
+        )
+    
+    sub_goal_dict = {
+        "user_id": str(current_user.id),
+        "name": sub_goal.name,
+        "target": target_cents,
+        "current": current_cents,
+        "category": sub_goal.category,
+        "parent_id": goal_id,
+        "completed": current_cents >= target_cents,
+        "recurring": False,
+        "recurring_interval": None,
+        "deadline": None,
+        "completed_at": datetime.now(timezone.utc) if current_cents >= target_cents else None,
+        "archived": False,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc)
+    }
+    
+    result = await db.goals.insert_one(sub_goal_dict)
+    created = await db.goals.find_one({"_id": result.inserted_id})
+    
+    # Recalcula a meta pai
+    await recalculate_parent_progress(goal_id, str(current_user.id), db)
+    
+    if created:
+        if "target" in created:
+            created["target"] = from_cents(created["target"])
+        if "current" in created:
+            created["current"] = from_cents(created["current"])
+        created = add_calculated_fields(created)
+    
+    logger.info(f"✅ Sub-meta criada: '{sub_goal.name}' para meta pai {goal_id}")
+    return convert_objectid_to_str(created)
+
+
 # ========== DECISÕES DOCUMENTADAS ==========
 #
 # ✅ Implementado:
 #   - I18n completo (4 idiomas)
 #   - Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-#   - Campos calculados (progress_percentage, remaining_amount)
+#   - Campos calculados (progress_percentage, remaining_amount, days_until_deadline, is_overdue)
 #   - Validação current <= target
-#   - Filtros por status (completed) e categoria
-#   - Ordenação personalizada (sort_by, sort_order)
-#   - SEM history (modo individual não precisa)
-#   - SEM TTL (não temos histórico)
-#   - SEM deadline (Pós-MVP)
-#
-# ❌ Não implementado (Pós-MVP):
-#   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
-#   - deadline (mudaria o modelo)
-#   - updated_by e history (modo individual não precisa)
+#   - Filtros: completed, category, parent_id, recurring, has_deadline, archived, search
+#   - Ordenação: created_at, target, current, completed, category, deadline, completed_at
+#   - 🆕 Suporte a metas recorrentes (recurring, recurring_interval)
+#   - 🆕 Suporte a sub-metas (parent_id)
+#   - 🆕 Suporte a data limite (deadline)
+#   - 🆕 Histórico de metas (GET /history)
+#   - 🆕 Lista sub-metas (GET /sub)
+#   - 🆕 Adicionar sub-meta (POST /{id}/sub)
+#   - 🆕 Função recalculate_parent_progress()
+#   - 🆕 Função archive_completed_goal()
+#   - 🆕 Deleção arquiva se tiver sub-metas
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -294,5 +694,6 @@ async def delete_goal(
 #   - v3: Rate limiting, filtros, ordenação, campos calculados (30/06/2026)
 #   - v3.1: Remoção de unit, sort_by (01/07/2026)
 #   - v3.2: Refatoração - add_calculated_fields movido para utils/validators_extras.py (02/07/2026)
+#   - v4.0: 🆕 Adicionado recurring, deadline, parent_id, archived, history, sub-metas (11/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

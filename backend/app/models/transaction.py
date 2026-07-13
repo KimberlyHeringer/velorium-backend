@@ -6,12 +6,14 @@ Funcionalidades:
 - CRUD de transações (receitas/despesas)
 - Suporte a cartão de crédito com parcelamento
 - Contextos: individual, familia, profissional
+- 🆕 Associação com metas financeiras (goal_id)
 
 Principais features:
 - amount em centavos (int) para precisão
 - Validação: cartão de crédito apenas para despesas
 - Suporte a parcelamento (installments, first_due_date)
 - Contextos para separação de dados
+- 🆕 goal_id: associação com meta (apenas receitas)
 - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
 - Herança de AmountMixin (amount com validação)
 - Herança de PaymentMixin (paid, paid_date)
@@ -52,6 +54,7 @@ class Transaction(BaseModelWithUser, AmountMixin, PaymentMixin):
       - card_id: ID do cartão (quando payment_method='cartao_credito')
       - installments: Número de parcelas
       - first_due_date: Data da primeira parcela
+      - 🆕 goal_id: ID da meta associada (apenas receitas)
     """
     
     # ========== CAMPOS OBRIGATÓRIOS ==========
@@ -118,6 +121,13 @@ class Transaction(BaseModelWithUser, AmountMixin, PaymentMixin):
         description="Data da primeira parcela (obrigatório se installments > 1)"
     )
     
+    # ========== 🆕 CAMPO PARA METAS ==========
+    
+    goal_id: Optional[str] = Field(
+        None,
+        description="ID da meta associada (apenas para receitas/contribuições)"
+    )
+    
     # ========== VALIDADORES ==========
 
     @model_validator(mode='after')
@@ -162,6 +172,18 @@ class Transaction(BaseModelWithUser, AmountMixin, PaymentMixin):
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
+    @model_validator(mode='after')
+    def validate_goal_association(self):
+        """
+        🆕 Valida associação com meta.
+        - Apenas receitas podem ser associadas a metas
+        - goal_id só é válido se type for 'income'
+        🔧 i18n: Mensagem com chave ERROR_ONLY_INCOME_FOR_GOAL
+        """
+        if self.goal_id and self.type != "income":
+            raise ValueError("Apenas receitas (income) podem ser associadas a metas")
+        return self
+
 
 class TransactionCreate(BaseModel):
     """
@@ -170,6 +192,7 @@ class TransactionCreate(BaseModel):
     🔧 DIFERENÇAS DO MODEL TRANSACTION:
       - Não tem campos de auditoria (ainda não existe no banco)
       - date é opcional (usa data atual se não informado)
+      - 🆕 goal_id opcional
     """
     
     type: Literal["income", "expense"]
@@ -186,6 +209,8 @@ class TransactionCreate(BaseModel):
     card_id: Optional[str] = None
     installments: int = Field(default=1, ge=1)
     first_due_date: Optional[datetime] = None
+    # 🆕 NOVO CAMPO
+    goal_id: Optional[str] = Field(None, description="ID da meta associada")
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -216,6 +241,16 @@ class TransactionCreate(BaseModel):
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
         return self
 
+    @model_validator(mode='after')
+    def validate_goal_association(self):
+        """
+        🆕 Valida associação com meta.
+        - Apenas receitas podem ser associadas a metas
+        """
+        if self.goal_id and self.type != "income":
+            raise ValueError("Apenas receitas (income) podem ser associadas a metas")
+        return self
+
 
 class TransactionUpdate(BaseModel):
     """
@@ -223,6 +258,7 @@ class TransactionUpdate(BaseModel):
     
     🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
       - Permite atualização parcial
+      - 🆕 goal_id opcional
     """
     
     type: Optional[Literal["income", "expense"]] = None
@@ -239,6 +275,8 @@ class TransactionUpdate(BaseModel):
     card_id: Optional[str] = None
     installments: Optional[int] = Field(None, ge=1)
     first_due_date: Optional[datetime] = None
+    # 🆕 NOVO CAMPO
+    goal_id: Optional[str] = Field(None, description="ID da meta associada")
 
     @model_validator(mode='after')
     def check_family_context(self):
@@ -267,6 +305,16 @@ class TransactionUpdate(BaseModel):
                 raise ValueError("installments deve ser maior que 0")
             if self.installments is not None and self.installments > 1 and not self.first_due_date:
                 raise ValueError("first_due_date é obrigatório quando installments > 1")
+        return self
+
+    @model_validator(mode='after')
+    def validate_goal_association(self):
+        """
+        🆕 Valida associação com meta.
+        - Apenas receitas podem ser associadas a metas
+        """
+        if self.goal_id and self.type == "expense":
+            raise ValueError("Apenas receitas (income) podem ser associadas a metas")
         return self
 
 
@@ -314,6 +362,8 @@ class TransactionBalance(BaseModel):
 #   - Validação: data não futura
 #   - Validação: context='familia' exige family_id
 #   - Suporte a parcelamento (installments, first_due_date)
+#   - 🆕 goal_id: associação com metas (apenas receitas)
+#   - 🆕 Validação: apenas receitas podem ser associadas a metas
 #   - I18n completo com chaves de erro
 #   - Schemas separados (Create, Update, Response, Balance)
 #   - Contextos: individual, familia, profissional
@@ -325,5 +375,6 @@ class TransactionBalance(BaseModel):
 #   - v1: Versão inicial
 #   - v2: Refatoração - Herança de BaseModelWithUser, AmountMixin, PaymentMixin (03/07/2026)
 #   - v3: Correções - TransactionResponse herda de Transaction, descriptions no Balance (03/07/2026)
+#   - v4: 🆕 Adicionado goal_id e validação (11/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

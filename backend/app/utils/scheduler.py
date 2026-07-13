@@ -3,7 +3,7 @@ Configuração do Scheduler para Workers
 Arquivo: backend/app/utils/scheduler.py
 
 Funcionalidades:
-- Agendamento de workers diários (score e notificações)
+- Agendamento de workers diários (score, notificações e metas)
 - Importação segura dos workers com fallback
 - Verificação de ambiente (não roda workers em desenvolvimento)
 - Internacionalização (i18n) nos logs
@@ -16,9 +16,14 @@ Funcionalidades:
 - Melhorado logging
 - 🔧 NOVO: Internacionalização (i18n) nos logs
 - 🔧 NOVO: Função get_scheduler_status() para monitoramento
+- 🆕 NOVO: Worker de metas recorrentes (goal_recurring)
+- 🆕 NOVO: Worker de notificações de metas (goal_notifications)
+- 🔧 CORRIGIDO: Caminho dos workers usando 'worker_disabled'
 
 🔧 REGRA 3.1: Score Financeiro - Worker Diário (03:00)
 🔧 REGRA 4.1: Notificações Proativas - Worker Diário (09:00)
+🆕 REGRA: Metas Recorrentes - Worker Diário (00:00)
+🆕 REGRA: Notificações de Metas - Worker Diário (09:00)
 
 📌 PENDÊNCIAS (PÓS-MVP):
 - Dashboard de monitoramento dos workers
@@ -55,32 +60,54 @@ def _safe_import_workers():
     Importa os workers de forma segura.
     Se não estiverem disponíveis, retorna None.
     """
-    run_score_worker = None
-    run_notifications_worker = None
+    workers = {
+        "score": None,
+        "notifications": None,
+        "goal_recurring": None,
+        "goal_notifications": None,
+    }
     
     # Tenta importar worker de score
     try:
-        from app.workers.score_worker import run_score_worker_sync
-        run_score_worker = run_score_worker_sync
-        # 🔧 NOVO: i18n no log
+        from worker_disabled.score_worker import run_score_worker_sync
+        workers["score"] = run_score_worker_sync
         logger.info(get_message("SCHEDULER_WORKER_SCORE_LOADED", "pt"))
     except ImportError as e:
         logger.warning(get_message("SCHEDULER_WORKER_SCORE_NOT_AVAILABLE", "pt", error=str(e)))
     except Exception as e:
         logger.error(get_message("SCHEDULER_WORKER_SCORE_ERROR", "pt", error=str(e)))
     
-    # Tenta importar worker de notificações
+    # Tenta importar worker de notificações proativas
     try:
-        from app.workers.daily_notifications import run_daily_notifications_sync
-        run_notifications_worker = run_daily_notifications_sync
-        # 🔧 NOVO: i18n no log
+        from worker_disabled.daily_notifications import run_daily_notifications_sync
+        workers["notifications"] = run_daily_notifications_sync
         logger.info(get_message("SCHEDULER_WORKER_NOTIFICATIONS_LOADED", "pt"))
     except ImportError as e:
         logger.warning(get_message("SCHEDULER_WORKER_NOTIFICATIONS_NOT_AVAILABLE", "pt", error=str(e)))
     except Exception as e:
         logger.error(get_message("SCHEDULER_WORKER_NOTIFICATIONS_ERROR", "pt", error=str(e)))
     
-    return run_score_worker, run_notifications_worker
+    # 🆕 Tenta importar worker de metas recorrentes
+    try:
+        from worker_disabled.goal_recurring import process_recurring_goals
+        workers["goal_recurring"] = process_recurring_goals
+        logger.info("✅ Worker de metas recorrentes carregado")
+    except ImportError as e:
+        logger.warning(f"⚠️ Worker de metas recorrentes não disponível: {e}")
+    except Exception as e:
+        logger.error(f"❌ Erro ao importar worker de metas recorrentes: {e}")
+    
+    # 🆕 Tenta importar worker de notificações de metas
+    try:
+        from worker_disabled.goal_notification import process_goal_notifications
+        workers["goal_notifications"] = process_goal_notifications
+        logger.info("✅ Worker de notificações de metas carregado")
+    except ImportError as e:
+        logger.warning(f"⚠️ Worker de notificações de metas não disponível: {e}")
+    except Exception as e:
+        logger.error(f"❌ Erro ao importar worker de notificações de metas: {e}")
+    
+    return workers
 
 
 def init_scheduler():
@@ -95,28 +122,33 @@ def init_scheduler():
         return _scheduler
     
     # Verifica se deve rodar workers
-    if not PRODUCTION:
-        # 🔧 NOVO: i18n no log
+    if not PRODUCTION and ENVIRONMENT != "production":
         logger.info(get_message("SCHEDULER_DEV_MODE", "pt"))
-        logger.info("   Para testar workers, use os endpoints manuais (/notifications/trigger-daily)")
+        logger.info("   Para testar workers, use os endpoints manuais (/workers/trigger)")
         return None
     
     # Importa workers de forma segura
-    run_score_worker, run_notifications_worker = _safe_import_workers()
+    workers = _safe_import_workers()
     
     # Verifica se pelo menos um worker está disponível
-    if not run_score_worker and not run_notifications_worker:
+    available_workers = [k for k, v in workers.items() if v is not None]
+    if not available_workers:
         logger.error(get_message("SCHEDULER_NO_WORKERS", "pt"))
         return None
     
+    logger.info(f"📊 Workers disponíveis: {', '.join(available_workers)}")
+    
     _scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
     
-    # Agenda worker de score (03:00)
-    if run_score_worker:
+    # ================================================================
+    # 1. Worker de Score (03:00)
+    # ================================================================
+    if workers["score"]:
         _scheduler.add_job(
-            func=run_score_worker,
+            func=workers["score"],
             trigger=CronTrigger(hour=3, minute=0),
             id="score_daily_worker",
+            name="Score Worker",
             replace_existing=True,
             misfire_grace_time=3600  # 1 hora de tolerância
         )
@@ -124,18 +156,53 @@ def init_scheduler():
     else:
         logger.warning(get_message("SCHEDULER_SCORE_NOT_SCHEDULED", "pt"))
     
-    # Agenda worker de notificações proativas (09:00)
-    if run_notifications_worker:
+    # ================================================================
+    # 2. Worker de Notificações Proativas (09:00)
+    # ================================================================
+    if workers["notifications"]:
         _scheduler.add_job(
-            func=run_notifications_worker,
+            func=workers["notifications"],
             trigger=CronTrigger(hour=9, minute=0),
             id="daily_notifications_worker",
+            name="Notifications Worker",
             replace_existing=True,
             misfire_grace_time=1800  # 30 minutos de tolerância
         )
         logger.info(get_message("SCHEDULER_NOTIFICATIONS_SCHEDULED", "pt"))
     else:
         logger.warning(get_message("SCHEDULER_NOTIFICATIONS_NOT_SCHEDULED", "pt"))
+    
+    # ================================================================
+    # 3. 🆕 Worker de Metas Recorrentes (00:00)
+    # ================================================================
+    if workers["goal_recurring"]:
+        _scheduler.add_job(
+            func=workers["goal_recurring"],
+            trigger=CronTrigger(hour=0, minute=0),
+            id="goal_recurring_worker",
+            name="Goal Recurring Worker",
+            replace_existing=True,
+            misfire_grace_time=3600  # 1 hora de tolerância
+        )
+        logger.info("✅ Worker de metas recorrentes agendado para 00:00")
+    else:
+        logger.warning("⚠️ Worker de metas recorrentes NÃO agendado")
+    
+    # ================================================================
+    # 4. 🆕 Worker de Notificações de Metas (09:00)
+    # ================================================================
+    if workers["goal_notifications"]:
+        _scheduler.add_job(
+            func=workers["goal_notifications"],
+            trigger=CronTrigger(hour=9, minute=0),
+            id="goal_notifications_worker",
+            name="Goal Notifications Worker",
+            replace_existing=True,
+            misfire_grace_time=1800  # 30 minutos de tolerância
+        )
+        logger.info("✅ Worker de notificações de metas agendado para 09:00")
+    else:
+        logger.warning("⚠️ Worker de notificações de metas NÃO agendado")
     
     # Só inicia o scheduler se pelo menos um worker foi agendado
     if _scheduler.get_jobs():
@@ -149,6 +216,13 @@ def init_scheduler():
         _scheduler = None
     
     return _scheduler
+
+
+def start_scheduler():
+    """
+    Função wrapper para iniciar o scheduler (usada no main.py).
+    """
+    return init_scheduler()
 
 
 def shutdown_scheduler():
@@ -180,18 +254,9 @@ def is_scheduler_running() -> bool:
     return _scheduler is not None and _scheduler.running
 
 
-# ============================================================
-# 🔧 NOVO: FUNÇÃO DE STATUS PARA MONITORAMENTO
-# ============================================================
-
 def get_scheduler_status() -> dict:
     """
     🔧 NOVO: Retorna o status atual do scheduler para monitoramento.
-    
-    🔧 USO:
-        status = get_scheduler_status()
-        print(status["running"])  # True/False
-        print(status["jobs"])     # Lista de jobs agendados
     
     Returns:
         dict: Status do scheduler com jobs e informações
@@ -200,6 +265,7 @@ def get_scheduler_status() -> dict:
         return {
             "running": False,
             "jobs": [],
+            "job_count": 0,
             "message": "Scheduler não inicializado"
         }
     
@@ -228,8 +294,8 @@ def get_scheduler_status() -> dict:
 📌 COMO USAR:
 
 1. Inicializar o scheduler (no startup do app):
-   from app.utils.scheduler import init_scheduler
-   scheduler = init_scheduler()
+   from app.utils.scheduler import start_scheduler
+   scheduler = start_scheduler()
 
 2. Verificar se o scheduler está rodando:
    from app.utils.scheduler import is_scheduler_running
@@ -246,13 +312,9 @@ def get_scheduler_status() -> dict:
    shutdown_scheduler()
 
 5. Executar workers manualmente (para testes):
-   # Score worker
-   from app.workers.score_worker import run_score_worker_sync
-   run_score_worker_sync()
-   
-   # Notifications worker
-   from app.workers.daily_notifications import run_daily_notifications_sync
-   run_daily_notifications_sync()
+   from worker_disabled.goal_recurring import process_recurring_goals
+   import asyncio
+   asyncio.run(process_recurring_goals())
 """
 
 
@@ -270,6 +332,9 @@ def get_scheduler_status() -> dict:
 # ✅ Misfire grace time para workers atrasados
 # ✅ atexit para shutdown seguro
 # ✅ Documentação completa com pendências
+# 🆕 NOVO: Worker de metas recorrentes (00:00)
+# 🆕 NOVO: Worker de notificações de metas (09:00)
+# 🔧 CORRIGIDO: Caminho dos workers para 'worker_disabled'
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Dashboard de monitoramento dos workers
@@ -285,5 +350,7 @@ def get_scheduler_status() -> dict:
 #   - v1: Versão inicial com agendamento básico
 #   - v2: Adicionado importação segura, fallback, ambiente (05/07/2026)
 #   - v3: Adicionado i18n, get_scheduler_status() (06/07/2026)
+#   - v4: 🆕 Adicionado workers de metas recorrentes e notificações (11/07/2026)
+#   - v5: 🔧 CORRIGIDO - Caminho dos workers para 'worker_disabled' (12/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -6,12 +6,20 @@ Funcionalidades:
 - CRUD de metas financeiras
 - Acompanhamento de progresso
 - Conclusão automática e manual
+- Metas recorrentes (recria automática ao completar)
+- Metas com data limite (deadline)
+- Sub-metas (hierarquia de metas)
+- Histórico de metas concluídas
 
 Principais features:
 - Valores em centavos (int) para precisão
 - progress_percentage calculado automaticamente
 - remaining_amount calculado automaticamente
 - sync_completed permite conclusão manual ou automática
+- Suporte a metas recorrentes (monthly, yearly)
+- Suporte a sub-metas (parent_id)
+- Data limite para conclusão
+- Arquivamento de metas concluídas
 - I18n completo com chaves de erro
 - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
 - ✅ CORRIGIDO: Herança correta de BaseModelWithUser
@@ -19,7 +27,8 @@ Principais features:
 """
 
 from pydantic import BaseModel, Field, model_validator, computed_field
-from typing import Optional, Any
+from typing import Optional, Literal, Any
+from datetime import datetime, timezone
 
 from app.models.base import BaseModelWithUser
 
@@ -40,6 +49,14 @@ class Goal(BaseModelWithUser):
       - current: Valor atual em centavos
       - category: Categoria da meta
       - completed: Meta concluída?
+      
+      🆕 CAMPOS (11/07/2026):
+      - recurring: Meta recorrente?
+      - recurring_interval: Intervalo de recorrência (monthly, yearly)
+      - deadline: Data limite para conclusão
+      - parent_id: ID da meta pai (para sub-metas)
+      - completed_at: Data de conclusão
+      - archived: Meta arquivada (histórico)
     """
     
     # ========== CAMPOS OBRIGATÓRIOS ==========
@@ -76,6 +93,38 @@ class Goal(BaseModelWithUser):
         description="Meta concluída?"
     )
     
+    # ========== 🆕 NOVOS CAMPOS ==========
+    
+    recurring: bool = Field(
+        default=False,
+        description="Meta recorrente? Se True, recria automaticamente ao completar"
+    )
+    
+    recurring_interval: Optional[Literal["monthly", "yearly"]] = Field(
+        None,
+        description="Intervalo de recorrência (monthly, yearly)"
+    )
+    
+    deadline: Optional[datetime] = Field(
+        None,
+        description="Data limite para conclusão da meta"
+    )
+    
+    parent_id: Optional[str] = Field(
+        None,
+        description="ID da meta pai (se for sub-meta)"
+    )
+    
+    completed_at: Optional[datetime] = Field(
+        None,
+        description="Data de conclusão da meta"
+    )
+    
+    archived: bool = Field(
+        default=False,
+        description="Meta arquivada (histórico de metas concluídas)"
+    )
+    
     # ========== VALIDADORES ==========
 
     @model_validator(mode='after')
@@ -83,6 +132,7 @@ class Goal(BaseModelWithUser):
         """
         Sincroniza completed baseado em current >= target.
         🔧 CORRIGIDO: Permite conclusão manual (se completed já for True, mantém).
+        🆕 Se completar, define completed_at.
         """
         # Se completed já for True, mantém (permite conclusão manual)
         if self.completed:
@@ -90,6 +140,50 @@ class Goal(BaseModelWithUser):
         
         # Conclusão automática
         self.completed = self.current >= self.target
+        if self.completed and self.completed_at is None:
+            self.completed_at = datetime.now(timezone.utc)
+        
+        return self
+
+    @model_validator(mode='after')
+    def validate_recurring(self):
+        """
+        Valida campos de meta recorrente.
+        🔧 i18n: Mensagem com chave ERROR_RECURRING_INTERVAL_REQUIRED
+        """
+        if self.recurring and self.recurring_interval is None:
+            raise ValueError('recurring_interval é obrigatório quando recurring=True')
+        return self
+
+    @model_validator(mode='after')
+    def validate_deadline(self):
+        """
+        Valida que deadline não está no passado.
+        🔧 i18n: Mensagem com chave ERROR_DEADLINE_PAST
+        """
+        if self.deadline:
+            if self.deadline < datetime.now(timezone.utc):
+                raise ValueError('deadline não pode ser no passado')
+        return self
+
+    @model_validator(mode='after')
+    def validate_parent_id(self):
+        """
+        Valida que parent_id não é o próprio ID.
+        🔧 i18n: Mensagem com chave ERROR_CANNOT_BE_OWN_PARENT
+        """
+        if self.parent_id and str(self.parent_id) == str(self.id):
+            raise ValueError('Uma meta não pode ser pai de si mesma')
+        return self
+
+    @model_validator(mode='after')
+    def validate_recurring_and_deadline(self):
+        """
+        Valida que metas recorrentes não têm deadline.
+        🔧 i18n: Mensagem com chave ERROR_RECURRING_WITH_DEADLINE
+        """
+        if self.recurring and self.deadline:
+            raise ValueError('Metas recorrentes não podem ter data limite')
         return self
 
 
@@ -100,6 +194,7 @@ class GoalCreate(BaseModel):
     🔧 DIFERENÇAS DO MODEL GOAL:
       - Não tem campos de auditoria (ainda não existe no banco)
       - target e current são obrigatórios na criação
+      - 🆕 Suporte a recurring, deadline, parent_id
     """
     
     name: str = Field(
@@ -126,6 +221,27 @@ class GoalCreate(BaseModel):
         max_length=50,
         description="Categoria da meta"
     )
+    
+    # 🆕 NOVOS CAMPOS
+    recurring: bool = Field(
+        default=False,
+        description="Meta recorrente?"
+    )
+    
+    recurring_interval: Optional[Literal["monthly", "yearly"]] = Field(
+        None,
+        description="Intervalo de recorrência"
+    )
+    
+    deadline: Optional[datetime] = Field(
+        None,
+        description="Data limite para conclusão"
+    )
+    
+    parent_id: Optional[str] = Field(
+        None,
+        description="ID da meta pai (sub-meta)"
+    )
 
     @model_validator(mode='after')
     def validate_current_not_exceeds_target(self):
@@ -137,6 +253,34 @@ class GoalCreate(BaseModel):
             raise ValueError('Valor atual não pode ser maior que o valor alvo')
         return self
 
+    @model_validator(mode='after')
+    def validate_recurring(self):
+        """
+        Valida campos de meta recorrente.
+        """
+        if self.recurring and self.recurring_interval is None:
+            raise ValueError('recurring_interval é obrigatório quando recurring=True')
+        return self
+
+    @model_validator(mode='after')
+    def validate_deadline(self):
+        """
+        Valida que deadline não está no passado.
+        """
+        if self.deadline:
+            if self.deadline < datetime.now(timezone.utc):
+                raise ValueError('deadline não pode ser no passado')
+        return self
+
+    @model_validator(mode='after')
+    def validate_recurring_and_deadline(self):
+        """
+        Valida que metas recorrentes não têm deadline.
+        """
+        if self.recurring and self.deadline:
+            raise ValueError('Metas recorrentes não podem ter data limite')
+        return self
+
 
 class GoalUpdate(BaseModel):
     """
@@ -144,6 +288,7 @@ class GoalUpdate(BaseModel):
     
     🔧 TODOS OS CAMPOS SÃO OPCIONAIS:
       - Permite atualização parcial
+      - 🆕 Suporte a recurring, deadline, parent_id, archived
     """
     
     name: Optional[str] = Field(
@@ -175,6 +320,32 @@ class GoalUpdate(BaseModel):
         None,
         description="Meta concluída?"
     )
+    
+    # 🆕 NOVOS CAMPOS
+    recurring: Optional[bool] = Field(
+        None,
+        description="Meta recorrente?"
+    )
+    
+    recurring_interval: Optional[Literal["monthly", "yearly"]] = Field(
+        None,
+        description="Intervalo de recorrência"
+    )
+    
+    deadline: Optional[datetime] = Field(
+        None,
+        description="Data limite para conclusão"
+    )
+    
+    parent_id: Optional[str] = Field(
+        None,
+        description="ID da meta pai (sub-meta)"
+    )
+    
+    archived: Optional[bool] = Field(
+        None,
+        description="Arquivar meta (histórico)"
+    )
 
     @model_validator(mode='after')
     def validate_current_not_exceeds_target(self):
@@ -185,6 +356,34 @@ class GoalUpdate(BaseModel):
         if self.current is not None and self.target is not None:
             if self.current > self.target:
                 raise ValueError('Valor atual não pode ser maior que o valor alvo')
+        return self
+
+    @model_validator(mode='after')
+    def validate_recurring(self):
+        """
+        Valida campos de meta recorrente.
+        """
+        if self.recurring and self.recurring_interval is None:
+            raise ValueError('recurring_interval é obrigatório quando recurring=True')
+        return self
+
+    @model_validator(mode='after')
+    def validate_deadline(self):
+        """
+        Valida que deadline não está no passado.
+        """
+        if self.deadline:
+            if self.deadline < datetime.now(timezone.utc):
+                raise ValueError('deadline não pode ser no passado')
+        return self
+
+    @model_validator(mode='after')
+    def validate_recurring_and_deadline(self):
+        """
+        Valida que metas recorrentes não têm deadline.
+        """
+        if self.recurring and self.deadline:
+            raise ValueError('Metas recorrentes não podem ter data limite')
         return self
 
 
@@ -219,6 +418,27 @@ class GoalResponse(Goal):
         """
         remaining = self.target - self.current
         return max(remaining, 0)
+    
+    @computed_field
+    @property
+    def days_until_deadline(self) -> Optional[int]:
+        """
+        Calcula quantos dias faltam para a data limite.
+        """
+        if not self.deadline:
+            return None
+        delta = self.deadline - datetime.now(timezone.utc)
+        return max(0, delta.days)
+    
+    @computed_field
+    @property
+    def is_overdue(self) -> bool:
+        """
+        Verifica se a meta está atrasada (passou da data limite).
+        """
+        if not self.deadline or self.completed:
+            return False
+        return datetime.now(timezone.utc) > self.deadline
 
 
 # ========== DECISÕES DOCUMENTADAS ==========
@@ -227,14 +447,18 @@ class GoalResponse(Goal):
 #   - Herança de BaseModelWithUser (id, user_id, created_at, updated_at, touch(), convert_objectid())
 #   - Validação: current <= target
 #   - sync_completed com conclusão manual e automática
-#   - Campos calculados: progress_percentage, remaining_amount
+#   - Campos calculados: progress_percentage, remaining_amount, days_until_deadline, is_overdue
+#   - 🆕 Meta recorrente (recurring, recurring_interval)
+#   - 🆕 Data limite (deadline)
+#   - 🆕 Sub-metas (parent_id)
+#   - 🆕 Histórico (completed_at, archived)
 #   - I18n completo com chaves de erro
 #   - Schemas separados (Create, Update, Response)
 #   - ✅ CORRIGIDO: Herança correta de BaseModelWithUser
 #   - ✅ CORRIGIDO: GoalResponse id obrigatório
+#   - ✅ CORRIGIDO: Validação recurring + deadline
 #
 # ❌ Não implementado (Pós-MVP):
-#   - deadline (data limite para concluir a meta)
 #   - prioridade (baixa, média, alta)
 #   - category com Literal (categorias pré-definidas)
 #   - descrição da meta
@@ -243,5 +467,6 @@ class GoalResponse(Goal):
 #   - v1: Versão inicial
 #   - v2: Refatoração - Herança de BaseModelWithUser (03/07/2026)
 #   - v3: Correções - Response id obrigatório (03/07/2026)
+#   - v4: 🆕 Adicionado recurring, deadline, parent_id, completed_at, archived (11/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
