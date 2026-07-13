@@ -16,22 +16,10 @@ Funcionalidades:
 🔧 CORRIGIDO: Caminho dos workers usando 'app.workers_disabled'
 🔧 ADICIONADO: Verificação de app running para tasks
 🔧 ADICIONADO: Paginação no histórico de workers
+🔧 CORRIGIDO: Shutdown hook removido (agora no main.py)
 
 Regra: 2.8 (Logs)
 Regra: 7.1 (Internacionalização)
-
-🔧 USO:
-    # Ver status do worker de score
-    GET /api/v1/workers/score/status
-    
-    # Executar worker manualmente (com ADMIN_SECRET)
-    POST /api/v1/workers/score/trigger?secret=admin123
-    
-    # Ver status da fila
-    GET /api/v1/workers/score/queue
-    
-    # Histórico com paginação
-    GET /api/v1/workers/score/history?page=1&limit=20
 """
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query
@@ -63,7 +51,7 @@ def is_app_running() -> bool:
 
 
 def set_app_running(status: bool):
-    """Define o status do app."""
+    """Define o status do app. Chamado pelo main.py no shutdown."""
     global _app_running
     _app_running = status
 
@@ -219,17 +207,11 @@ async def trigger_score_worker(
     
     🔧 USO:
         POST /api/v1/workers/score/trigger?secret=ADMIN_SECRET
-    
-    📋 PADRÃO:
-        - 🔧 CORRIGIDO: Validação rigorosa do ADMIN_SECRET
-        - 🔧 CORRIGIDO: Armazena a task com referência
-        - 🔧 CORRIGIDO: Verificação de app running
     """
     language = getattr(request.state, "language", "pt")
     
     ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
     
-    # 🔧 CORRIGIDO: Validação mais rigorosa
     if not ADMIN_SECRET:
         logger.error("❌ ADMIN_SECRET não configurado no .env")
         raise HTTPException(
@@ -244,7 +226,6 @@ async def trigger_score_worker(
             detail=get_message("ERROR_UNAUTHORIZED", language)
         )
     
-    # 🔧 CORRIGIDO 1: Caminho correto 'app.workers_disabled'
     try:
         from app.workers_disabled.score_worker import calculate_score_for_all_users
     except ImportError as e:
@@ -254,14 +235,12 @@ async def trigger_score_worker(
             detail="Worker de score não disponível"
         )
     
-    # 🔧 CORRIGIDO 2: Verificação de app running
     if not is_app_running():
         raise HTTPException(
             status_code=503,
             detail="Aplicação está desligando"
         )
     
-    # 🔧 CORRIGIDO: Armazena a task com referência
     task = asyncio.create_task(calculate_score_for_all_users())
     task.add_done_callback(
         lambda t: logger.info(
@@ -293,14 +272,10 @@ async def get_score_queue_status(
     
     🔧 USO:
         GET /api/v1/workers/score/queue
-    
-    📋 PADRÃO:
-        - 🔧 CORRIGIDO: Importação segura do redis_client
     """
     language = getattr(request.state, "language", "pt")
     
     try:
-        # 🔧 CORRIGIDO: Importação segura com caminho correto
         try:
             from app.workers_disabled.score_worker import redis_client
         except ImportError:
@@ -347,7 +322,6 @@ async def get_notifications_worker_status(
     language = getattr(request.state, "language", "pt")
     
     try:
-        # Busca a última execução
         last_run = await db.worker_logs.find_one(
             {"worker": "notifications"},
             sort=[("executed_at", -1)]
@@ -450,7 +424,6 @@ async def trigger_goal_recurring_worker(
             detail=get_message("ERROR_UNAUTHORIZED", language)
         )
     
-    # 🔧 CORRIGIDO 1: Caminho correto 'app.workers_disabled'
     try:
         from app.workers_disabled.goal_recurring import process_recurring_goals
     except ImportError as e:
@@ -460,7 +433,6 @@ async def trigger_goal_recurring_worker(
             detail="Worker de metas recorrentes não disponível"
         )
     
-    # 🔧 CORRIGIDO 2: Verificação de app running
     if not is_app_running():
         raise HTTPException(
             status_code=503,
@@ -561,7 +533,6 @@ async def trigger_goal_notifications_worker(
             detail=get_message("ERROR_UNAUTHORIZED", language)
         )
     
-    # 🔧 CORRIGIDO 1: Caminho correto 'app.workers_disabled'
     try:
         from app.workers_disabled.goal_notification import process_goal_notifications
     except ImportError as e:
@@ -571,7 +542,6 @@ async def trigger_goal_notifications_worker(
             detail="Worker de notificações de metas não disponível"
         )
     
-    # 🔧 CORRIGIDO 2: Verificação de app running
     if not is_app_running():
         raise HTTPException(
             status_code=503,
@@ -595,15 +565,10 @@ async def trigger_goal_notifications_worker(
 
 
 # ================================================================
-# SHUTDOWN HOOK
+# ❌ SHUTDOWN HOOK REMOVIDO
 # ================================================================
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Marca o app como desligado para evitar novas tasks."""
-    global _app_running
-    _app_running = False
-    logger.info("🛑 App marcado como desligado - novas tasks não serão iniciadas")
+# O shutdown agora é gerenciado pelo main.py, que chama set_app_running(False).
+# Isso evita o erro: NameError: name 'app' is not defined
 
 
 # ================================================================
@@ -628,16 +593,16 @@ async def shutdown_event():
 5. Ver status do worker de notificações:
    GET /api/v1/workers/notifications/status
 
-6. 🆕 Ver status do worker de metas recorrentes:
+6. Ver status do worker de metas recorrentes:
    GET /api/v1/workers/goals/recurring/status
 
-7. 🆕 Executar worker de metas recorrentes:
+7. Executar worker de metas recorrentes:
    POST /api/v1/workers/goals/recurring/trigger?secret=ADMIN_SECRET
 
-8. 🆕 Ver status do worker de notificações de metas:
+8. Ver status do worker de notificações de metas:
    GET /api/v1/workers/goals/notifications/status
 
-9. 🆕 Executar worker de notificações de metas:
+9. Executar worker de notificações de metas:
    POST /api/v1/workers/goals/notifications/trigger?secret=ADMIN_SECRET
 """
 
@@ -652,17 +617,18 @@ async def shutdown_event():
 #   - Status da fila Redis para score
 #   - Status do worker de notificações
 #   - Rate limiting para trigger manual
-#   - 🔧 CORRIGIDO: Importação segura do redis_client
-#   - 🔧 CORRIGIDO: Validação rigorosa do ADMIN_SECRET
-#   - 🔧 CORRIGIDO: Task com referência e callback
-#   - 🔧 CORRIGIDO: Caminho dos workers para 'app.workers_disabled'
-#   - 🆕 Status do worker de metas recorrentes
-#   - 🆕 Trigger manual para metas recorrentes
-#   - 🆕 Status do worker de notificações de metas
-#   - 🆕 Trigger manual para notificações de metas
-#   - 🆕 Histórico com paginação (GET /score/history)
-#   - 🆕 Verificação de app running para tasks
+#   - Importação segura do redis_client
+#   - Validação rigorosa do ADMIN_SECRET
+#   - Task com referência e callback
+#   - Caminho dos workers para 'app.workers_disabled'
+#   - Status do worker de metas recorrentes
+#   - Trigger manual para metas recorrentes
+#   - Status do worker de notificações de metas
+#   - Trigger manual para notificações de metas
+#   - Histórico com paginação (GET /score/history)
+#   - Verificação de app running para tasks
 #   - I18n completo
+#   - 🔧 Shutdown hook removido (gerenciado pelo main.py)
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Dashboard visual (UI)
@@ -672,8 +638,9 @@ async def shutdown_event():
 # 📋 CHANGELOG:
 #   - v1: Versão inicial (06/07/2026)
 #   - v2: Correções - importação segura, ADMIN_SECRET rigoroso, task com referência (06/07/2026)
-#   - v3: 🆕 Adicionado workers de metas (recurring e notifications) (12/07/2026)
-#   - v4: 🔧 CORRIGIDO - Caminho dos workers para 'app.workers_disabled' (12/07/2026)
-#   - v5: 🆕 Histórico com paginação, verificação de app running (12/07/2026)
+#   - v3: Adicionado workers de metas (recurring e notifications) (12/07/2026)
+#   - v4: CORRIGIDO - Caminho dos workers para 'app.workers_disabled' (12/07/2026)
+#   - v5: Histórico com paginação, verificação de app running (12/07/2026)
+#   - v6: Shutdown hook removido (agora no main.py) (13/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
