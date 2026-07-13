@@ -3,7 +3,7 @@ Arquivo principal do backend Velorium - Versão Estável com i18n, Cache Redis e
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.timeout import TimeoutMiddleware
+# ❌ REMOVIDO: from starlette.middleware.timeout import TimeoutMiddleware
 import os
 import asyncio
 from datetime import datetime, timezone
@@ -66,9 +66,8 @@ app = FastAPI(
 app.add_middleware(LanguageMiddleware)
 logger.info("✅ Middleware de idioma registrado")
 
-# 2. Timeout global
-app.add_middleware(TimeoutMiddleware, timeout=30.0)
-logger.info("⏱️ Middleware de timeout global registrado (30s)")
+# ❌ REMOVIDO: TimeoutMiddleware (não existe no Starlette)
+# Use asyncio.wait_for nas operações específicas se precisar de timeout
 
 # ================================================================
 # OPENTELEMETRY
@@ -100,7 +99,6 @@ except Exception as e:
 # CORS
 # ================================================================
 
-# 🔧 S5332/S1313: URLs locais são aceitáveis em desenvolvimento
 if ENVIRONMENT == "development":
     ALLOWED_ORIGINS = [
         "http://localhost:8081",
@@ -108,13 +106,11 @@ if ENVIRONMENT == "development":
         "http://localhost:19000",
         "http://localhost:19001",
         "http://localhost:19002",
-        # 🔧 S1313: IP local permitido em desenvolvimento (não é hardcoded em produção)
         "http://192.168.0.242:8081",
     ]
     logger.warning("🔧 CORS: Desenvolvimento - origens locais")
 else:
     if not FRONTEND_URL:
-        # 🔧 CORRIGIDO: Não usa fallback inseguro
         logger.critical("❌ FRONTEND_URL não configurado para produção!")
         raise ValueError("FRONTEND_URL é obrigatório em produção")
     
@@ -313,7 +309,6 @@ except ModuleNotFoundError:
     logger.info("ℹ️ Rota de workers não disponível (módulo não encontrado)")
 except Exception as e:
     logger.error(f"❌ Erro ao importar workers: {e}", exc_info=True)
-    # Em produção, pode querer falhar aqui
     if ENVIRONMENT == "production":
         raise
 
@@ -353,7 +348,6 @@ async def readiness():
             "timestamp": datetime.now(timezone.utc).isoformat()
         }, 503
     
-    # Status do scheduler
     scheduler_status = "unknown"
     try:
         scheduler_status = get_scheduler_status()

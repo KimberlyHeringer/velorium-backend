@@ -7,8 +7,9 @@ Funcionalidade: Verifica metas próximas de conclusão e envia notificações
 📋 RESPONSABILIDADES:
   1. Buscar metas com progresso >= 90%, 95%, 100%
   2. Enviar push notification para o usuário
-  3. Evitar notificações duplicadas (tracking)
+  3. Evitar notificações duplicadas (tracking + flag)
   4. Registrar histórico de notificações enviadas
+  5. Logs estruturados em JSON
 
 📋 AGENDAMENTO:
   - Deve rodar diariamente (ex: 09:00)
@@ -18,13 +19,21 @@ Funcionalidade: Verifica metas próximas de conclusão e envia notificações
   - MongoDB: goals collection, goal_notifications collection
   - NotificationService: envio de push notifications
   - CurrencyContext: formatação de valores
+  - I18n: mensagens traduzidas
+
+🆕 CORREÇÕES (12/07/2026):
+  - 🔧 Logging estruturado em JSON
+  - 🔧 Flag _notification_processed para evitar duplicação
+  - 🔧 Internacionalização (i18n) das mensagens
+  - 🔧 Busca de idioma do usuário
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
-📅 CRIADO EM: 11/07/2026
+📅 ÚLTIMA ATUALIZAÇÃO: 12/07/2026
 """
 
 import asyncio
 import os
+import json
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 from bson import ObjectId
@@ -56,7 +65,10 @@ async def process_goal_notifications(db=None):
     Returns:
         dict: Estatísticas do processamento
     """
-    logger.info("🔔 Iniciando processamento de notificações de metas...")
+    logger.info(json.dumps({
+        "event": "goal_notifications_worker_started",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }))
     
     if db is None:
         db = await get_database()
@@ -67,23 +79,39 @@ async def process_goal_notifications(db=None):
         "total_errors": 0,
         "errors": [],
         "notifications": [],
+        "skipped_duplicates": 0,
     }
     
     try:
         # 1. Busca metas ativas (não concluídas, não arquivadas)
+        # 🆕 Evita duplicação: verifica se já foi processada
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        
         query = {
             "completed": False,
             "archived": False,
             "user_id": {"$exists": True},
+            "$or": [
+                {"_notification_processed": {"$ne": True}},
+                {"_notification_processed": {"$exists": False}},
+                {"_notification_processed_at": {"$lt": yesterday}},
+            ]
         }
         
         active_goals = await db.goals.find(query).to_list(BATCH_SIZE)
         
         if not active_goals:
-            logger.info("ℹ️ Nenhuma meta ativa para processar")
+            logger.info(json.dumps({
+                "event": "goal_notifications_no_goals",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }))
             return stats
         
-        logger.info(f"📊 Verificando {len(active_goals)} metas ativas")
+        logger.info(json.dumps({
+            "event": "goal_notifications_goals_found",
+            "count": len(active_goals),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }))
         
         for goal in active_goals:
             try:
@@ -137,7 +165,27 @@ async def process_goal_notifications(db=None):
                                     db
                                 )
                                 
-                                logger.info(f"✅ Notificação enviada: '{goal['name']}' - {threshold}%")
+                                # 🆕 Marca como processada
+                                await _mark_as_processed(goal, db)
+                                
+                                logger.info(json.dumps({
+                                    "event": "goal_notification_sent",
+                                    "goal_id": str(goal["_id"]),
+                                    "goal_name": goal.get("name"),
+                                    "threshold": threshold,
+                                    "progress": round(progress, 1),
+                                    "user_id": user_id,
+                                    "timestamp": datetime.now(timezone.utc).isoformat()
+                                }))
+                            else:
+                                stats["skipped_duplicates"] += 1
+                                logger.debug(json.dumps({
+                                    "event": "goal_notification_skipped",
+                                    "goal_id": str(goal["_id"]),
+                                    "threshold": threshold,
+                                    "reason": "already_sent",
+                                    "timestamp": datetime.now(timezone.utc).isoformat()
+                                }))
                 
             except Exception as e:
                 stats["total_errors"] += 1
@@ -146,13 +194,26 @@ async def process_goal_notifications(db=None):
                     "name": goal.get("name", "desconhecida"),
                     "error": str(e),
                 })
-                logger.error(f"❌ Erro ao processar meta {goal.get('_id')}: {e}")
+                logger.error(json.dumps({
+                    "event": "goal_notification_error",
+                    "goal_id": str(goal.get("_id")),
+                    "error": str(e),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }))
                 continue
         
-        logger.info(f"✅ Processamento concluído: {stats['total_notifications_sent']} notificações enviadas, {stats['total_errors']} erros")
+        logger.info(json.dumps({
+            "event": "goal_notifications_worker_completed",
+            "stats": stats,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }))
         
     except Exception as e:
-        logger.error(f"❌ Erro no processamento de notificações: {e}")
+        logger.error(json.dumps({
+            "event": "goal_notifications_worker_fatal_error",
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }))
         stats["total_errors"] += 1
     
     return stats
@@ -202,9 +263,60 @@ async def _record_notification_sent(goal_id: str, threshold: int, user_id: str, 
     })
 
 
+async def _mark_as_processed(goal: Dict[str, Any], db) -> None:
+    """
+    🆕 Marca a meta como processada para evitar duplicação.
+    
+    Args:
+        goal: Meta processada
+        db: Conexão com o banco
+    """
+    now = datetime.now(timezone.utc)
+    
+    await db.goals.update_one(
+        {"_id": goal["_id"]},
+        {
+            "$set": {
+                "_notification_processed": True,
+                "_notification_processed_at": now,
+                "updated_at": now,
+            }
+        }
+    )
+
+
+async def _get_user_language(user_id: str, db) -> str:
+    """
+    🆕 Busca o idioma do usuário.
+    
+    Args:
+        user_id: ID do usuário
+        db: Conexão com o banco
+    
+    Returns:
+        str: Código do idioma (pt, en, es, zh)
+    """
+    try:
+        user = await db.users.find_one(
+            {"_id": ObjectId(user_id)},
+            {"language": 1}
+        )
+        if user and user.get("language"):
+            return user["language"]
+    except Exception as e:
+        logger.warning(json.dumps({
+            "event": "goal_notification_user_language_error",
+            "user_id": user_id,
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }))
+    
+    return "pt"  # Fallback para português
+
+
 async def _send_goal_notification(goal: Dict[str, Any], threshold: int, progress: float, db) -> bool:
     """
-    Envia notificação para o usuário.
+    🔧 CORRIGIDO: Envia notificação com i18n.
     
     Args:
         goal: Meta
@@ -223,16 +335,27 @@ async def _send_goal_notification(goal: Dict[str, Any], threshold: int, progress
         target = from_cents(goal.get("target", 0))
         current = from_cents(goal.get("current", 0))
         
-        # Define título e mensagem baseado no threshold
+        # 🆕 Busca idioma do usuário
+        language = await _get_user_language(user_id, db)
+        
+        # 🆕 Mensagens i18n
         if threshold == 100:
-            title = f"🎉 Meta concluída: {goal_name}!"
-            body = f"Parabéns! Você atingiu sua meta de R$ {target:.2f}! Continue assim! 🚀"
+            title_key = "NOTIFICATIONS.GOAL_PROGRESS.TITLE_100"
+            body_key = "NOTIFICATIONS.GOAL_PROGRESS.BODY_100"
         elif threshold == 95:
-            title = f"🔥 Quase lá! {goal_name} está em {progress:.0f}%"
-            body = f"Você está muito perto de atingir sua meta de R$ {target:.2f}! Falta apenas R$ {(target - current):.2f} para concluir! 💪"
+            title_key = "NOTIFICATIONS.GOAL_PROGRESS.TITLE_95"
+            body_key = "NOTIFICATIONS.GOAL_PROGRESS.BODY_95"
         else:  # 90%
-            title = f"💪 Meta: {goal_name} está em {progress:.0f}%"
-            body = f"Você já atingiu {progress:.0f}% da sua meta de R$ {target:.2f}! Continue firme! 🚀"
+            title_key = "NOTIFICATIONS.GOAL_PROGRESS.TITLE_90"
+            body_key = "NOTIFICATIONS.GOAL_PROGRESS.BODY_90"
+        
+        title = get_message(title_key, language, {"goal_name": goal_name})
+        body = get_message(body_key, language, {
+            "goal_name": goal_name,
+            "progress": round(progress, 0),
+            "target": target,
+            "remaining": target - current
+        })
         
         notification_service = NotificationService()
         
@@ -252,7 +375,12 @@ async def _send_goal_notification(goal: Dict[str, Any], threshold: int, progress
         return True
         
     except Exception as e:
-        logger.error(f"❌ Erro ao enviar notificação: {e}")
+        logger.error(json.dumps({
+            "event": "goal_notification_send_error",
+            "goal_id": str(goal.get("_id")),
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }))
         return False
 
 
@@ -264,9 +392,19 @@ async def run_goal_notifications_worker():
     """
     Função wrapper para execução manual do worker.
     """
-    logger.info("🚀 Executando worker de notificações de metas (manual)...")
+    logger.info(json.dumps({
+        "event": "goal_notifications_worker_manual_trigger",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }))
+    
     result = await process_goal_notifications()
-    logger.info(f"📊 Resultado: {result}")
+    
+    logger.info(json.dumps({
+        "event": "goal_notifications_worker_manual_result",
+        "result": result,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }))
+    
     return result
 
 
@@ -283,32 +421,28 @@ if __name__ == "__main__":
 # ================================================================
 
 """
-📋 CHANGELOG - 11/07/2026
+📋 CHANGELOG - 12/07/2026
 ──────────────────────────────────────────────────────────────
 
-🆕 CRIADO:
-  1. process_goal_notifications() - Função principal
-  2. _check_notification_sent() - Verifica notificações duplicadas
-  3. _record_notification_sent() - Registra histórico
-  4. _send_goal_notification() - Envia notificação
-  5. run_goal_notifications_worker() - Execução manual
-  6. NOTIFICATION_THRESHOLDS = [90, 95, 100]
-  7. NOTIFICATION_COOLDOWN_HOURS = 24
-  8. BATCH_SIZE = 50
-  9. Documentação completa
+🆕 CORREÇÕES:
+  1. 🔧 Logging estruturado em JSON (issue #1)
+  2. 🔧 Flag _notification_processed para evitar duplicação (issue #2)
+  3. 🔧 Campo _notification_processed_at para rastreamento
+  4. 🔧 Internacionalização (i18n) das mensagens (issue #3)
+  5. 🔧 _get_user_language() para buscar idioma do usuário (issue #4)
+  6. 🔧 Query com $or para evitar reprocessamento
 
 📋 DECISÕES:
   - Thresholds: 90%, 95%, 100%
   - Cooldown de 24h para evitar spam
-  - Mensagens personalizadas por threshold
-  - Histórico de notificações enviadas
-  - Fallback silencioso em caso de erro
+  - Flag _notification_processed com TTL implícito (1 dia)
+  - Mensagens traduzidas via i18n
+  - Fallback para português se idioma não encontrado
 
-📋 MENSAGENS:
-  - 90%: "Você já atingiu X% da sua meta..."
-  - 95%: "Você está muito perto de atingir..."
-  - 100%: "Parabéns! Você atingiu sua meta!"
+📋 NOVOS CAMPOS:
+  - _notification_processed: bool
+  - _notification_processed_at: datetime
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
-📅 ÚLTIMA ATUALIZAÇÃO: 11/07/2026
+📅 ÚLTIMA ATUALIZAÇÃO: 12/07/2026
 """
