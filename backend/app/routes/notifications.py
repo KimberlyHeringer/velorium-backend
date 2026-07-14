@@ -12,6 +12,14 @@ Funcionalidades:
 - POST /notifications/trigger-daily: Acionar worker diário
 - POST /notifications/cleanup-tokens: Limpar tokens inativos
 
+🆕 NOVOS ENDPOINTS (CRUD):
+- GET /notifications/: Listar notificações com paginação
+- GET /notifications/unread: Contagem de não lidas
+- GET /notifications/{id}: Buscar notificação específica
+- PUT /notifications/{id}/read: Marcar como lida
+- PUT /notifications/read-all: Marcar todas como lidas
+- DELETE /notifications/{id}: Deletar notificação
+
 Principais features:
 - I18n completo com suporte a 4 idiomas
 - Rate limiting por usuário
@@ -21,8 +29,9 @@ Principais features:
 - Cache de insights (24h)
 - Worker de limpeza de tokens inativos (30 dias)
 - Validação de Expo token
+- 🔧 NOVO: CRUD completo de notificações in-app
 
-Versão: v2.2 (refatorado)
+Versão: v2.4 (CRUD adicionado)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request, Query
@@ -50,6 +59,18 @@ from app.utils.notifications import send_push_notification
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
+
+# ========== 🆕 IMPORTS PARA CRUD ==========
+from app.models.notification import (
+    NotificationType,
+    NotificationCategory as NotificationCategoryEnum
+)
+from app.schemas.notification import (
+    NotificationResponse as NotificationInAppResponse,
+    NotificationListResponse,
+    UnreadCountResponse,
+    ReadAllResponse
+)
 
 logger = setup_logger(__name__)
 
@@ -306,7 +327,50 @@ async def cleanup_inactive_tokens_worker(db):
     return result.modified_count
 
 
-# ========== ENDPOINTS ==========
+# ========== 🆕 FUNÇÃO AUXILIAR CRUD ==========
+
+async def _get_notification_or_404(notification_id: str, user_id: str, db) -> dict:
+    """
+    Busca uma notificação e valida ownership.
+    
+    Args:
+        notification_id: ID da notificação
+        user_id: ID do usuário autenticado
+        db: Conexão com o banco
+    
+    Returns:
+        dict: Documento da notificação
+    
+    Raises:
+        NotFoundException: Se notificação não existir
+        ValidationException: Se notificação não pertencer ao usuário
+    """
+    try:
+        notification = await db.notifications.find_one({
+            "_id": ObjectId(notification_id)
+        })
+    except:
+        raise NotFoundException(
+            message_key="ERROR_NOTIFICATION_NOT_FOUND",
+            request=None
+        )
+    
+    if not notification:
+        raise NotFoundException(
+            message_key="ERROR_NOTIFICATION_NOT_FOUND",
+            request=None
+        )
+    
+    if notification.get("user_id") != user_id:
+        raise ValidationException(
+            message_key="ERROR_NOTIFICATION_UNAUTHORIZED",
+            request=None
+        )
+    
+    return notification
+
+
+# ========== ENDPOINTS EXISTENTES (MANTIDOS) ==========
 
 @router.post("/register-token", response_model=NotificationResponse)
 @limiter.limit("10/minute", key_func=get_user_rate_limit_key)
@@ -660,6 +724,305 @@ async def cleanup_inactive_tokens(
     )
 
 
+# ========== 🆕 NOVOS ENDPOINTS CRUD ==========
+
+@router.get("/", response_model=NotificationListResponse)
+@limiter.limit("30/minute", key_func=get_user_rate_limit_key)
+async def get_notifications(
+    request: Request,
+    page: int = Query(1, ge=1, description="Número da página"),
+    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
+    unread_only: bool = Query(False, description="Filtrar apenas não lidas"),
+    type: Optional[str] = Query(None, description="Filtrar por tipo"),
+    category: Optional[str] = Query(None, description="Filtrar por categoria"),
+    current_user: UserResponse = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """
+    Lista notificações do usuário com paginação.
+    
+    🔧 FILTROS:
+      - unread_only: Apenas não lidas
+      - type: Filtrar por tipo (bill, goal, etc)
+      - category: Filtrar por categoria (finance, goals, etc)
+    """
+    language = getattr(request.state, "language", "pt")
+    request.state.user_id = str(current_user.id)
+    
+    try:
+        # Monta query
+        query = {"user_id": str(current_user.id)}
+        
+        if unread_only:
+            query["read"] = False
+        
+        if type:
+            # Valida se o tipo é válido
+            try:
+                NotificationType(type)
+                query["type"] = type
+            except ValueError:
+                raise ValidationException(
+                    message_key="ERROR_INVALID_NOTIFICATION_TYPE",
+                    request=request
+                )
+        
+        if category:
+            # Valida se a categoria é válida
+            try:
+                NotificationCategoryEnum(category)
+                query["category"] = category
+            except ValueError:
+                raise ValidationException(
+                    message_key="ERROR_INVALID_CATEGORY",
+                    request=request
+                )
+        
+        # Contagem total
+        total = await db.notifications.count_documents(query)
+        
+        # Contagem não lidas
+        unread_query = query.copy()
+        unread_query["read"] = False
+        unread_count = await db.notifications.count_documents(unread_query)
+        
+        # Busca com paginação
+        skip = (page - 1) * limit
+        cursor = db.notifications.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        notifications = await cursor.to_list(limit)
+        
+        # Converte para response
+        items = []
+        for notif in notifications:
+            notif["_id"] = str(notif["_id"])
+            items.append(NotificationInAppResponse(**notif))
+        
+        has_more = total > (page * limit)
+        
+        return NotificationListResponse(
+            items=items,
+            total=total,
+            page=page,
+            limit=limit,
+            has_more=has_more,
+            unread_count=unread_count
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao listar notificações: {e}")
+        raise I18nHTTPException(
+            status_code=500,
+            message_key="ERROR_NOTIFICATIONS_LIST_FAILED",
+            request=request
+        )
+
+
+@router.get("/unread", response_model=UnreadCountResponse)
+@limiter.limit("60/minute", key_func=get_user_rate_limit_key)
+async def get_unread_count(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """
+    Retorna a contagem de notificações não lidas.
+    """
+    try:
+        count = await db.notifications.count_documents({
+            "user_id": str(current_user.id),
+            "read": False
+        })
+        
+        return UnreadCountResponse(unread_count=count)
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao contar não lidas: {e}")
+        raise I18nHTTPException(
+            status_code=500,
+            message_key="ERROR_NOTIFICATIONS_UNREAD_FAILED",
+            request=request
+        )
+
+
+@router.get("/{notification_id}", response_model=NotificationInAppResponse)
+@limiter.limit("60/minute", key_func=get_user_rate_limit_key)
+async def get_notification(
+    request: Request,
+    notification_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """
+    Busca uma notificação específica.
+    """
+    language = getattr(request.state, "language", "pt")
+    request.state.user_id = str(current_user.id)
+    
+    try:
+        notification = await _get_notification_or_404(
+            notification_id,
+            str(current_user.id),
+            db
+        )
+        
+        notification["_id"] = str(notification["_id"])
+        return NotificationInAppResponse(**notification)
+        
+    except (NotFoundException, ValidationException):
+        raise
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar notificação: {e}")
+        raise I18nHTTPException(
+            status_code=500,
+            message_key="ERROR_NOTIFICATION_FETCH_FAILED",
+            request=request
+        )
+
+
+@router.put("/{notification_id}/read", response_model=NotificationInAppResponse)
+@limiter.limit("30/minute", key_func=get_user_rate_limit_key)
+async def mark_notification_as_read(
+    request: Request,
+    notification_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """
+    Marca uma notificação como lida.
+    """
+    language = getattr(request.state, "language", "pt")
+    request.state.user_id = str(current_user.id)
+    
+    try:
+        # Verifica se a notificação existe e pertence ao usuário
+        notification = await _get_notification_or_404(
+            notification_id,
+            str(current_user.id),
+            db
+        )
+        
+        if notification.get("read", False):
+            # Já está lida, retorna como está
+            notification["_id"] = str(notification["_id"])
+            return NotificationInAppResponse(**notification)
+        
+        # Atualiza
+        now = datetime.now(timezone.utc)
+        await db.notifications.update_one(
+            {"_id": ObjectId(notification_id)},
+            {
+                "$set": {
+                    "read": True,
+                    "read_at": now,
+                    "updated_at": now
+                }
+            }
+        )
+        
+        # Busca a notificação atualizada
+        updated = await db.notifications.find_one({"_id": ObjectId(notification_id)})
+        updated["_id"] = str(updated["_id"])
+        
+        logger.info(f"✅ Notificação {notification_id} marcada como lida")
+        return NotificationInAppResponse(**updated)
+        
+    except (NotFoundException, ValidationException):
+        raise
+    except Exception as e:
+        logger.error(f"❌ Erro ao marcar notificação como lida: {e}")
+        raise I18nHTTPException(
+            status_code=500,
+            message_key="ERROR_NOTIFICATION_MARK_READ_FAILED",
+            request=request
+        )
+
+
+@router.put("/read-all", response_model=ReadAllResponse)
+@limiter.limit("10/minute", key_func=get_user_rate_limit_key)
+async def mark_all_notifications_as_read(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """
+    Marca todas as notificações do usuário como lidas.
+    """
+    language = getattr(request.state, "language", "pt")
+    request.state.user_id = str(current_user.id)
+    
+    try:
+        now = datetime.now(timezone.utc)
+        result = await db.notifications.update_many(
+            {
+                "user_id": str(current_user.id),
+                "read": False
+            },
+            {
+                "$set": {
+                    "read": True,
+                    "read_at": now,
+                    "updated_at": now
+                }
+            }
+        )
+        
+        updated_count = result.modified_count
+        
+        logger.info(f"✅ {updated_count} notificações marcadas como lidas para usuário {current_user.id}")
+        
+        return ReadAllResponse(
+            success=True,
+            message=get_message("SUCCESS_NOTIFICATIONS_READ_ALL", language, count=updated_count),
+            updated_count=updated_count
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao marcar todas como lidas: {e}")
+        raise I18nHTTPException(
+            status_code=500,
+            message_key="ERROR_NOTIFICATIONS_READ_ALL_FAILED",
+            request=request
+        )
+
+
+@router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute", key_func=get_user_rate_limit_key)
+async def delete_notification(
+    request: Request,
+    notification_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    """
+    Deleta uma notificação.
+    """
+    language = getattr(request.state, "language", "pt")
+    request.state.user_id = str(current_user.id)
+    
+    try:
+        # Verifica se a notificação existe e pertence ao usuário
+        await _get_notification_or_404(
+            notification_id,
+            str(current_user.id),
+            db
+        )
+        
+        # Deleta
+        await db.notifications.delete_one({"_id": ObjectId(notification_id)})
+        
+        logger.info(f"🗑️ Notificação {notification_id} deletada")
+        
+    except (NotFoundException, ValidationException):
+        raise
+    except Exception as e:
+        logger.error(f"❌ Erro ao deletar notificação: {e}")
+        raise I18nHTTPException(
+            status_code=500,
+            message_key="ERROR_NOTIFICATION_DELETE_FAILED",
+            request=request
+        )
+
+
 # ========== WORKERS PARA SCHEDULER ==========
 
 async def run_daily_notifications_scheduler(db):
@@ -687,9 +1050,13 @@ async def run_cleanup_tokens_scheduler(db):
 #   - Validação de Expo token
 #   - Literal para device_platform
 #   - Forçar ADMIN_SECRET em produção
+#   - 🆕 CRUD completo de notificações in-app
+#   - 🆕 Paginação com filtros
+#   - 🆕 Contagem de não lidas
+#   - 🆕 Marcar todas como lidas
 #
 # ❌ Não implementado (Pós-MVP):
-#   - Scheduler automático (APScheduler)
+#   - Scheduler automático (APScheduler) - já existe em scheduler.py
 #   - Agendamento personalizado
 #   - Analytics de abertura
 #
@@ -699,5 +1066,6 @@ async def run_cleanup_tokens_scheduler(db):
 #   - v2.1: Correções de tokens, ADMIN_SECRET (01/07/2026)
 #   - v2.2: Literal, validação Expo, cleanuptokens, índices (02/07/2026)
 #   - v2.3: Refatoração - constants, rate_limiter, notifications utils (02/07/2026)
+#   - v2.4: Adicionado CRUD in-app (13/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

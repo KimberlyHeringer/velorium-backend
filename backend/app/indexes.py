@@ -649,6 +649,68 @@ async def create_indexes(db):
         except Exception as e:
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
 
+    # ================================================================
+    # 31. NOTIFICAÇÕES IN-APP (NOTIFICATIONS) - 🆕 NOVO
+    # ================================================================
+    
+    try:
+        await db.notifications.create_index([
+            ("user_id", 1),
+            ("created_at", -1)
+        ])
+        logger.info("✅ Índice notifications.(user_id, created_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notifications.(user_id, created_at): {e}", exc_info=True)
+    
+    try:
+        await db.notifications.create_index([
+            ("user_id", 1),
+            ("read", 1),
+            ("created_at", -1)
+        ])
+        logger.info("✅ Índice notifications.(user_id, read, created_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notifications.(user_id, read, created_at): {e}", exc_info=True)
+    
+    try:
+        await db.notifications.create_index([
+            ("user_id", 1),
+            ("type", 1),
+            ("created_at", -1)
+        ])
+        logger.info("✅ Índice notifications.(user_id, type, created_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notifications.(user_id, type, created_at): {e}", exc_info=True)
+    
+    try:
+        await db.notifications.create_index([
+            ("user_id", 1),
+            ("category", 1),
+            ("created_at", -1)
+        ])
+        logger.info("✅ Índice notifications.(user_id, category, created_at) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notifications.(user_id, category, created_at): {e}", exc_info=True)
+    
+    try:
+        await db.notifications.create_index([
+            ("user_id", 1),
+            ("reference_id", 1)
+        ])
+        logger.info("✅ Índice notifications.(user_id, reference_id) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notifications.(user_id, reference_id): {e}", exc_info=True)
+    
+    try:
+        await db.notifications.create_index(
+            [("expires_at", 1)],
+            expireAfterSeconds=0
+        )
+        logger.info("✅ Índice TTL para notifications.expires_at criado (expiração automática)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice TTL notifications.expires_at: {e}", exc_info=True)
+
+        
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
 
