@@ -32,6 +32,7 @@ Principais features:
 - 🔧 NOVO: CRUD completo de notificações in-app
 
 Versão: v2.4 (CRUD adicionado)
+📅 ATUALIZADO EM: 14/07/2026
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request, Query
@@ -51,16 +52,16 @@ from app.utils.logger import setup_logger
 from app.utils.currency import from_cents
 from app.services.ia_service import obter_resposta_ia_async
 
-# ========== NOVOS IMPORTS ==========
+# ========== IMPORTS CORRETOS ==========
 from app.core.constants import INACTIVE_TOKEN_DAYS, EXPO_API_URL
 from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 from app.utils.notifications import send_push_notification
 
-# ========== I18N ==========
+# ✅ CORRIGIDO: I18n imports com I18nHTTPException
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
 
-# ========== 🆕 IMPORTS PARA CRUD ==========
+# ✅ CORRIGIDO: Imports do model e schemas (padronizado)
 from app.models.notification import (
     NotificationType,
     NotificationCategory as NotificationCategoryEnum
@@ -329,7 +330,8 @@ async def cleanup_inactive_tokens_worker(db):
 
 # ========== 🆕 FUNÇÃO AUXILIAR CRUD ==========
 
-async def _get_notification_or_404(notification_id: str, user_id: str, db) -> dict:
+# ✅ CORRIGIDO: Adicionado request como parâmetro
+async def _get_notification_or_404(notification_id: str, user_id: str, db, request: Request) -> dict:
     """
     Busca uma notificação e valida ownership.
     
@@ -337,6 +339,7 @@ async def _get_notification_or_404(notification_id: str, user_id: str, db) -> di
         notification_id: ID da notificação
         user_id: ID do usuário autenticado
         db: Conexão com o banco
+        request: Request do FastAPI (para i18n)
     
     Returns:
         dict: Documento da notificação
@@ -350,21 +353,23 @@ async def _get_notification_or_404(notification_id: str, user_id: str, db) -> di
             "_id": ObjectId(notification_id)
         })
     except:
+        # ✅ CORRIGIDO: Passando request
         raise NotFoundException(
             message_key="ERROR_NOTIFICATION_NOT_FOUND",
-            request=None
+            request=request
         )
     
     if not notification:
+        # ✅ CORRIGIDO: Passando request
         raise NotFoundException(
             message_key="ERROR_NOTIFICATION_NOT_FOUND",
-            request=None
+            request=request
         )
     
     if notification.get("user_id") != user_id:
         raise ValidationException(
             message_key="ERROR_NOTIFICATION_UNAUTHORIZED",
-            request=None
+            request=request
         )
     
     return notification
@@ -859,10 +864,12 @@ async def get_notification(
     request.state.user_id = str(current_user.id)
     
     try:
+        # ✅ CORRIGIDO: Passando request
         notification = await _get_notification_or_404(
             notification_id,
             str(current_user.id),
-            db
+            db,
+            request
         )
         
         notification["_id"] = str(notification["_id"])
@@ -894,11 +901,12 @@ async def mark_notification_as_read(
     request.state.user_id = str(current_user.id)
     
     try:
-        # Verifica se a notificação existe e pertence ao usuário
+        # ✅ CORRIGIDO: Passando request
         notification = await _get_notification_or_404(
             notification_id,
             str(current_user.id),
-            db
+            db,
+            request
         )
         
         if notification.get("read", False):
@@ -1000,11 +1008,12 @@ async def delete_notification(
     request.state.user_id = str(current_user.id)
     
     try:
-        # Verifica se a notificação existe e pertence ao usuário
+        # ✅ CORRIGIDO: Passando request
         await _get_notification_or_404(
             notification_id,
             str(current_user.id),
-            db
+            db,
+            request
         )
         
         # Deleta
@@ -1067,5 +1076,6 @@ async def run_cleanup_tokens_scheduler(db):
 #   - v2.2: Literal, validação Expo, cleanuptokens, índices (02/07/2026)
 #   - v2.3: Refatoração - constants, rate_limiter, notifications utils (02/07/2026)
 #   - v2.4: Adicionado CRUD in-app (13/07/2026)
+#   - v2.4.1: Correção de imports e request no i18n (14/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

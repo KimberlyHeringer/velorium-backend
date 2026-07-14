@@ -13,13 +13,14 @@ Funcionalidades:
 
 📋 CHANGELOG:
   - v1: Versão inicial (13/07/2026)
+  - v1.1: Correção - ConfigDict no lugar de dicionários (14/07/2026)
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
 """
 
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 from app.models.notification import (
     NotificationType,
@@ -163,10 +164,11 @@ class NotificationInDB(NotificationBase):
     created_at: datetime = Field(..., description="Data de criação")
     updated_at: datetime = Field(..., description="Data de atualização")
     
-    model_config = {
-        "populate_by_name": True,
-        "json_encoders": {datetime: lambda dt: dt.isoformat()}
-    }
+    # ✅ CORRIGIDO: ConfigDict
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_encoders={datetime: lambda dt: dt.isoformat()}
+    )
 
 
 class NotificationResponse(NotificationInDB):
@@ -178,11 +180,12 @@ class NotificationResponse(NotificationInDB):
       - Todos os campos já estão definidos no NotificationInDB
     """
     
-    model_config = {
-        "from_attributes": True,
-        "populate_by_name": True,
-        "json_encoders": {datetime: lambda dt: dt.isoformat()}
-    }
+    # ✅ CORRIGIDO: ConfigDict
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+        json_encoders={datetime: lambda dt: dt.isoformat()}
+    )
 
 
 class NotificationListResponse(BaseModel):
@@ -247,10 +250,12 @@ class ReadAllResponse(BaseModel):
   ✅ NotificationListResponse com paginação
   ✅ UnreadCountResponse e ReadAllResponse para endpoints específicos
   ✅ Validações consistentes com o modelo
+  ✅ ✅ ConfigDict para compatibilidade com Pydantic V2
 
 📋 PENDÊNCIAS PÓS-MVP:
   - BulkCreate schema para múltiplas notificações
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
 📅 CRIADO EM: 13/07/2026
+📅 ATUALIZADO EM: 14/07/2026
 """

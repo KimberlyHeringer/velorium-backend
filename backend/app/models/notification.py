@@ -23,14 +23,15 @@ Funcionalidades:
 
 📋 CHANGELOG:
   - v1: Versão inicial (13/07/2026)
+  - v1.1: Correção de imports (List, BaseModel, ConfigDict) (14/07/2026)
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
 """
 
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from enum import Enum
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 from app.models.base import BaseModelWithUser
 from app.models.mixins import TimestampMixin
@@ -290,7 +291,6 @@ class NotificationUpdate(BaseModel):
     
     🔧 PERMITIDO:
       - read: Marcar como lida
-      - read_at: Data/hora da leitura (preenchido automaticamente)
     
     🔧 NÃO PERMITIDO:
       - title, body, type (não podem ser alterados)
@@ -305,10 +305,7 @@ class NotificationUpdate(BaseModel):
     
     @model_validator(mode='after')
     def validate_read(self) -> 'NotificationUpdate':
-        """Se read=True, preenche read_at automaticamente."""
-        if self.read:
-            # read_at será preenchido no service/route
-            pass
+        """Se read=True, validação básica."""
         return self
 
 
@@ -338,10 +335,10 @@ class NotificationResponse(BaseModel):
     created_at: datetime = Field(..., description="Data de criação")
     updated_at: datetime = Field(..., description="Data de atualização")
     
-    model_config = {
-        "from_attributes": True,
-        "json_encoders": {datetime: lambda dt: dt.isoformat()}
-    }
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={datetime: lambda dt: dt.isoformat()}
+    )
 
 
 class NotificationListResponse(BaseModel):
@@ -378,6 +375,8 @@ class NotificationListResponse(BaseModel):
         ...,
         description="Total de notificações não lidas"
     )
+    
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ================================================================
@@ -401,4 +400,5 @@ class NotificationListResponse(BaseModel):
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
 📅 CRIADO EM: 13/07/2026
+📅 ATUALIZADO EM: 14/07/2026
 """
