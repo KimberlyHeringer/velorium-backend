@@ -22,7 +22,7 @@ Principais features:
 - Janela de reversão de 30 dias no /unpay
 - Atualização automática de remaining_installments e fully_paid
 
-Versão: v5.2 (corrigido + refatorado)
+Versão: v5.3 (corrigido paginate_query)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -39,7 +39,7 @@ from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import convert_objectid_to_str, validate_object_id
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
-from app.utils.rate_limiter import limiter, get_user_rate_limit_key
+from app.utils.rate_limiter import limiter  # ← REMOVIDO get_user_rate_limit_key (não usado)
 
 # ========== NOVOS IMPORTS ==========
 from app.core.constants import MAX_INSTALLMENTS, MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS
@@ -58,7 +58,14 @@ router = APIRouter(prefix="/credit-card-purchases", tags=["Compras no Cartão"])
 # ========== FUNÇÕES AUXILIARES ==========
 
 async def update_card_committed_amount(card_id: str, delta_cents: int, db):
-    """Atualiza o committed_amount do cartão (delta em centavos, pode ser negativo)"""
+    """
+    Atualiza o committed_amount do cartão (delta em centavos, pode ser negativo)
+    
+    Args:
+        card_id: ID do cartão
+        delta_cents: Variação em centavos (pode ser positivo ou negativo)
+        db: Instância do banco de dados
+    """
     validate_object_id(card_id, "card_id")
     await db.credit_cards.update_one(
         {"_id": ObjectId(card_id)},
@@ -70,6 +77,19 @@ async def check_available_limit(card_id: str, required_cents: int, db, request: 
     """
     Retorna limite disponível em centavos.
     Levanta exceção se insuficiente.
+    
+    Args:
+        card_id: ID do cartão
+        required_cents: Valor necessário em centavos
+        db: Instância do banco de dados
+        request: Objeto Request para i18n
+        
+    Returns:
+        int: Limite disponível em centavos
+        
+    Raises:
+        NotFoundException: Se cartão não existir
+        ValidationException: Se limite for insuficiente
     """
     validate_object_id(card_id, "card_id")
     card = await db.credit_cards.find_one({"_id": ObjectId(card_id)})
@@ -104,7 +124,17 @@ async def create_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Cria uma nova compra parcelada com suporte a juros."""
+    """
+    Cria uma nova compra parcelada com suporte a juros.
+    
+    Validações:
+    - Cartão pertence ao usuário
+    - total_amount > 0
+    - interest_rate entre 0 e 100%
+    - installments <= MAX_INSTALLMENTS (360)
+    - first_due_date não é passada
+    - Limite disponível suficiente
+    """
     validate_object_id(purchase_data.card_id, "card_id")
     
     # Verifica se o cartão pertence ao usuário
@@ -176,7 +206,6 @@ async def create_purchase(
     purchase_dict["user_id"] = str(current_user.id)
     purchase_dict["first_due_date"] = first_due
     purchase_dict["committed_amount"] = total_with_interest_cents
-    
     # 🔧 CORRIGIDO: Armazena informações de juros
     purchase_dict["interest_rate"] = interest_rate
     purchase_dict["total_with_interest"] = total_with_interest_cents
@@ -255,6 +284,13 @@ async def get_purchases(
 ):
     """
     Lista compras parceladas do usuário com paginação, filtros e ordenação.
+    
+    Filtros disponíveis:
+    - card_id: Filtrar por cartão específico
+    - paid: Filtrar por status de pagamento (true/false)
+    
+    Ordenação disponível:
+    - created_at, total_amount, installments, paid, updated_at
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
@@ -277,8 +313,14 @@ async def get_purchases(
     sort_field = sort_field_mapping.get(sort_by, "created_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.credit_card_purchases, query, params, sort=[(sort_field, sort_direction)]
+        collection=db.credit_card_purchases,
+        collection_name="credit_card_purchases",  # ← ADICIONADO
+        query=query,
+        params=params,
+        user_id=str(current_user.id),             # ← ADICIONADO
+        sort=[(sort_field, sort_direction)]
     )
     
     for item in items:
@@ -304,6 +346,14 @@ async def get_faturas(
 ):
     """
     Retorna faturas do cartão.
+    
+    Args:
+        card_id: ID do cartão
+        month: Mês (opcional)
+        year: Ano (opcional)
+        
+    Returns:
+        Lista de faturas com parcelas e totais
     """
     try:
         logger.info(f"🔍 Buscando faturas - card_id: {card_id}")
@@ -402,6 +452,7 @@ async def get_faturas(
         logger.error(f"❌ Erro ao buscar faturas: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        # 🔧 CORRIGIDO: Usar I18nHTTPException em vez de HTTPException
         raise I18nHTTPException(
             status_code=500,
             message_key="ERROR_SERVER",
@@ -446,7 +497,14 @@ async def update_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Atualiza uma compra existente (com suporte a juros)"""
+    """
+    Atualiza uma compra existente (com suporte a juros).
+    
+    Validações:
+    - Compra pertence ao usuário
+    - Não há parcelas pagas (impede edição)
+    - Novo cartão pertence ao usuário (se alterado)
+    """
     validate_object_id(purchase_id, "purchase_id")
     
     purchase = await db.credit_card_purchases.find_one({
@@ -550,7 +608,6 @@ async def update_purchase(
     update_dict["updated_at"] = datetime.now(timezone.utc)
     update_dict["first_due_date"] = first_due
     update_dict["committed_amount"] = new_total_with_interest_cents
-    
     # 🔧 CORRIGIDO: Armazena informações de juros
     update_dict["interest_rate"] = interest_rate
     update_dict["total_with_interest"] = new_total_with_interest_cents
@@ -629,7 +686,13 @@ async def delete_purchase(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Remove uma compra e todas as suas parcelas"""
+    """
+    Remove uma compra e todas as suas parcelas.
+    
+    - Restaura o committed_amount do cartão
+    - Remove todas as parcelas associadas
+    - Registra auditoria
+    """
     validate_object_id(purchase_id, "purchase_id")
     
     purchase = await db.credit_card_purchases.find_one({
@@ -677,7 +740,16 @@ async def mark_installment_paid(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Marca uma parcela como paga"""
+    """
+    Marca uma parcela como paga.
+    
+    Efeitos:
+    - Marca a parcela como paid=True
+    - Reduz committed_amount do cartão
+    - Atualiza remaining_installments da compra
+    - Se todas as parcelas pagas, marca fully_paid=True
+    - Registra auditoria com paid_by
+    """
     validate_object_id(installment_id, "installment_id")
     
     installment = await db.credit_card_installments.find_one({"_id": ObjectId(installment_id)})
@@ -794,6 +866,13 @@ async def unpay_installment(
     - Verifica se a parcela existe
     - Verifica se a parcela está paga
     - Verifica se o pagamento foi feito há menos de 30 dias (janela de reversão)
+    
+    Efeitos:
+    - Desmarca o pagamento (paid=False)
+    - Restaura committed_amount do cartão
+    - Atualiza remaining_installments
+    - Se era a única paga, desmarca fully_paid
+    - Registra auditoria
     """
     validate_object_id(installment_id, "installment_id")
     
@@ -908,6 +987,7 @@ async def unpay_installment(
 #   - Atualização automática de remaining_installments e fully_paid
 #   - Validação de first_due_date, total_amount e installments
 #   - interest_rate e total_with_interest do modelo
+#   - Paginate_query com collection_name e user_id (CORRIGIDO v5.3)
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
@@ -920,5 +1000,6 @@ async def unpay_installment(
 #   - v5: Refatoração - constantes, audit, installments (02/07/2026)
 #   - v5.1: Documentação atualizada para novo padrão
 #   - v5.2: CORREÇÃO - Usa interest_rate e total_with_interest do modelo (02/07/2026)
+#   - v5.3: CORREÇÃO - Adicionado collection_name e user_id no paginate_query (10/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

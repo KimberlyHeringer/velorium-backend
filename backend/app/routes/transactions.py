@@ -27,15 +27,18 @@ Principais features:
 - 🔧 CORRIGIDO: ObjectId com validação no CSV
 - 🔧 CORRIGIDO: BackgroundTasks para update_goal_progress
 - 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
+- 🔧 CORRIGIDO: paginate_query com collection_name e user_id
 
-Versão: v4.1 (com background tasks e validações)
+Versão: v4.2 (corrigido paginate_query e imports)
+📅 ATUALIZADO EM: 18/07/2026
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, status, Request, BackgroundTasks
+# 🔧 CORRIGIDO: Removido HTTPException (não usado)
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
-from bson.errors import InvalidId  # 🆕 Import para validação de ObjectId
+from bson.errors import InvalidId
 import os
 import json
 import csv
@@ -54,7 +57,7 @@ from app.utils.logger import setup_logger
 # ========== IMPORTS ==========
 from app.core.constants import PAYMENT_METHOD_CREDIT_CARD, BALANCE_CACHE_TTL_SECONDS, CSV_MAX_EXPORT
 from app.utils.rate_limiter import limiter, get_user_rate_limit_key
-from app.utils.date_utils import get_month_range
+# 🔧 CORRIGIDO: Removido get_month_range (não usado)
 from app.utils.installments import split_amount_cents
 from app.utils.balance_cache import (
     get_cached_balance_redis,
@@ -103,7 +106,7 @@ async def update_goal_progress(user_id: str, goal_id: str, db):
     
     try:
         validate_object_id(goal_id, "goal_id")
-    except HTTPException:
+    except Exception:
         logger.warning(f"⚠️ goal_id inválido ao atualizar progresso: {goal_id}")
         return
     
@@ -287,17 +290,18 @@ async def delete_credit_card_purchase_from_transaction(
 @limiter.limit("30/minute", key_func=get_user_rate_limit_key)
 async def create_transaction(
     request: Request,
-    background_tasks: BackgroundTasks,  # 🆕 Para tasks em background
+    background_tasks: BackgroundTasks,
     transaction_data: TransactionCreate,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
     """Cria uma nova transação (receita ou despesa) com suporte a meta"""
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
         transaction_dict = transaction_data.model_dump()
-        transaction_dict["user_id"] = str(current_user.id)
+        transaction_dict["user_id"] = user_id
         
         if transaction_dict.get("date") is None:
             transaction_dict["date"] = datetime.now(timezone.utc)
@@ -306,13 +310,22 @@ async def create_transaction(
         transaction_dict["created_at"] = datetime.now(timezone.utc)
         transaction_dict["updated_at"] = datetime.now(timezone.utc)
 
+        # 🆕 Valida categoria
+        if transaction_dict.get("category"):
+            if transaction_dict["category"] not in CATEGORIAS_VALIDAS:
+                raise ValidationException(
+                    message_key="ERROR_INVALID_CATEGORY",
+                    request=request,
+                    params={"categories": ", ".join(CATEGORIAS_VALIDAS)}
+                )
+
         # 🆕 Valida meta associada
         goal_id = transaction_dict.get("goal_id")
         if goal_id:
             validate_object_id(goal_id, "goal_id")
             goal = await db.goals.find_one({
                 "_id": ObjectId(goal_id),
-                "user_id": str(current_user.id)
+                "user_id": user_id
             })
             if not goal:
                 raise NotFoundException(
@@ -343,7 +356,7 @@ async def create_transaction(
         if is_credit_card_expense:
             await create_credit_card_purchase_from_transaction(
                 transaction_id,
-                str(current_user.id),
+                user_id,
                 transaction_dict,
                 db,
                 request
@@ -353,24 +366,22 @@ async def create_transaction(
         if goal_id:
             background_tasks.add_task(
                 update_goal_progress,
-                str(current_user.id),
+                user_id,
                 goal_id,
                 db
             )
         
-        await invalidate_balance_cache(str(current_user.id))
+        await invalidate_balance_cache(user_id)
         
         created = await db.transactions.find_one({"_id": result.inserted_id})
         
         if created and "amount" in created:
             created["amount"] = from_cents(created["amount"])
         
-        logger.info(f"✅ Transação criada: {transaction_dict['type']} para usuário {current_user.id}")
+        logger.info(f"✅ Transação criada: {transaction_dict['type']} para usuário {user_id}")
         return convert_objectid_to_str(created)
         
     except ValidationException:
-        raise
-    except HTTPException:
         raise
     except Exception as e:
         logger.error(f"❌ Erro ao criar transação: {e}")
@@ -402,12 +413,13 @@ async def get_transactions(
     Lista transações do usuário com paginação, filtros e ordenação.
     🆕 Novo filtro: goal_id
     """
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     params = PaginationParams(page=page, limit=limit)
     
     query = {
-        "user_id": str(current_user.id),
+        "user_id": user_id,
         "$or": [
             {"type": "income"},
             {"type": "expense", "payment_method": {"$ne": PAYMENT_METHOD_CREDIT_CARD}},
@@ -422,6 +434,12 @@ async def get_transactions(
         query["type"] = type
     
     if category:
+        if category not in CATEGORIAS_VALIDAS:
+            raise ValidationException(
+                message_key="ERROR_INVALID_CATEGORY",
+                request=request,
+                params={"categories": ", ".join(CATEGORIAS_VALIDAS)}
+            )
         query["category"] = category
     
     if goal_id:
@@ -445,8 +463,14 @@ async def get_transactions(
     sort_field = sort_field_mapping.get(sort_by, "date")
     sort_direction = -1 if sort_order == "desc" else 1
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.transactions, query, params, sort=[(sort_field, sort_direction)]
+        collection=db.transactions,
+        collection_name="transactions",      # ← ADICIONADO
+        query=query,
+        params=params,
+        user_id=user_id,                     # ← ADICIONADO
+        sort=[(sort_field, sort_direction)]
     )
     
     for item in items:
@@ -455,7 +479,7 @@ async def get_transactions(
     
     formatted_items = [convert_objectid_to_str(item) for item in items]
     
-    logger.debug(f"📊 Listadas {len(formatted_items)} transações para usuário {current_user.id}")
+    logger.debug(f"📊 Listadas {len(formatted_items)} transações para usuário {user_id}")
     return paginate(formatted_items, total, params)
 
 
@@ -470,9 +494,8 @@ async def get_balance(
     """
     Retorna o saldo do MÊS ATUAL com cache.
     """
-    request.state.user_id = str(current_user.id)
-    
     user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     cached = await get_cached_balance_redis(user_id, context)
     if cached:
@@ -508,9 +531,9 @@ async def get_total_balance(
     """
     Retorna o saldo TOTAL (soma de TODAS as transações) com cache.
     """
-    request.state.user_id = str(current_user.id)
-    
     user_id = str(current_user.id)
+    request.state.user_id = user_id
+    
     cache_key = f"total_balance:{user_id}:{context or 'all'}"
     
     if redis_client:
@@ -585,9 +608,8 @@ async def recalculate_balance(
     """
     Recalcula e atualiza o cache de saldo do usuário.
     """
-    request.state.user_id = str(current_user.id)
-    
     user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     await invalidate_balance_cache(user_id)
     
@@ -615,14 +637,15 @@ async def get_transaction(
     db=Depends(get_database)
 ):
     """Busca uma transação específica"""
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     validate_object_id(transaction_id, "transaction_id")
     obj_id = ObjectId(transaction_id)
     
     transaction = await db.transactions.find_one({
         "_id": obj_id,
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     if not transaction:
         raise NotFoundException(
@@ -640,21 +663,22 @@ async def get_transaction(
 @limiter.limit("20/minute", key_func=get_user_rate_limit_key)
 async def update_transaction(
     request: Request,
-    background_tasks: BackgroundTasks,  # 🆕 Para tasks em background
+    background_tasks: BackgroundTasks,
     transaction_id: str,
     transaction_update: TransactionUpdate,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
     """Atualiza uma transação existente"""
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     validate_object_id(transaction_id, "transaction_id")
     obj_id = ObjectId(transaction_id)
     
     original = await db.transactions.find_one({
         "_id": obj_id,
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     if not original:
         raise NotFoundException(
@@ -672,6 +696,15 @@ async def update_transaction(
     if "amount" in update_data:
         update_data["amount"] = to_cents(update_data["amount"])
     
+    # 🆕 Valida categoria se for alterada
+    if "category" in update_data and update_data["category"]:
+        if update_data["category"] not in CATEGORIAS_VALIDAS:
+            raise ValidationException(
+                message_key="ERROR_INVALID_CATEGORY",
+                request=request,
+                params={"categories": ", ".join(CATEGORIAS_VALIDAS)}
+            )
+    
     update_data["updated_at"] = datetime.now(timezone.utc)
 
     # 🆕 Se goal_id mudou, atualiza progresso da meta antiga e nova
@@ -682,7 +715,7 @@ async def update_transaction(
         validate_object_id(new_goal_id, "goal_id")
         goal = await db.goals.find_one({
             "_id": ObjectId(new_goal_id),
-            "user_id": str(current_user.id)
+            "user_id": user_id
         })
         if not goal:
             raise NotFoundException(
@@ -696,7 +729,7 @@ async def update_transaction(
             )
 
     result = await db.transactions.update_one(
-        {"_id": obj_id, "user_id": str(current_user.id)},
+        {"_id": obj_id, "user_id": user_id},
         {"$set": update_data}
     )
     if result.matched_count == 0:
@@ -706,20 +739,19 @@ async def update_transaction(
     )
     
     # 🆕 Atualiza progresso das metas em BACKGROUND
-    user_id = str(current_user.id)
     if old_goal_id and old_goal_id != new_goal_id:
         background_tasks.add_task(update_goal_progress, user_id, old_goal_id, db)
     if new_goal_id and new_goal_id != old_goal_id:
         background_tasks.add_task(update_goal_progress, user_id, new_goal_id, db)
     
-    await invalidate_balance_cache(str(current_user.id))
+    await invalidate_balance_cache(user_id)
     
     updated = await db.transactions.find_one({"_id": obj_id})
     
     if updated and "amount" in updated:
         updated["amount"] = from_cents(updated["amount"])
     
-    logger.info(f"✅ Transação atualizada: {transaction_id} para usuário {current_user.id}")
+    logger.info(f"✅ Transação atualizada: {transaction_id} para usuário {user_id}")
     return convert_objectid_to_str(updated)
 
 
@@ -727,21 +759,22 @@ async def update_transaction(
 @limiter.limit("10/minute", key_func=get_user_rate_limit_key)
 async def delete_transaction(
     request: Request,
-    background_tasks: BackgroundTasks,  # 🆕 Para tasks em background
+    background_tasks: BackgroundTasks,
     transaction_id: str,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
     """Remove uma transação"""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     validate_object_id(transaction_id, "transaction_id")
     obj_id = ObjectId(transaction_id)
     
     transaction = await db.transactions.find_one({
         "_id": obj_id,
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     if not transaction:
         raise NotFoundException(
@@ -760,14 +793,14 @@ async def delete_transaction(
     if is_credit_card_expense:
         await delete_credit_card_purchase_from_transaction(
             transaction_id,
-            str(current_user.id),
+            user_id,
             db,
             request
         )
     
     result = await db.transactions.delete_one({
         "_id": obj_id,
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     if result.deleted_count == 0:
         raise NotFoundException(
@@ -779,14 +812,14 @@ async def delete_transaction(
     if goal_id:
         background_tasks.add_task(
             update_goal_progress,
-            str(current_user.id),
+            user_id,
             goal_id,
             db
         )
     
-    await invalidate_balance_cache(str(current_user.id))
+    await invalidate_balance_cache(user_id)
     
-    logger.info(f"🗑️ Transação deletada: {transaction_id} para usuário {current_user.id}")
+    logger.info(f"🗑️ Transação deletada: {transaction_id} para usuário {user_id}")
     
     return {
         "message": get_message("SUCCESS_TRANSACTION_DELETED", language),
@@ -807,8 +840,9 @@ async def bulk_categorize_transactions(
     Recategoriza múltiplas transações de uma vez.
     Máximo de 100 transações por requisição.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     if category not in CATEGORIAS_VALIDAS:
         raise ValidationException(
@@ -823,7 +857,6 @@ async def bulk_categorize_transactions(
             request=request
         )
     
-    user_id = str(current_user.id)
     updated_count = 0
     failed_ids = []
     
@@ -877,10 +910,11 @@ async def export_transactions_csv(
     Exporta transações em formato CSV (LGPD - portabilidade de dados).
     Limite de 10.000 registros.
     """
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     query = {
-        "user_id": str(current_user.id),
+        "user_id": user_id,
         "$or": [
             {"type": "income"},
             {"type": "expense", "payment_method": {"$ne": PAYMENT_METHOD_CREDIT_CARD}},
@@ -941,7 +975,7 @@ async def export_transactions_csv(
     
     filename = f"transacoes_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
     
-    logger.info(f"📤 Exportação CSV: {len(transactions)} transações para usuário {current_user.id}")
+    logger.info(f"📤 Exportação CSV: {len(transactions)} transações para usuário {user_id}")
     
     output.seek(0)
     return StreamingResponse(
@@ -971,10 +1005,14 @@ async def export_transactions_csv(
 #   - 🔧 CORRIGIDO: ObjectId com validação no CSV
 #   - 🔧 CORRIGIDO: BackgroundTasks para update_goal_progress
 #   - 🔧 CORRIGIDO: Removidas variáveis language não utilizadas (SonarQube)
+#   - 🔧 CORRIGIDO: paginate_query com collection_name e user_id
+#   - 🔧 CORRIGIDO: Removido imports não utilizados
+#   - 🔧 CORRIGIDO: Validação de categoria no create e update
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Timezone do usuário
 #   - Exportação PDF
+#   - Atualização de used_limit no cartão (já tem committed_amount)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -985,5 +1023,7 @@ async def export_transactions_csv(
 #   - v3.3: Removidas variáveis language não utilizadas (SonarQube) (06/07/2026)
 #   - v4.0: 🆕 Integração com metas (goal_id, update_goal_progress) (11/07/2026)
 #   - v4.1: 🔧 BackgroundTasks, validação ObjectId no CSV (12/07/2026)
+#   - v4.2: 🔧 CORREÇÃO - paginate_query com collection_name e user_id (18/07/2026)
+#   - v4.3: 🔧 CORREÇÃO - Removido imports não usados, validação categoria (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

@@ -7,19 +7,23 @@ Funcionalidades:
 - POST /workers/score/trigger: Executar worker manualmente
 - GET /workers/score/queue: Status da fila Redis
 - GET /workers/notifications/status: Status do worker de notificações
-- 🆕 GET /workers/goals/recurring/status: Status do worker de metas recorrentes
-- 🆕 POST /workers/goals/recurring/trigger: Executar worker de metas recorrentes
-- 🆕 GET /workers/goals/notifications/status: Status do worker de notificações de metas
-- 🆕 POST /workers/goals/notifications/trigger: Executar worker de notificações de metas
-- 🆕 GET /workers/score/history: Histórico com paginação
+- GET /workers/goals/recurring/status: Status do worker de metas recorrentes
+- POST /workers/goals/recurring/trigger: Executar worker de metas recorrentes
+- GET /workers/goals/notifications/status: Status do worker de notificações de metas
+- POST /workers/goals/notifications/trigger: Executar worker de notificações de metas
+- GET /workers/score/history: Histórico com paginação
 
 🔧 CORRIGIDO: Caminho dos workers usando 'app.workers_disabled'
 🔧 ADICIONADO: Verificação de app running para tasks
 🔧 ADICIONADO: Paginação no histórico de workers
 🔧 CORRIGIDO: Shutdown hook removido (agora no main.py)
+🔧 CORRIGIDO: Validação de secret não vazia
 
 Regra: 2.8 (Logs)
 Regra: 7.1 (Internacionalização)
+
+Versão: v6.1 (correções de validação)
+📅 ATUALIZADO EM: 18/07/2026
 """
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query
@@ -33,6 +37,9 @@ from app.models.user import UserResponse
 from app.utils.logger import setup_logger
 from app.utils.i18n import get_message
 from app.utils.rate_limiter import limiter, get_user_rate_limit_key
+
+# ========== I18N ==========
+from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/workers", tags=["Workers"])
@@ -54,6 +61,41 @@ def set_app_running(status: bool):
     """Define o status do app. Chamado pelo main.py no shutdown."""
     global _app_running
     _app_running = status
+
+
+def validate_admin_secret(secret: str, request: Request):
+    """
+    🔧 NOVO: Valida o ADMIN_SECRET.
+    
+    Args:
+        secret: Chave secreta fornecida
+        request: Request para i18n
+    
+    Raises:
+        ValidationException: Se secret for inválido
+        HTTPException: Se ADMIN_SECRET não estiver configurado
+    """
+    if not secret:
+        raise ValidationException(
+            message_key="ERROR_SECRET_REQUIRED",
+            request=request
+        )
+    
+    ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
+    
+    if not ADMIN_SECRET:
+        logger.error("❌ ADMIN_SECRET não configurado no .env")
+        raise HTTPException(
+            status_code=500,
+            detail="ADMIN_SECRET not configured"
+        )
+    
+    if secret != ADMIN_SECRET:
+        logger.warning(f"⚠️ Tentativa de acesso com ADMIN_SECRET inválido")
+        raise ValidationException(
+            message_key="ERROR_UNAUTHORIZED",
+            request=request
+        )
 
 
 # ================================================================
@@ -124,14 +166,15 @@ async def get_score_worker_status(
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar status do worker de score: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail=get_message("ERROR_SERVER", language)
+            message_key="ERROR_SERVER",
+            request=request
         )
 
 
 # ================================================================
-# 🆕 WORKER DE SCORE - HISTÓRICO COM PAGINAÇÃO
+# WORKER DE SCORE - HISTÓRICO COM PAGINAÇÃO
 # ================================================================
 
 @router.get("/score/history")
@@ -143,7 +186,7 @@ async def get_score_worker_history(
     db=Depends(get_database)
 ):
     """
-    🔧 NOVO: Retorna histórico do worker de score com paginação.
+    Retorna histórico do worker de score com paginação.
     
     🔧 USO:
         GET /api/v1/workers/score/history?page=1&limit=20
@@ -184,9 +227,10 @@ async def get_score_worker_history(
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar histórico do worker de score: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail=get_message("ERROR_SERVER", language)
+            message_key="ERROR_SERVER",
+            request=request
         )
 
 
@@ -198,7 +242,7 @@ async def get_score_worker_history(
 @limiter.limit("5/minute", key_func=get_user_rate_limit_key)
 async def trigger_score_worker(
     request: Request,
-    secret: str,
+    secret: str = Query(..., description="Chave secreta de admin"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
@@ -208,48 +252,39 @@ async def trigger_score_worker(
     🔧 USO:
         POST /api/v1/workers/score/trigger?secret=ADMIN_SECRET
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
+    request.state.user_id = user_id
     
-    ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
-    
-    if not ADMIN_SECRET:
-        logger.error("❌ ADMIN_SECRET não configurado no .env")
-        raise HTTPException(
-            status_code=500,
-            detail="ADMIN_SECRET not configured"
-        )
-    
-    if secret != ADMIN_SECRET:
-        logger.warning(f"⚠️ Tentativa de acesso com ADMIN_SECRET inválido")
-        raise HTTPException(
-            status_code=403,
-            detail=get_message("ERROR_UNAUTHORIZED", language)
-        )
+    # 🔧 CORRIGIDO: Usa função de validação
+    validate_admin_secret(secret, request)
     
     try:
         from app.workers_disabled.score_worker import calculate_score_for_all_users
     except ImportError as e:
         logger.error(f"❌ Erro ao importar worker de score: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail="Worker de score não disponível"
+            message_key="ERROR_WORKER_NOT_AVAILABLE",
+            request=request
         )
     
     if not is_app_running():
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=503,
-            detail="Aplicação está desligando"
+            message_key="ERROR_APP_SHUTTING_DOWN",
+            request=request
         )
     
     task = asyncio.create_task(calculate_score_for_all_users())
     task.add_done_callback(
         lambda t: logger.info(
-            f"✅ Worker de score finalizado com status: "
+            f"✅ Worker de score finalizado para usuário {user_id} com status: "
             f"{'sucesso' if not t.exception() else f'erro: {t.exception()}'}"
         )
     )
     
-    logger.info(f"🚀 Worker de score acionado manualmente por {current_user.id}")
+    logger.info(f"🚀 Worker de score acionado manualmente por {user_id}")
     
     return {
         "message": get_message("SCORE_WORKER_TRIGGERED", language),
@@ -297,9 +332,10 @@ async def get_score_queue_status(
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar status da fila: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail=get_message("ERROR_SERVER", language)
+            message_key="ERROR_SERVER",
+            request=request
         )
 
 
@@ -339,14 +375,15 @@ async def get_notifications_worker_status(
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar status do worker de notificações: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail=get_message("ERROR_SERVER", language)
+            message_key="ERROR_SERVER",
+            request=request
         )
 
 
 # ================================================================
-# 🆕 WORKER DE METAS RECORRENTES - STATUS
+# WORKER DE METAS RECORRENTES - STATUS
 # ================================================================
 
 @router.get("/goals/recurring/status")
@@ -382,21 +419,22 @@ async def get_goal_recurring_status(
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar status do worker de metas recorrentes: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail=get_message("ERROR_SERVER", language)
+            message_key="ERROR_SERVER",
+            request=request
         )
 
 
 # ================================================================
-# 🆕 WORKER DE METAS RECORRENTES - TRIGGER MANUAL
+# WORKER DE METAS RECORRENTES - TRIGGER MANUAL
 # ================================================================
 
 @router.post("/goals/recurring/trigger")
 @limiter.limit("5/minute", key_func=get_user_rate_limit_key)
 async def trigger_goal_recurring_worker(
     request: Request,
-    secret: str,
+    secret: str = Query(..., description="Chave secreta de admin"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
@@ -406,57 +444,48 @@ async def trigger_goal_recurring_worker(
     🔧 USO:
         POST /api/v1/workers/goals/recurring/trigger?secret=ADMIN_SECRET
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
+    request.state.user_id = user_id
     
-    ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
-    
-    if not ADMIN_SECRET:
-        logger.error("❌ ADMIN_SECRET não configurado no .env")
-        raise HTTPException(
-            status_code=500,
-            detail="ADMIN_SECRET not configured"
-        )
-    
-    if secret != ADMIN_SECRET:
-        logger.warning(f"⚠️ Tentativa de acesso com ADMIN_SECRET inválido")
-        raise HTTPException(
-            status_code=403,
-            detail=get_message("ERROR_UNAUTHORIZED", language)
-        )
+    # 🔧 CORRIGIDO: Usa função de validação
+    validate_admin_secret(secret, request)
     
     try:
         from app.workers_disabled.goal_recurring import process_recurring_goals
     except ImportError as e:
         logger.error(f"❌ Erro ao importar worker de metas recorrentes: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail="Worker de metas recorrentes não disponível"
+            message_key="ERROR_WORKER_NOT_AVAILABLE",
+            request=request
         )
     
     if not is_app_running():
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=503,
-            detail="Aplicação está desligando"
+            message_key="ERROR_APP_SHUTTING_DOWN",
+            request=request
         )
     
     task = asyncio.create_task(process_recurring_goals())
     task.add_done_callback(
         lambda t: logger.info(
-            f"✅ Worker de metas recorrentes finalizado com status: "
+            f"✅ Worker de metas recorrentes finalizado para usuário {user_id} com status: "
             f"{'sucesso' if not t.exception() else f'erro: {t.exception()}'}"
         )
     )
     
-    logger.info(f"🚀 Worker de metas recorrentes acionado manualmente por {current_user.id}")
+    logger.info(f"🚀 Worker de metas recorrentes acionado manualmente por {user_id}")
     
     return {
-        "message": "Worker de metas recorrentes iniciado",
+        "message": get_message("GOAL_RECURRING_WORKER_TRIGGERED", language),
         "started_at": datetime.now(timezone.utc).isoformat()
     }
 
 
 # ================================================================
-# 🆕 WORKER DE NOTIFICAÇÕES DE METAS - STATUS
+# WORKER DE NOTIFICAÇÕES DE METAS - STATUS
 # ================================================================
 
 @router.get("/goals/notifications/status")
@@ -491,21 +520,22 @@ async def get_goal_notifications_status(
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar status do worker de notificações de metas: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail=get_message("ERROR_SERVER", language)
+            message_key="ERROR_SERVER",
+            request=request
         )
 
 
 # ================================================================
-# 🆕 WORKER DE NOTIFICAÇÕES DE METAS - TRIGGER MANUAL
+# WORKER DE NOTIFICAÇÕES DE METAS - TRIGGER MANUAL
 # ================================================================
 
 @router.post("/goals/notifications/trigger")
 @limiter.limit("5/minute", key_func=get_user_rate_limit_key)
 async def trigger_goal_notifications_worker(
     request: Request,
-    secret: str,
+    secret: str = Query(..., description="Chave secreta de admin"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
@@ -515,51 +545,42 @@ async def trigger_goal_notifications_worker(
     🔧 USO:
         POST /api/v1/workers/goals/notifications/trigger?secret=ADMIN_SECRET
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
+    request.state.user_id = user_id
     
-    ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
-    
-    if not ADMIN_SECRET:
-        logger.error("❌ ADMIN_SECRET não configurado no .env")
-        raise HTTPException(
-            status_code=500,
-            detail="ADMIN_SECRET not configured"
-        )
-    
-    if secret != ADMIN_SECRET:
-        logger.warning(f"⚠️ Tentativa de acesso com ADMIN_SECRET inválido")
-        raise HTTPException(
-            status_code=403,
-            detail=get_message("ERROR_UNAUTHORIZED", language)
-        )
+    # 🔧 CORRIGIDO: Usa função de validação
+    validate_admin_secret(secret, request)
     
     try:
         from app.workers_disabled.goal_notification import process_goal_notifications
     except ImportError as e:
         logger.error(f"❌ Erro ao importar worker de notificações de metas: {e}")
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=500,
-            detail="Worker de notificações de metas não disponível"
+            message_key="ERROR_WORKER_NOT_AVAILABLE",
+            request=request
         )
     
     if not is_app_running():
-        raise HTTPException(
+        raise I18nHTTPException(
             status_code=503,
-            detail="Aplicação está desligando"
+            message_key="ERROR_APP_SHUTTING_DOWN",
+            request=request
         )
     
     task = asyncio.create_task(process_goal_notifications())
     task.add_done_callback(
         lambda t: logger.info(
-            f"✅ Worker de notificações de metas finalizado com status: "
+            f"✅ Worker de notificações de metas finalizado para usuário {user_id} com status: "
             f"{'sucesso' if not t.exception() else f'erro: {t.exception()}'}"
         )
     )
     
-    logger.info(f"🚀 Worker de notificações de metas acionado manualmente por {current_user.id}")
+    logger.info(f"🚀 Worker de notificações de metas acionado manualmente por {user_id}")
     
     return {
-        "message": "Worker de notificações de metas iniciado",
+        "message": get_message("GOAL_NOTIFICATIONS_WORKER_TRIGGERED", language),
         "started_at": datetime.now(timezone.utc).isoformat()
     }
 
@@ -629,6 +650,9 @@ async def trigger_goal_notifications_worker(
 #   - Verificação de app running para tasks
 #   - I18n completo
 #   - 🔧 Shutdown hook removido (gerenciado pelo main.py)
+#   - 🔧 Validação de secret não vazia
+#   - 🔧 Função validate_admin_secret centralizada
+#   - 🔧 Substituído HTTPException por I18nHTTPException
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Dashboard visual (UI)
@@ -642,5 +666,6 @@ async def trigger_goal_notifications_worker(
 #   - v4: CORRIGIDO - Caminho dos workers para 'app.workers_disabled' (12/07/2026)
 #   - v5: Histórico com paginação, verificação de app running (12/07/2026)
 #   - v6: Shutdown hook removido (agora no main.py) (13/07/2026)
+#   - v6.1: CORREÇÃO - Validação de secret, função validate_admin_secret, I18nHTTPException (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

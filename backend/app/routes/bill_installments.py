@@ -17,7 +17,7 @@ Principais features:
 - Janela de reversão de 30 dias no /unpay
 - Validação de consistência da conta mestra
 
-Versão: v5.1 (refatorado)
+Versão: v5.2 (corrigido - paginate_query com collection_name)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -153,8 +153,14 @@ async def list_installments(
         else:
             query["due_date"] = {"$lte": end_date}
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.bill_installments, query, params, sort=[("due_date", 1)]
+        collection=db.bill_installments,
+        collection_name="bill_installments",
+        query=query,
+        params=params,
+        user_id=str(current_user.id),
+        sort=[("due_date", 1)]
     )
     
     for item in items:
@@ -516,6 +522,10 @@ async def unpay_installment(
 #   - Validação de intervalo de datas
 #   - Fallback para installment_number
 #
+# ✅ CORRIGIDO (18/07/2026):
+#   - 🔧 Adicionado collection_name="bill_installments" no paginate_query
+#   - 🔧 Adicionado user_id no paginate_query
+#
 # ❌ Não implementado (Pós-MVP):
 #   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
 #
@@ -526,5 +536,6 @@ async def unpay_installment(
 #   - v4: Rate limiting, validações (01/07/2026)
 #   - v5: Refatoração - MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS, add_audit_history, validate_date_range movidos (02/07/2026)
 #   - v5.1: Documentação atualizada para novo padrão
+#   - v5.2: CORREÇÃO - collection_name no paginate_query (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

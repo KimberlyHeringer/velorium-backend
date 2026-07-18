@@ -38,6 +38,7 @@ Arquivo: backend/app/indexes.py
 - 🆕 NOVO: Índices para goals (user_id + completed, user_id + category, user_id + recurring, user_id + parent_id, user_id + archived, user_id + deadline, name text)
 - 🆕 NOVO: Índices para goal_notifications (goal_id + threshold + sent_at, user_id + sent_at, sent_at TTL)
 - 🆕 NOVO: Índice para transactions (user_id + goal_id)
+- 🆕 NOVO: Índices para NOTIFICATIONS IN-APP (user_id + created_at, user_id + read + created_at, user_id + type + created_at, user_id + category + created_at, user_id + reference_id, expires_at TTL)
 """
 
 from app.utils.logger import setup_logger
@@ -88,7 +89,6 @@ async def create_indexes(db):
         ("transactions", [("date", -1)]),
         ("transactions", [("user_id", 1), ("date", -1), ("type", 1)]),
         ("transactions", [("user_id", 1), ("category", 1)]),
-        # 🆕 Índice para goal_id
         ("transactions", [("user_id", 1), ("goal_id", 1)]),
     ]
     
@@ -119,18 +119,16 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 4. METAS (GOALS) - 🆕 ATUALIZADO
+    # 4. METAS (GOALS)
     # ================================================================
     indexes = [
-        # Índices existentes
         ("goals", [("user_id", 1), ("completed", 1), ("created_at", -1)]),
         ("goals", [("user_id", 1), ("category", 1)]),
-        # 🆕 Novos índices para funcionalidades de Goals
         ("goals", [("user_id", 1), ("recurring", 1)]),
         ("goals", [("user_id", 1), ("parent_id", 1)]),
         ("goals", [("user_id", 1), ("archived", 1)]),
         ("goals", [("user_id", 1), ("deadline", 1)]),
-        ("goals", [("name", "text")]),  # Busca por texto
+        ("goals", [("name", "text")]),
         ("goals", [("user_id", 1), ("completed", 1), ("archived", 1)]),
     ]
     
@@ -143,7 +141,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
     
     # ================================================================
-    # 5. NOTIFICAÇÕES DE METAS (GOAL_NOTIFICATIONS) - 🆕 NOVO
+    # 5. NOTIFICAÇÕES DE METAS (GOAL_NOTIFICATIONS)
     # ================================================================
     try:
         await db.goal_notifications.create_index([
@@ -650,7 +648,7 @@ async def create_indexes(db):
             logger.warning(f"⚠️ Índice em {collection_name}: {e}", exc_info=True)
 
     # ================================================================
-    # 31. NOTIFICAÇÕES IN-APP (NOTIFICATIONS) - 🆕 NOVO
+    # 31. NOTIFICAÇÕES IN-APP (NOTIFICATIONS) - 🆕 ATUALIZADO
     # ================================================================
     
     try:
@@ -709,8 +707,57 @@ async def create_indexes(db):
         logger.info("✅ Índice TTL para notifications.expires_at criado (expiração automática)")
     except Exception as e:
         logger.warning(f"⚠️ Índice TTL notifications.expires_at: {e}", exc_info=True)
+    
+    # ================================================================
+    # 32. NOTIFICATION LOGS - Cache de insights
+    # ================================================================
+    try:
+        await db.notification_logs.create_index([
+            ("user_id", 1),
+            ("type", 1),
+            ("sent_at", -1)
+        ])
+        logger.info("✅ Índice notification_logs.(user_id, type, sent_at) criado (cache de insights)")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice notification_logs.(user_id, type, sent_at): {e}", exc_info=True)
+    
+    # ================================================================
+    # 33. BILL_INSTALLMENTS - otimização para queries de contas
+    # ================================================================
+    try:
+        await db.bill_installments.create_index([
+            ("user_id", 1),
+            ("due_date", 1),
+            ("paid", 1)
+        ])
+        logger.info("✅ Índice bill_installments.(user_id, due_date, paid) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice bill_installments.(user_id, due_date, paid): {e}", exc_info=True)
 
-        
+    # ================================================================
+    # 34. ACHIEVEMENTS - otimização para queries por período
+    # ================================================================
+    try:
+        await db.achievements.create_index([
+            ("user_id", 1),
+            ("date", -1)
+        ])
+        logger.info("✅ Índice achievements.(user_id, date) criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice achievements.(user_id, date): {e}", exc_info=True)
+
+    # ================================================================
+    # 35. PAGINATION CACHE - limpeza automática
+    # ================================================================
+    try:
+        await db.pagination_cache.create_index(
+            [("expires_at", 1)],
+            expireAfterSeconds=0
+        )
+        logger.info("✅ Índice TTL para pagination_cache.expires_at criado")
+    except Exception as e:
+        logger.warning(f"⚠️ Índice TTL pagination_cache.expires_at: {e}", exc_info=True)
+
     logger.info("✅ Todos os índices foram criados/verificados com sucesso!")
 
 
@@ -751,5 +798,10 @@ async def create_indexes(db):
 # ✅ 🔧 CORRIGIDO: Índice history.expires_at sem partialFilterExpression
 # 🆕 ✅ NOVO: Índices para cache (expires_at TTL, user_id+key unique, key)
 # 🆕 ✅ NOVO: Índices para custom_categories (user_id+value unique, user_id+name, user_id+type, is_deleted)
+# 🆕 ✅ NOVO: Índices para NOTIFICATIONS IN-APP (user_id+created_at, user_id+read+created_at, user_id+type+created_at, user_id+category+created_at, user_id+reference_id, expires_at TTL)
+# 🆕 ✅ NOVO: Índices para NOTIFICATION_LOGS (user_id+type+sent_at para cache de insights)
+# 🆕 ✅ NOVO: Índice para bill_installments (user_id, due_date, paid)
+# 🆕 ✅ NOVO: Índice para achievements (user_id, date)
+# 🆕 ✅ NOVO: Índice TTL para pagination_cache.expires_at
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

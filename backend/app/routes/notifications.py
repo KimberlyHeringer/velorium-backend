@@ -29,10 +29,10 @@ Principais features:
 - Cache de insights (24h)
 - Worker de limpeza de tokens inativos (30 dias)
 - Validação de Expo token
-- 🔧 NOVO: CRUD completo de notificações in-app
+- CRUD completo de notificações in-app
 
-Versão: v2.4 (CRUD adicionado)
-📅 ATUALIZADO EM: 14/07/2026
+Versão: v2.5 (padronização e otimizações)
+📅 ATUALIZADO EM: 18/07/2026
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request, Query
@@ -52,16 +52,17 @@ from app.utils.logger import setup_logger
 from app.utils.currency import from_cents
 from app.services.ia_service import obter_resposta_ia_async
 
-# ========== IMPORTS CORRETOS ==========
+# ========== IMPORTS ==========
 from app.core.constants import INACTIVE_TOKEN_DAYS, EXPO_API_URL
 from app.utils.rate_limiter import limiter, get_user_rate_limit_key
 from app.utils.notifications import send_push_notification
+from app.utils.validators import convert_objectid_to_str  # ← ADICIONADO
 
-# ✅ CORRIGIDO: I18n imports com I18nHTTPException
+# ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
 
-# ✅ CORRIGIDO: Imports do model e schemas (padronizado)
+# ========== MODELOS E SCHEMAS ==========
 from app.models.notification import (
     NotificationType,
     NotificationCategory as NotificationCategoryEnum
@@ -231,6 +232,7 @@ async def send_daily_notifications_worker(db):
     
     for user in users:
         try:
+            user_id = str(user["_id"])
             preferences = user.get("notification_preferences", {})
             categories = preferences.get("categories", ["all"])
             language = preferences.get("language", "pt")
@@ -239,7 +241,7 @@ async def send_daily_notifications_worker(db):
                 skipped_count += 1
                 continue
             
-            insight = await generate_daily_insight(str(user["_id"]), db, language)
+            insight = await generate_daily_insight(user_id, db, language)
             
             titles = {
                 "pt": "💡 Veloria | Insight do Dia",
@@ -267,7 +269,7 @@ async def send_daily_notifications_worker(db):
                     if success:
                         sent_count += 1
                         await db.notification_logs.insert_one({
-                            "user_id": str(user["_id"]),
+                            "user_id": user_id,
                             "type": "daily_insight",
                             "message": insight,
                             "language": language,
@@ -328,9 +330,8 @@ async def cleanup_inactive_tokens_worker(db):
     return result.modified_count
 
 
-# ========== 🆕 FUNÇÃO AUXILIAR CRUD ==========
+# ========== FUNÇÃO AUXILIAR CRUD ==========
 
-# ✅ CORRIGIDO: Adicionado request como parâmetro
 async def _get_notification_or_404(notification_id: str, user_id: str, db, request: Request) -> dict:
     """
     Busca uma notificação e valida ownership.
@@ -353,14 +354,12 @@ async def _get_notification_or_404(notification_id: str, user_id: str, db, reque
             "_id": ObjectId(notification_id)
         })
     except:
-        # ✅ CORRIGIDO: Passando request
         raise NotFoundException(
             message_key="ERROR_NOTIFICATION_NOT_FOUND",
             request=request
         )
     
     if not notification:
-        # ✅ CORRIGIDO: Passando request
         raise NotFoundException(
             message_key="ERROR_NOTIFICATION_NOT_FOUND",
             request=request
@@ -386,8 +385,9 @@ async def register_push_token(
     db=Depends(get_database)
 ):
     """Registra o token de push notification do dispositivo."""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
         user = await db.users.find_one({"_id": ObjectId(current_user.id)})
@@ -421,7 +421,7 @@ async def register_push_token(
                     }
                 }
             )
-            logger.info(f"✅ Token registrado para usuário {current_user.id} - Dispositivo: {token_data.device_name or 'desconhecido'}")
+            logger.info(f"✅ Token registrado para usuário {user_id} - Dispositivo: {token_data.device_name or 'desconhecido'}")
         else:
             for t in tokens:
                 if t.get("token") == token_data.token:
@@ -438,7 +438,7 @@ async def register_push_token(
                     }
                 }
             )
-            logger.info(f"🔄 Token reativado para usuário {current_user.id}")
+            logger.info(f"🔄 Token reativado para usuário {user_id}")
         
         return NotificationResponse(
             success=True,
@@ -461,14 +461,15 @@ async def enable_notifications(
     db=Depends(get_database)
 ):
     """Ativa notificações push para o usuário"""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     await db.users.update_one(
         {"_id": ObjectId(current_user.id)},
         {"$set": {"push_enabled": True, "push_updated_at": datetime.now(timezone.utc)}}
     )
-    logger.info(f"✅ Notificações ativadas para usuário {current_user.id}")
+    logger.info(f"✅ Notificações ativadas para usuário {user_id}")
     return NotificationResponse(
         success=True,
         message=get_message("SUCCESS_NOTIFICATIONS_ENABLED", language)
@@ -483,14 +484,15 @@ async def disable_notifications(
     db=Depends(get_database)
 ):
     """Desativa notificações push para o usuário (mantém os tokens)"""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     await db.users.update_one(
         {"_id": ObjectId(current_user.id)},
         {"$set": {"push_enabled": False, "push_updated_at": datetime.now(timezone.utc)}}
     )
-    logger.info(f"🔕 Notificações desativadas para usuário {current_user.id}")
+    logger.info(f"🔕 Notificações desativadas para usuário {user_id}")
     return NotificationResponse(
         success=True,
         message=get_message("SUCCESS_NOTIFICATIONS_DISABLED", language)
@@ -506,8 +508,9 @@ async def send_test_notification(
     db=Depends(get_database)
 ):
     """Envia uma notificação de teste para o dispositivo do usuário."""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
@@ -534,7 +537,7 @@ async def send_test_notification(
     )
     
     if success:
-        logger.info(f"✅ Notificação de teste enviada para usuário {current_user.id}")
+        logger.info(f"✅ Notificação de teste enviada para usuário {user_id}")
         return NotificationResponse(
             success=True,
             message=get_message("SUCCESS_TEST_NOTIFICATION_SENT", language)
@@ -554,6 +557,8 @@ async def get_notification_status(
     db=Depends(get_database)
 ):
     """Retorna o status das notificações do usuário."""
+    user_id = str(current_user.id)
+    
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     
     if not user:
@@ -575,7 +580,7 @@ async def get_notification_status(
     language = preferences.get("language", "pt")
     
     last_notification = await db.notification_logs.find_one(
-        {"user_id": current_user.id, "success": True},
+        {"user_id": user_id, "success": True},
         sort=[("sent_at", -1)]
     )
     
@@ -599,8 +604,9 @@ async def update_notification_preferences(
     db=Depends(get_database)
 ):
     """Atualiza as preferências de notificação do usuário."""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
@@ -630,7 +636,7 @@ async def update_notification_preferences(
         {"$set": update_data}
     )
     
-    logger.info(f"✅ Preferências atualizadas para usuário {current_user.id}")
+    logger.info(f"✅ Preferências atualizadas para usuário {user_id}")
     return NotificationResponse(
         success=True,
         message=get_message("SUCCESS_PREFERENCES_UPDATED", language)
@@ -647,8 +653,9 @@ async def trigger_daily_notifications(
     db=Depends(get_database)
 ):
     """Endpoint para acionar o worker de notificações diárias."""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
     
@@ -674,7 +681,7 @@ async def trigger_daily_notifications(
                 request=request
             )
     
-    logger.info(f"🔔 Trigger manual de notificações diárias solicitado por {current_user.id}")
+    logger.info(f"🔔 Trigger manual de notificações diárias solicitado por {user_id}")
     
     background_tasks.add_task(send_daily_notifications_worker, db)
     
@@ -693,8 +700,9 @@ async def cleanup_inactive_tokens(
     db=Depends(get_database)
 ):
     """Endpoint para limpar tokens inativos (mais de 30 dias)."""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
     
@@ -719,7 +727,7 @@ async def cleanup_inactive_tokens(
                 request=request
             )
     
-    logger.info(f"🧹 Limpeza de tokens inativos solicitada por {current_user.id}")
+    logger.info(f"🧹 Limpeza de tokens inativos solicitada por {user_id}")
     
     removed = await cleanup_inactive_tokens_worker(db)
     
@@ -746,17 +754,18 @@ async def get_notifications(
     """
     Lista notificações do usuário com paginação.
     
-    🔧 FILTROS:
+    Filtros:
       - unread_only: Apenas não lidas
       - type: Filtrar por tipo (bill, goal, etc)
       - category: Filtrar por categoria (finance, goals, etc)
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
         # Monta query
-        query = {"user_id": str(current_user.id)}
+        query = {"user_id": user_id}
         
         if unread_only:
             query["read"] = False
@@ -796,10 +805,10 @@ async def get_notifications(
         cursor = db.notifications.find(query).sort("created_at", -1).skip(skip).limit(limit)
         notifications = await cursor.to_list(limit)
         
-        # Converte para response
+        # 🔧 CORRIGIDO: Usa convert_objectid_to_str
         items = []
         for notif in notifications:
-            notif["_id"] = str(notif["_id"])
+            notif = convert_objectid_to_str(notif)
             items.append(NotificationInAppResponse(**notif))
         
         has_more = total > (page * limit)
@@ -832,9 +841,11 @@ async def get_unread_count(
     """
     Retorna a contagem de notificações não lidas.
     """
+    user_id = str(current_user.id)
+    
     try:
         count = await db.notifications.count_documents({
-            "user_id": str(current_user.id),
+            "user_id": user_id,
             "read": False
         })
         
@@ -860,19 +871,20 @@ async def get_notification(
     """
     Busca uma notificação específica.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
-        # ✅ CORRIGIDO: Passando request
         notification = await _get_notification_or_404(
             notification_id,
-            str(current_user.id),
+            user_id,
             db,
             request
         )
         
-        notification["_id"] = str(notification["_id"])
+        # 🔧 CORRIGIDO: Usa convert_objectid_to_str
+        notification = convert_objectid_to_str(notification)
         return NotificationInAppResponse(**notification)
         
     except (NotFoundException, ValidationException):
@@ -897,21 +909,21 @@ async def mark_notification_as_read(
     """
     Marca uma notificação como lida.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
-        # ✅ CORRIGIDO: Passando request
         notification = await _get_notification_or_404(
             notification_id,
-            str(current_user.id),
+            user_id,
             db,
             request
         )
         
         if notification.get("read", False):
             # Já está lida, retorna como está
-            notification["_id"] = str(notification["_id"])
+            notification = convert_objectid_to_str(notification)
             return NotificationInAppResponse(**notification)
         
         # Atualiza
@@ -929,7 +941,7 @@ async def mark_notification_as_read(
         
         # Busca a notificação atualizada
         updated = await db.notifications.find_one({"_id": ObjectId(notification_id)})
-        updated["_id"] = str(updated["_id"])
+        updated = convert_objectid_to_str(updated)
         
         logger.info(f"✅ Notificação {notification_id} marcada como lida")
         return NotificationInAppResponse(**updated)
@@ -955,14 +967,15 @@ async def mark_all_notifications_as_read(
     """
     Marca todas as notificações do usuário como lidas.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
         now = datetime.now(timezone.utc)
         result = await db.notifications.update_many(
             {
-                "user_id": str(current_user.id),
+                "user_id": user_id,
                 "read": False
             },
             {
@@ -976,7 +989,7 @@ async def mark_all_notifications_as_read(
         
         updated_count = result.modified_count
         
-        logger.info(f"✅ {updated_count} notificações marcadas como lidas para usuário {current_user.id}")
+        logger.info(f"✅ {updated_count} notificações marcadas como lidas para usuário {user_id}")
         
         return ReadAllResponse(
             success=True,
@@ -1004,14 +1017,14 @@ async def delete_notification(
     """
     Deleta uma notificação.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
-        # ✅ CORRIGIDO: Passando request
         await _get_notification_or_404(
             notification_id,
-            str(current_user.id),
+            user_id,
             db,
             request
         )
@@ -1059,15 +1072,18 @@ async def run_cleanup_tokens_scheduler(db):
 #   - Validação de Expo token
 #   - Literal para device_platform
 #   - Forçar ADMIN_SECRET em produção
-#   - 🆕 CRUD completo de notificações in-app
-#   - 🆕 Paginação com filtros
-#   - 🆕 Contagem de não lidas
-#   - 🆕 Marcar todas como lidas
+#   - CRUD completo de notificações in-app
+#   - Paginação com filtros
+#   - Contagem de não lidas
+#   - Marcar todas como lidas
+#   - 🔧 convert_objectid_to_str padronizado
+#   - 🔧 user_id padronizado em todo o arquivo
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Scheduler automático (APScheduler) - já existe em scheduler.py
 #   - Agendamento personalizado
 #   - Analytics de abertura
+#   - Índices para notification_logs (adicionar em indexes.py)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -1077,5 +1093,6 @@ async def run_cleanup_tokens_scheduler(db):
 #   - v2.3: Refatoração - constants, rate_limiter, notifications utils (02/07/2026)
 #   - v2.4: Adicionado CRUD in-app (13/07/2026)
 #   - v2.4.1: Correção de imports e request no i18n (14/07/2026)
+#   - v2.5: Padronização - convert_objectid_to_str, user_id (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

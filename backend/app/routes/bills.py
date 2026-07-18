@@ -18,7 +18,7 @@ Principais features:
 - Validação de due_day, start_date e amount
 - Cálculo automático de parcela atual
 
-Versão: v5.1 (refatorado)
+Versão: v5.2 (corrigido - paginate_query com collection_name)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
@@ -331,8 +331,14 @@ async def list_bills(
     sort_field = sort_field_mapping.get(sort_by, "created_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.bills, query, params, sort=[(sort_field, sort_direction)]
+        collection=db.bills,
+        collection_name="bills",
+        query=query,
+        params=params,
+        user_id=str(current_user.id),
+        sort=[(sort_field, sort_direction)]
     )
     
     for item in items:
@@ -587,6 +593,10 @@ async def delete_bill(
 #   - Cálculo automático de parcela atual
 #   - Mapeamento de sort_by: due_date → installments.start_date
 #
+# ✅ CORRIGIDO (18/07/2026):
+#   - 🔧 Adicionado collection_name="bills" no paginate_query
+#   - 🔧 Adicionado user_id no paginate_query
+#
 # ❌ Não implementado (Pós-MVP):
 #   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
 #
@@ -597,5 +607,6 @@ async def delete_bill(
 #   - v4: Rate limiting, validações (01/07/2026)
 #   - v5: Refatoração - constantes, audit, installments, date_utils (02/07/2026)
 #   - v5.1: Documentação atualizada para novo padrão
+#   - v5.2: CORREÇÃO - collection_name no paginate_query (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

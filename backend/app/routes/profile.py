@@ -6,23 +6,25 @@ Funcionalidades:
 - GET /profile: Buscar perfil financeiro do usuário
 - POST /profile: Criar perfil financeiro do usuário
 - PUT /profile: Atualizar perfil financeiro do usuário
+- HEAD /profile: Verificar se perfil existe
 
 Principais features:
 - I18n completo com suporte a 4 idiomas
 - Rate limiting (get: 30/min, post: 20/min, put: 20/min)
-- 🔧 NOVO: Cache Redis para perfil (TTL: 5 minutos)
-- 🔧 NOVO: Invalidação automática de cache ao atualizar
-- 🔧 NOVO: PUT para atualização (semântica REST)
+- Cache Redis para perfil (TTL: 5 minutos)
+- Invalidação automática de cache ao atualizar
+- PUT para atualização (semântica REST)
 - Validação de campos Literal via Pydantic
 - Validação de existência do usuário no POST/PUT
 - Fallback seguro para perfil vazio
 - SEM history (modo individual)
 
-Versão: v5.2 (correções de import e documentação)
-📅 ATUALIZADO EM: 14/07/2026
+Versão: v5.3 (correções de imports e validações)
+📅 ATUALIZADO EM: 18/07/2026
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
+from fastapi import APIRouter, Depends, status, Request, Response
+# 🔧 CORRIGIDO: Removido HTTPException (não usado)
 from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -49,7 +51,7 @@ from app.utils.profile_utils import (
 
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
-from app.utils.i18n import get_message
+# 🔧 CORRIGIDO: Removido get_message (não usado)
 
 logger = setup_logger(__name__)
 
@@ -79,6 +81,31 @@ async def _invalidate_profile_cache(user_id: str) -> None:
     await invalidate_profile_cache(user_id)
 
 
+async def _validate_user_exists(user_id: str, db, request: Request) -> bool:
+    """
+    Valida se o usuário existe no banco.
+    
+    Args:
+        user_id: ID do usuário
+        db: Conexão com o banco
+        request: Request do FastAPI (para i18n)
+    
+    Returns:
+        bool: True se existe
+    
+    Raises:
+        NotFoundException: Se usuário não existir
+    """
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        logger.warning(f"⚠️ Usuário não encontrado: {user_id}")
+        raise NotFoundException(
+            message_key="ERROR_USER_NOT_FOUND",
+            request=request
+        )
+    return True
+
+
 # ========== ENDPOINTS ==========
 
 @router.get("/", response_model=UserProfileResponse)
@@ -97,7 +124,6 @@ async def get_profile(
     - Se encontrar no MongoDB, salva no cache
     - Fallback para perfil vazio se nada for encontrado
     """
-    language = getattr(request.state, "language", "pt")
     user_id = str(current_user.id)
     request.state.user_id = user_id
     
@@ -118,9 +144,11 @@ async def get_profile(
             if profile:
                 # 🔧 Salva no cache para próximas requisições
                 await _save_profile_to_cache(user_id, profile)
-                logger.debug(f"💾 Perfil salvo no cache para usuário {user_id}")
+                logger.info(f"💾 Perfil salvo no cache para usuário {user_id} (cache miss)")
+            else:
+                logger.info(f"ℹ️ Nenhum perfil encontrado para usuário {user_id}")
         else:
-            logger.debug(f"✅ Cache hit para perfil do usuário {user_id}")
+            logger.info(f"✅ Cache hit para perfil do usuário {user_id}")
         
         # Prepara a resposta usando o utilitário
         result = prepare_profile_response(profile, user_id)
@@ -141,7 +169,7 @@ async def get_profile(
         return UserProfileResponse(**empty_profile).model_dump()
 
 
-@router.post("/", response_model=UserProfileResponse)
+@router.post("/", response_model=UserProfileResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit("20/minute", key_func=get_user_rate_limit_key)
 async def create_profile(
     request: Request,
@@ -157,7 +185,6 @@ async def create_profile(
     - Se o perfil já existir, retorna erro 409 (Conflict)
     - Segue a semântica REST: POST = criar
     """
-    language = getattr(request.state, "language", "pt")
     user_id = str(current_user.id)
     request.state.user_id = user_id
     
@@ -165,14 +192,8 @@ async def create_profile(
     logger.debug(f"📝 Dados recebidos: {profile_data.model_dump(exclude_unset=True)}")
     
     try:
-        # Verifica se o usuário existe
-        user = await db.users.find_one({"_id": ObjectId(current_user.id)})
-        if not user:
-            logger.warning(f"⚠️ Usuário não encontrado ao criar perfil: {user_id}")
-            raise NotFoundException(
-                message_key="ERROR_USER_NOT_FOUND",
-                request=request
-            )
+        # 🔧 Verifica se o usuário existe
+        await _validate_user_exists(user_id, db, request)
         
         # Garante que a coleção existe
         await ensure_profile_collection(db)
@@ -205,7 +226,7 @@ async def create_profile(
         
         # 🔧 Salva no cache para próximas requisições
         await _save_profile_to_cache(user_id, profile_dict)
-        logger.debug(f"💾 Perfil salvo no cache para usuário {user_id}")
+        logger.info(f"💾 Perfil salvo no cache para usuário {user_id}")
         
         # Prepara a resposta
         result_dict = prepare_profile_response(profile_dict)
@@ -254,22 +275,14 @@ async def update_profile(
     - Se o perfil não existir, retorna erro 404 (Not Found)
     - Segue a semântica REST: PUT = atualizar
     """
-    language = getattr(request.state, "language", "pt")
     user_id = str(current_user.id)
     request.state.user_id = user_id
     
     logger.info(f"📝 Atualizando perfil para usuário: {user_id}")
-    logger.debug(f"📝 Dados recebidos: {profile_data.model_dump(exclude_unset=True)}")
     
     try:
-        # Verifica se o usuário existe
-        user = await db.users.find_one({"_id": ObjectId(current_user.id)})
-        if not user:
-            logger.warning(f"⚠️ Usuário não encontrado ao atualizar perfil: {user_id}")
-            raise NotFoundException(
-                message_key="ERROR_USER_NOT_FOUND",
-                request=request
-            )
+        # 🔧 Verifica se o usuário existe
+        await _validate_user_exists(user_id, db, request)
         
         # Garante que a coleção existe
         await ensure_profile_collection(db)
@@ -283,14 +296,20 @@ async def update_profile(
                 request=request
             )
         
-        now = datetime.now(timezone.utc)
-        
-        # Prepara os dados do perfil
+        # 🔧 CORRIGIDO: Valida se há dados para atualizar
         profile_dict = profile_data.model_dump(exclude_unset=True)
-        profile_dict["user_id"] = user_id
-        profile_dict["updated_at"] = now
+        if not profile_dict:
+            logger.warning(f"⚠️ Nenhum dado para atualizar para usuário {user_id}")
+            raise ValidationException(
+                message_key="ERROR_NO_DATA_TO_UPDATE",
+                request=request
+            )
         
         logger.debug(f"📋 Dados validados: {profile_dict}")
+        
+        now = datetime.now(timezone.utc)
+        profile_dict["user_id"] = user_id
+        profile_dict["updated_at"] = now
         
         # Atualiza o perfil
         await db.user_profiles.update_one(
@@ -300,7 +319,7 @@ async def update_profile(
         
         # 🔧 Invalida cache após atualização
         await _invalidate_profile_cache(user_id)
-        logger.debug(f"🗑️ Cache invalidado para usuário {user_id}")
+        logger.info(f"🗑️ Cache invalidado para usuário {user_id}")
         
         # Monta o resultado com os dados existentes + atualizados
         profile_dict["_id"] = existing["_id"]
@@ -310,7 +329,7 @@ async def update_profile(
         
         # 🔧 Salva no cache para próximas requisições
         await _save_profile_to_cache(user_id, profile_dict)
-        logger.debug(f"💾 Perfil salvo no cache para usuário {user_id}")
+        logger.info(f"💾 Perfil salvo no cache para usuário {user_id}")
         
         # Prepara a resposta
         result_dict = prepare_profile_response(profile_dict)
@@ -341,7 +360,6 @@ async def update_profile(
         )
 
 
-# ✅ CORRIGIDO: Adicionado Response import e documentação
 @router.head(
     "/",
     description="Verifica se o perfil existe. Retorna 200 se existe, 404 se não existe.",
@@ -363,16 +381,19 @@ async def head_profile(
     user_id = str(current_user.id)
     
     try:
-        # Verifica se o perfil existe no cache primeiro
+        # 🔧 Verifica se o perfil existe no cache primeiro
         cached = await get_cached_profile(user_id, db)
         if cached is not None:
+            logger.debug(f"✅ HEAD - Perfil encontrado no cache para usuário {user_id}")
             return Response(status_code=status.HTTP_200_OK)
         
-        # Verifica no MongoDB
+        # 🔧 Verifica no MongoDB
         profile = await db.user_profiles.find_one({"user_id": user_id})
         if profile:
+            logger.debug(f"✅ HEAD - Perfil encontrado no MongoDB para usuário {user_id}")
             return Response(status_code=status.HTTP_200_OK)
         else:
+            logger.debug(f"ℹ️ HEAD - Perfil NÃO encontrado para usuário {user_id}")
             return Response(status_code=status.HTTP_404_NOT_FOUND)
             
     except Exception as e:
@@ -425,14 +446,18 @@ async def head_profile(
 #   - Cache Redis com TTL (5 minutos)
 #   - Invalidação automática de cache
 #   - Cache hit/miss com logs
-#   - 🔧 NOVO: POST para criar (201 Created)
-#   - 🔧 NOVO: PUT para atualizar (200 OK)
-#   - 🔧 NOVO: HEAD para verificar existência
-#   - 🔧 NOVO: Erro 409 se perfil já existe no POST
-#   - 🔧 NOVO: Erro 404 se perfil não existe no PUT
-#   - 🔧 NOVO: Funções auxiliares _get_existing_profile, _save_profile_to_cache, _invalidate_profile_cache
-#   - 🔧 CORRIGIDO: Import do Response adicionado
-#   - 🔧 CORRIGIDO: Documentação do HEAD endpoint
+#   - POST para criar (201 Created)
+#   - PUT para atualizar (200 OK)
+#   - HEAD para verificar existência
+#   - Erro 409 se perfil já existe no POST
+#   - Erro 404 se perfil não existe no PUT
+#   - Funções auxiliares _get_existing_profile, _save_profile_to_cache, _invalidate_profile_cache
+#   - Função _validate_user_exists centralizada
+#   - Validação de dados vazios no PUT
+#   - 🔧 CORRIGIDO: Removido HTTPException (não usado)
+#   - 🔧 CORRIGIDO: Removido get_message (não usado)
+#   - 🔧 CORRIGIDO: Adicionado status_code=201 no POST
+#   - 🔧 CORRIGIDO: Logs com níveis apropriados (info para cache hit/miss)
 #
 # ❌ Não implementado (Pós-MVP):
 #   - updated_by (modo individual não precisa)
@@ -447,5 +472,6 @@ async def head_profile(
 #   - v5.0: ADICIONADO - Cache Redis (06/07/2026)
 #   - v5.1: ADICIONADO - PUT, HEAD, POST separado, semântica REST (14/07/2026)
 #   - v5.2: CORREÇÃO - import Response, documentação HEAD (14/07/2026)
+#   - v5.3: CORREÇÃO - removido imports não usados, validação de dados vazios, logs melhorados (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

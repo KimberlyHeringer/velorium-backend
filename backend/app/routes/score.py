@@ -16,15 +16,17 @@ Principais features:
 - Métricas de performance
 - SEM TTL (dados históricos mantidos)
 
-Versão: v5 (refatorado)
+Versão: v5.1 (corrigido paginate_query e imports)
+📅 ATUALIZADO EM: 18/07/2026
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, Request, BackgroundTasks
+# 🔧 CORRIGIDO: Removido HTTPException (não usado)
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List
 import os
-import json
+# 🔧 CORRIGIDO: Removido json (não usado)
 import time
 import asyncio
 
@@ -96,12 +98,18 @@ async def run_daily_score_worker(db):
     
     if not active_users:
         logger.info("ℹ️ Nenhum usuário ativo encontrado")
-        return {"updated": 0, "failed": 0}
+        return {"updated": 0, "failed": 0, "total": 0}
     
     updated_count = 0
     failed_count = 0
+    skipped_count = 0
     
     for user_id in active_users:
+        # 🔧 CORRIGIDO: Valida se user_id é string
+        if not user_id:
+            skipped_count += 1
+            continue
+            
         user_id_str = str(user_id)
         success = False
         
@@ -164,8 +172,9 @@ async def run_daily_score_worker(db):
                     logger.warning(f"⚠️ Tentativa {attempt + 1} falhou para {user_id_str}, tentando novamente em {wait_time}s")
                     await asyncio.sleep(wait_time)
     
-    logger.info(f"✅ Worker finalizado: {updated_count} atualizados, {failed_count} falhas")
-    return {"updated": updated_count, "failed": failed_count}
+    # 🔧 CORRIGIDO: Log resumido com estatísticas
+    logger.info(f"✅ Worker finalizado: {updated_count} atualizados, {failed_count} falhas, {skipped_count} ignorados")
+    return {"updated": updated_count, "failed": failed_count, "skipped": skipped_count, "total": len(active_users)}
 
 
 # ========== ENDPOINTS ==========
@@ -180,11 +189,11 @@ async def get_current_score(
     """
     Retorna o score atual do usuário (COM CACHE).
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
-        user_id = str(current_user.id)
         result = await get_score_with_cache(user_id, db)
         
         logger.debug(f"✅ Score para usuário {user_id}: {result.get('score', 0)} (cache: {result.get('from_cache', False)})")
@@ -197,7 +206,7 @@ async def get_current_score(
         )
         
     except Exception as e:
-        logger.error(f"❌ Erro ao obter score para usuário {current_user.id}: {e}")
+        logger.error(f"❌ Erro ao obter score para usuário {user_id}: {e}")
         import traceback
         logger.debug(f"Detalhes do erro no score: {traceback.format_exc()}")
         raise I18nHTTPException(
@@ -221,12 +230,13 @@ async def get_score_history(
     """
     Retorna o histórico de scores do usuário com paginação e ordenação.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
         params = PaginationParams(page=page, limit=limit)
-        query = {"user_id": str(current_user.id)}
+        query = {"user_id": user_id}
         
         sort_field_mapping = {
             "created_at": "created_at",
@@ -235,17 +245,23 @@ async def get_score_history(
         sort_field = sort_field_mapping.get(sort_by, "created_at")
         sort_direction = -1 if sort_order == "desc" else 1
 
+        # 🔧 CORRIGIDO: Adicionado collection_name e user_id
         items, total = await paginate_query(
-            db.score_history, query, params, sort=[(sort_field, sort_direction)]
+            collection=db.score_history,
+            collection_name="score_history",      # ← ADICIONADO
+            query=query,
+            params=params,
+            user_id=user_id,                      # ← ADICIONADO
+            sort=[(sort_field, sort_direction)]
         )
         
         formatted_items = [convert_objectid_to_str(item) for item in items]
         
-        logger.debug(f"📊 Histórico de score listado para usuário {current_user.id}: {len(formatted_items)} registros")
+        logger.debug(f"📊 Histórico de score listado para usuário {user_id}: {len(formatted_items)} registros")
         return paginate(formatted_items, total, params).model_dump()
         
     except Exception as e:
-        logger.error(f"❌ Erro ao buscar histórico de score para usuário {current_user.id}: {e}")
+        logger.error(f"❌ Erro ao buscar histórico de score para usuário {user_id}: {e}")
         import traceback
         logger.debug(f"Detalhes do erro no histórico: {traceback.format_exc()}")
         raise I18nHTTPException(
@@ -266,12 +282,11 @@ async def invalidate_cache(
     """
     Webhook para invalidar cache do score.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     try:
-        user_id = str(current_user.id)
-        
         await invalidate_cache_redis(user_id)
         
         now = datetime.now(timezone.utc)
@@ -291,7 +306,7 @@ async def invalidate_cache(
         }
         
     except Exception as e:
-        logger.error(f"❌ Erro ao invalidar cache para usuário {current_user.id}: {e}")
+        logger.error(f"❌ Erro ao invalidar cache para usuário {user_id}: {e}")
         raise I18nHTTPException(
             status_code=500,
             message_key="ERROR_SERVER",
@@ -311,8 +326,9 @@ async def trigger_daily_worker(
     """
     Endpoint para acionar o worker diário de score manualmente.
     """
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
     
@@ -337,7 +353,7 @@ async def trigger_daily_worker(
                 request=request
             )
     
-    logger.info(f"🔔 Trigger manual do worker diário solicitado por {current_user.id}")
+    logger.info(f"🔔 Trigger manual do worker diário solicitado por {user_id}")
     
     background_tasks.add_task(run_daily_score_worker, db)
     
@@ -358,10 +374,15 @@ async def trigger_daily_worker(
 #   - SEM TTL (dados históricos mantidos)
 #   - Webhook /invalidate-cache
 #   - Funções de cache centralizadas em utils/score_cache.py
+#   - 🔧 paginate_query com collection_name e user_id
+#   - 🔧 Validação de user_id no worker
+#   - 🔧 Log resumido com estatísticas
+#   - 🔧 Removido imports não utilizados
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Redis com fallback para MongoDB (já tem)
 #   - Cache com TTL no MongoDB (decisão: SEM TTL)
+#   - Métricas de cache hit/miss (em score_cache.py)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -369,5 +390,7 @@ async def trigger_daily_worker(
 #   - v3: Rate limiting, cache Redis (30/06/2026)
 #   - v4: Correções de created_at, upsert (01/07/2026)
 #   - v5: Refatoração - constants, rate_limiter, score_cache (02/07/2026)
+#   - v5.1: CORREÇÃO - Adicionado collection_name e user_id no paginate_query (18/07/2026)
+#   - v5.2: CORREÇÃO - Removido imports não usados, validação user_id, logs melhorados (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

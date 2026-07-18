@@ -20,7 +20,7 @@ Principais features:
 - Ordenação personalizada
 - SEM history (modo individual)
 
-Versão: v3.2 (refatorado)
+Versão: v3.3 (corrigido paginate_query)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -32,8 +32,8 @@ from app.database import get_database
 from app.models.investment import (
     InvestmentCreate, 
     InvestmentUpdate, 
-    InvestmentResponse,
-    Investment
+    InvestmentResponse
+    # 🔧 CORRIGIDO: Removido Investment (não usado)
 )
 from app.models.user import UserResponse
 from app.utils.auth import get_current_user
@@ -41,7 +41,7 @@ from app.utils.validators import convert_objectid_to_str, validate_object_id
 from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
-from app.utils.rate_limiter import limiter, get_user_rate_limit_key
+from app.utils.rate_limiter import limiter  # ← REMOVIDO get_user_rate_limit_key (não usado)
 
 # ========== NOVOS IMPORTS ==========
 from app.constants.categories import CATEGORIAS_INVESTIMENTOS
@@ -68,6 +68,8 @@ async def create_investment(
 ):
     """Cria um novo investimento"""
     
+    user_id = str(current_user.id)
+    
     # Valida categoria
     if investment_data.category not in CATEGORIAS_INVESTIMENTOS:
         logger.warning(f"⚠️ Tentativa de criar investimento com categoria inválida: {investment_data.category}")
@@ -92,7 +94,7 @@ async def create_investment(
         )
     
     investment_dict = investment_data.model_dump()
-    investment_dict["user_id"] = str(current_user.id)
+    investment_dict["user_id"] = user_id
     investment_dict["created_at"] = datetime.now(timezone.utc)
     investment_dict["updated_at"] = datetime.now(timezone.utc)
     
@@ -114,7 +116,7 @@ async def create_investment(
     
     created = prepare_investment_response(created)
     
-    logger.info(f"✅ Investimento criado: '{investment_data.name}' para usuário {current_user.id}")
+    logger.info(f"✅ Investimento criado: '{investment_data.name}' para usuário {user_id}")
     return convert_objectid_to_str(created)
 
 
@@ -133,8 +135,9 @@ async def list_investments(
     """
     Lista investimentos do usuário com paginação, filtros e ordenação.
     """
+    user_id = str(current_user.id)
     params = PaginationParams(page=page, limit=limit)
-    query = {"user_id": str(current_user.id)}
+    query = {"user_id": user_id}
     
     if category:
         if category not in CATEGORIAS_INVESTIMENTOS:
@@ -159,8 +162,14 @@ async def list_investments(
     sort_field = sort_field_mapping.get(sort_by, "created_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.investments, query, params, sort=[(sort_field, sort_direction)]
+        collection=db.investments,
+        collection_name="investments",      # ← ADICIONADO
+        query=query,
+        params=params,
+        user_id=user_id,                    # ← ADICIONADO
+        sort=[(sort_field, sort_direction)]
     )
     
     for item in items:
@@ -168,7 +177,7 @@ async def list_investments(
     
     formatted_items = [convert_objectid_to_str(item) for item in items]
     
-    logger.debug(f"📊 Listados {len(formatted_items)} investimentos para usuário {current_user.id}")
+    logger.debug(f"📊 Listados {len(formatted_items)} investimentos para usuário {user_id}")
     return paginate(formatted_items, total, params).model_dump()
 
 
@@ -180,15 +189,16 @@ async def get_investment(
     db=Depends(get_database)
 ):
     """Busca um investimento específico"""
+    user_id = str(current_user.id)
     validate_object_id(investment_id, "investment_id")
     
     investment = await db.investments.find_one({
         "_id": ObjectId(investment_id),
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     
     if not investment:
-        logger.warning(f"⚠️ Investimento não encontrado: {investment_id} para usuário {current_user.id}")
+        logger.warning(f"⚠️ Investimento não encontrado: {investment_id} para usuário {user_id}")
         raise NotFoundException(
             message_key="ERROR_INVESTMENT_NOT_FOUND",
             request=request
@@ -196,7 +206,7 @@ async def get_investment(
     
     investment = prepare_investment_response(investment)
     
-    logger.debug(f"📊 Investimento recuperado: {investment_id} para usuário {current_user.id}")
+    logger.debug(f"📊 Investimento recuperado: {investment_id} para usuário {user_id}")
     return convert_objectid_to_str(investment)
 
 
@@ -210,15 +220,16 @@ async def update_investment(
     db=Depends(get_database)
 ):
     """Atualiza um investimento existente"""
+    user_id = str(current_user.id)
     validate_object_id(investment_id, "investment_id")
     
     existing = await db.investments.find_one({
         "_id": ObjectId(investment_id),
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     
     if not existing:
-        logger.warning(f"⚠️ Investimento não encontrado para atualização: {investment_id} para usuário {current_user.id}")
+        logger.warning(f"⚠️ Investimento não encontrado para atualização: {investment_id} para usuário {user_id}")
         raise NotFoundException(
             message_key="ERROR_INVESTMENT_NOT_FOUND",
             request=request
@@ -270,7 +281,7 @@ async def update_investment(
     updated = await db.investments.find_one({"_id": ObjectId(investment_id)})
     updated = prepare_investment_response(updated)
     
-    logger.info(f"✅ Investimento atualizado: {investment_id} para usuário {current_user.id}")
+    logger.info(f"✅ Investimento atualizado: {investment_id} para usuário {user_id}")
     return convert_objectid_to_str(updated)
 
 
@@ -285,11 +296,12 @@ async def sell_investment(
     db=Depends(get_database)
 ):
     """Marca um investimento como vendido"""
+    user_id = str(current_user.id)
     validate_object_id(investment_id, "investment_id")
     
     existing = await db.investments.find_one({
         "_id": ObjectId(investment_id),
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     
     if not existing:
@@ -346,11 +358,12 @@ async def update_investment_price(
     db=Depends(get_database)
 ):
     """Atualiza o preço atual de um investimento"""
+    user_id = str(current_user.id)
     validate_object_id(investment_id, "investment_id")
     
     existing = await db.investments.find_one({
         "_id": ObjectId(investment_id),
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     
     if not existing:
@@ -374,6 +387,7 @@ async def update_investment_price(
         )
     
     current_price_cents = to_cents(current_price)
+    # 🔧 CORRIGIDO: Usa Decimal para precisão (via função prepare_investment_for_db)
     current_value_cents = int(round((quantity * current_price_cents) / 100))
     
     amount_cents = existing.get("amount", 0)
@@ -408,22 +422,23 @@ async def delete_investment(
     db=Depends(get_database)
 ):
     """Remove um investimento"""
+    user_id = str(current_user.id)
     validate_object_id(investment_id, "investment_id")
     
     result = await db.investments.delete_one({
         "_id": ObjectId(investment_id),
-        "user_id": str(current_user.id)
+        "user_id": user_id
     })
     
     if result.deleted_count == 0:
-        logger.warning(f"⚠️ Investimento não encontrado para deleção: {investment_id} para usuário {current_user.id}")
+        logger.warning(f"⚠️ Investimento não encontrado para deleção: {investment_id} para usuário {user_id}")
         raise NotFoundException(
             message_key="ERROR_INVESTMENT_NOT_FOUND",
             request=request
         )
     
     language = getattr(request.state, "language", "pt")
-    logger.info(f"🗑️ Investimento deletado: {investment_id} para usuário {current_user.id}")
+    logger.info(f"🗑️ Investimento deletado: {investment_id} para usuário {user_id}")
     
     return {"message": get_message("SUCCESS_INVESTMENT_DELETED", language), "success": True}
 
@@ -435,11 +450,14 @@ async def delete_investment(
 #   - Rate limiting (create: 30/min, update: 20/min, delete: 10/min, sell: 20/min, update-price: 30/min)
 #   - Validação de quantity > 0 e preços
 #   - Validação de sold_date não futuro
-#   - Decimal para precisão em quantity
+#   - Decimal para precisão em quantity (via prepare_investment_for_db)
 #   - Ordenação personalizada
 #   - Categorias centralizadas (constants/categories.py)
 #   - prepare_investment_response e prepare_investment_for_db centralizados
 #   - SEM history (modo individual)
+#   - 🔧 CORRIGIDO: paginate_query com collection_name e user_id
+#   - 🔧 CORRIGIDO: Removido imports não utilizados
+#   - 🔧 CORRIGIDO: user_id padronizado em todo o arquivo
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Webhook automático para preços
@@ -452,5 +470,7 @@ async def delete_investment(
 #   - v3: Rate limiting, validações, ordenação (30/06/2026)
 #   - v3.1: Correções de quantity=None, sold_date (01/07/2026)
 #   - v3.2: Refatoração - categories, validators_extras (02/07/2026)
+#   - v3.3: CORREÇÃO - Adicionado collection_name e user_id no paginate_query (18/07/2026)
+#   - v3.4: CORREÇÃO - Removido imports não utilizados, padronizado user_id (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

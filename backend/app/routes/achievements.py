@@ -17,7 +17,7 @@ Principais features:
 - Filtros avançados no GET (type, year, month)
 - Validação de tipo de conquista
 
-Versão: v4.1 (corrigido)
+Versão: v4.2 (corrigido - paginate_query com collection_name)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -75,7 +75,6 @@ async def get_achievements(
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
     
-    # 🔧 CORRIGIDO: Validação de type
     if type:
         if type not in TIPOS_VALIDOS:
             raise ValidationException(
@@ -88,8 +87,14 @@ async def get_achievements(
     if month is not None:
         query["month"] = month
 
+    # 🔧 CORRIGIDO: Adicionado collection_name
     items, total = await paginate_query(
-        db.achievements, query, params, sort=[("date", -1)]
+        collection=db.achievements,
+        collection_name="achievements",
+        query=query,
+        params=params,
+        user_id=str(current_user.id),
+        sort=[("date", -1)]
     )
     
     formatted_items = [convert_objectid_to_str(item) for item in items]
@@ -280,6 +285,10 @@ async def delete_achievement(
 #   - Verificação de duplicação antes de criar/sync
 #   - Validação de type contra TIPOS_VALIDOS no GET
 #
+# ✅ CORRIGIDO (18/07/2026):
+#   - 🔧 Adicionado collection_name="achievements" no paginate_query
+#   - 🔧 Adicionado user_id no paginate_query
+#
 # ❌ Não implementado (Pós-MVP):
 #   - Transação MongoDB: Free Tier não suporta (M10+ necessário)
 #     Alternativa: Frontend pode re-sync se falhar
@@ -291,5 +300,6 @@ async def delete_achievement(
 #   - v3: Batch limit, bulk insert, filtros (30/06/2026)
 #   - v4: Refatoração - MAX_SYNC_BATCH movido para core/constants.py (02/07/2026)
 #   - v4.1: Validação de type no GET (02/07/2026)
+#   - v4.2: CORREÇÃO - collection_name no paginate_query (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

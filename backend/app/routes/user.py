@@ -23,16 +23,18 @@ Principais features:
 - Validação de força de senha
 - Fallback para email em caso de falha
 
-Versão: v4.1 (refatorado)
+Versão: v4.2 (correções de imports e validações)
+📅 ATUALIZADO EM: 18/07/2026
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, status, Request, BackgroundTasks
+# 🔧 CORRIGIDO: Removido HTTPException (não usado)
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 import json
-import re
+# 🔧 CORRIGIDO: Removido re (não usado)
 import os
 import secrets
 
@@ -65,23 +67,23 @@ router = APIRouter(prefix="/users", tags=["Usuário"])
 # ========== SCHEMAS ==========
 
 class UpdateProfileRequest(BaseModel):
-    name: Optional[str] = None
-    email: Optional[EmailStr] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="Nome do usuário")
+    email: Optional[EmailStr] = Field(None, description="Email do usuário")
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(..., min_length=1, description="Senha atual")
+    new_password: str = Field(..., min_length=8, description="Nova senha")
 
 
 class PreferencesUpdate(BaseModel):
-    language: Optional[str] = None   # pt, en, es, zh
-    currency: Optional[str] = None   # BRL, USD, EUR, CNY
+    language: Optional[str] = Field(None, description="Idioma (pt, en, es, zh)")
+    currency: Optional[str] = Field(None, description="Moeda (BRL, USD, EUR, CNY)")
 
 
 class ConsentUpdate(BaseModel):
-    terms_accepted: bool
-    research_consent: bool
+    terms_accepted: bool = Field(..., description="Termos de uso aceitos")
+    research_consent: bool = Field(..., description="Consentimento para pesquisa")
 
 
 class ConsentStatusResponse(BaseModel):
@@ -96,8 +98,8 @@ class ExportDataResponse(BaseModel):
 
 
 class DeleteAccountRequest(BaseModel):
-    confirm_delete: bool = True
-    reason: Optional[str] = Field(None, max_length=500, description="Motivo da exclusão")
+    confirm_delete: bool = Field(True, description="Confirmação de exclusão")
+    reason: Optional[str] = Field(None, min_length=3, max_length=500, description="Motivo da exclusão")
 
 
 class DeleteAccountResponse(BaseModel):
@@ -108,7 +110,7 @@ class DeleteAccountResponse(BaseModel):
 
 
 class ConfirmDeleteRequest(BaseModel):
-    token: str
+    token: str = Field(..., min_length=1, description="Token de confirmação")
 
 
 class ConfirmDeleteResponse(BaseModel):
@@ -126,7 +128,8 @@ async def get_me(
     db=Depends(get_database)
 ):
     """Retorna os dados do usuário logado"""
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
@@ -152,12 +155,21 @@ async def update_profile(
     db=Depends(get_database)
 ):
     """Atualiza os dados do perfil do usuário"""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     update_data = {}
+    
+    # 🔧 CORRIGIDO: Valida name não vazio
     if profile_data.name is not None:
-        update_data["name"] = profile_data.name
+        if not profile_data.name.strip():
+            raise ValidationException(
+                message_key="ERROR_NAME_REQUIRED",
+                request=request
+            )
+        update_data["name"] = profile_data.name.strip()
+    
     if profile_data.email is not None:
         update_data["email"] = profile_data.email.lower()
     
@@ -190,7 +202,7 @@ async def update_profile(
     if "monthly_income" in updated_user and updated_user["monthly_income"] is not None:
         updated_user["monthly_income"] = from_cents(updated_user["monthly_income"])
     
-    logger.info(f"✅ Perfil atualizado para usuário {current_user.id}")
+    logger.info(f"✅ Perfil atualizado para usuário {user_id}")
     
     return UserResponse(**updated_user)
 
@@ -204,19 +216,20 @@ async def change_password(
     db=Depends(get_database)
 ):
     """Altera a senha do usuário"""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
-        logger.warning(f"⚠️ Usuário não encontrado ao tentar alterar senha: {current_user.id}")
+        logger.warning(f"⚠️ Usuário não encontrado ao tentar alterar senha: {user_id}")
         raise NotFoundException(
             message_key="USER_NOT_FOUND",
             request=request
         )
     
     if not verify_password(password_data.current_password, user["password_hash"]):
-        logger.warning(f"⚠️ Tentativa de alterar senha com senha atual incorreta para usuário {current_user.id}")
+        logger.warning(f"⚠️ Tentativa de alterar senha com senha atual incorreta para usuário {user_id}")
         raise UnauthorizedException(
             message_key="AUTH_INVALID_CREDENTIALS",
             request=request
@@ -237,7 +250,7 @@ async def change_password(
         {"$set": {"password_hash": new_hash, "updated_at": datetime.now(timezone.utc)}}
     )
     
-    logger.info(f"✅ Senha alterada com sucesso para usuário {current_user.id}")
+    logger.info(f"✅ Senha alterada com sucesso para usuário {user_id}")
     
     return {"message": get_message("SUCCESS_PASSWORD_CHANGED", language)}
 
@@ -252,17 +265,18 @@ async def get_preferences(
     db=Depends(get_database)
 ):
     """Retorna as preferências do usuário (idioma, moeda)"""
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
-        logger.warning(f"⚠️ Usuário não encontrado ao buscar preferências: {current_user.id}")
+        logger.warning(f"⚠️ Usuário não encontrado ao buscar preferências: {user_id}")
         raise NotFoundException(
             message_key="USER_NOT_FOUND",
             request=request
         )
     
-    logger.debug(f"📊 Preferências recuperadas para usuário {current_user.id}")
+    logger.debug(f"📊 Preferências recuperadas para usuário {user_id}")
     return {
         "language": user.get("language", "pt"),
         "currency": user.get("currency", "BRL")
@@ -278,8 +292,9 @@ async def update_preferences(
     db=Depends(get_database)
 ):
     """Atualiza as preferências do usuário (idioma, moeda)"""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     update_data = {}
     if prefs.language is not None:
@@ -312,7 +327,7 @@ async def update_preferences(
         {"$set": update_data}
     )
     
-    logger.info(f"✅ Preferências atualizadas para usuário {current_user.id}: {update_data}")
+    logger.info(f"✅ Preferências atualizadas para usuário {user_id}: {update_data}")
     
     return {"message": get_message("SUCCESS_PREFERENCES_UPDATED", language)}
 
@@ -328,8 +343,9 @@ async def update_consent(
     db=Depends(get_database)
 ):
     """Atualiza o consentimento do usuário"""
+    user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     update_fields = {
         "research_consent": consent_data.research_consent,
@@ -340,7 +356,7 @@ async def update_consent(
         update_fields["terms_accepted"] = True
         update_fields["terms_accepted_at"] = datetime.now(timezone.utc)
     else:
-        logger.warning(f"⚠️ Tentativa de desmarcar termos aceitos para usuário {current_user.id}")
+        logger.warning(f"⚠️ Tentativa de desmarcar termos aceitos para usuário {user_id}")
         raise ValidationException(
             message_key="ERROR_CANNOT_UNACCEPT_TERMS",
             request=request
@@ -351,7 +367,7 @@ async def update_consent(
         {"$set": update_fields}
     )
     
-    logger.info(f"✅ Consentimento atualizado para usuário {current_user.id}: research_consent={consent_data.research_consent}")
+    logger.info(f"✅ Consentimento atualizado para usuário {user_id}: research_consent={consent_data.research_consent}")
     
     return {"message": get_message("SUCCESS_CONSENT_UPDATED", language)}
 
@@ -364,17 +380,18 @@ async def get_consent_status(
     db=Depends(get_database)
 ):
     """Retorna o status de consentimento do usuário"""
-    request.state.user_id = str(current_user.id)
+    user_id = str(current_user.id)
+    request.state.user_id = user_id
     
     user = await db.users.find_one({"_id": ObjectId(current_user.id)})
     if not user:
-        logger.warning(f"⚠️ Usuário não encontrado ao buscar consentimento: {current_user.id}")
+        logger.warning(f"⚠️ Usuário não encontrado ao buscar consentimento: {user_id}")
         raise NotFoundException(
             message_key="USER_NOT_FOUND",
             request=request
         )
     
-    logger.debug(f"📊 Status de consentimento recuperado para usuário {current_user.id}")
+    logger.debug(f"📊 Status de consentimento recuperado para usuário {user_id}")
     return ConsentStatusResponse(
         terms_accepted=user.get("terms_accepted", False),
         research_consent=user.get("research_consent", False),
@@ -449,10 +466,9 @@ async def export_user_data(
     db=Depends(get_database)
 ):
     """Exporta todos os dados do usuário em formato JSON (LGPD)"""
-    language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
-    
     user_id = str(current_user.id)
+    language = getattr(request.state, "language", "pt")
+    request.state.user_id = user_id
     
     logger.info(f"📤 Iniciando exportação de dados para usuário {user_id}")
     
@@ -561,10 +577,9 @@ async def delete_account(
     db=Depends(get_database)
 ):
     """Inicia o processo de exclusão da conta."""
-    language = getattr(request.state, "language", "pt")
-    request.state.user_id = str(current_user.id)
-    
     user_id = str(current_user.id)
+    language = getattr(request.state, "language", "pt")
+    request.state.user_id = user_id
     
     user = await db.users.find_one({"_id": ObjectId(user_id)})
     if not user:
@@ -699,9 +714,15 @@ async def confirm_delete_account(
 #   - Validação de força de senha
 #   - Fallback para email em caso de falha
 #   - Funções de token centralizadas em utils/user_tokens.py
+#   - 🔧 CORRIGIDO: Removido HTTPException (não usado)
+#   - 🔧 CORRIGIDO: Removido re (não usado)
+#   - 🔧 CORRIGIDO: Validação de name não vazio
+#   - 🔧 CORRIGIDO: Validação de reason (min_length=3)
+#   - 🔧 CORRIGIDO: user_id padronizado em todo o arquivo
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Mover privacy-policy para arquivo separado
+#   - 2FA (dois fatores)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
@@ -709,5 +730,6 @@ async def confirm_delete_account(
 #   - v3: Rate limiting, confirmar exclusão (30/06/2026)
 #   - v4: Correções de convert_objectid_to_str, email fallback (01/07/2026)
 #   - v4.1: Refatoração - constants, rate_limiter, validators_extras, user_tokens (02/07/2026)
+#   - v4.2: CORREÇÃO - Removido imports não usados, validações adicionais (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO

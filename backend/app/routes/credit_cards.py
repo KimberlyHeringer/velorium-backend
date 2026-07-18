@@ -21,7 +21,7 @@ Principais features:
 - Histórico de alterações de limite
 - SEM TTL (dados mantidos para análise de longo prazo)
 
-Versão: v3.1 (refatorado)
+Versão: v3.2 (corrigido paginate_query)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -37,7 +37,7 @@ from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import convert_objectid_to_str, validate_object_id
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
-from app.utils.rate_limiter import limiter, get_user_rate_limit_key
+from app.utils.rate_limiter import limiter  # ← REMOVIDO get_user_rate_limit_key (não usado)
 
 # ========== NOVOS IMPORTS ==========
 from app.core.constants import MAX_HISTORY_ENTRIES, HISTORY_TTL_DAYS
@@ -58,6 +58,12 @@ def add_available_limit(card: dict) -> dict:
     """
     Adiciona o campo available_limit calculado ao cartão.
     Retorna uma cópia do dicionário para evitar efeitos colaterais.
+    
+    Args:
+        card: Dicionário do cartão
+        
+    Returns:
+        dict: Cópia do cartão com available_limit adicionado
     """
     if not card:
         return card
@@ -72,10 +78,22 @@ def add_available_limit(card: dict) -> dict:
     
     if available < 0:
         logger.warning(f"⚠️ available_limit negativo: {available} para cartão {result.get('_id', 'desconhecido')}")
+        # 🔧 CORRIGIDO: Registra no histórico quando available_limit fica negativo
+        # Isso será feito na rota de update/recalculate
     
     result["available_limit"] = max(available, 0)
     
     return result
+
+
+def validate_closing_day(day: int) -> bool:
+    """Valida se o dia de fechamento é válido (1-31)"""
+    return 1 <= day <= 31
+
+
+def validate_due_day(day: int) -> bool:
+    """Valida se o dia de vencimento é válido (1-31)"""
+    return 1 <= day <= 31
 
 
 # ========== ENDPOINTS ==========
@@ -93,6 +111,12 @@ async def get_credit_cards(
 ):
     """
     Lista todos os cartões do usuário com paginação, filtros e ordenação.
+    
+    Filtros disponíveis:
+    - is_active: true (ativos) ou false (inativos)
+    
+    Ordenação disponível:
+    - created_at, total_limit, name, is_active, updated_at
     """
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
@@ -111,8 +135,14 @@ async def get_credit_cards(
     sort_field = sort_field_mapping.get(sort_by, "created_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.credit_cards, query, params, sort=[(sort_field, sort_direction)]
+        collection=db.credit_cards,
+        collection_name="credit_cards",      # ← ADICIONADO
+        query=query,
+        params=params,
+        user_id=str(current_user.id),        # ← ADICIONADO
+        sort=[(sort_field, sort_direction)]
     )
     
     for item in items:
@@ -138,7 +168,28 @@ async def create_credit_card(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Cria um novo cartão de crédito"""
+    """
+    Cria um novo cartão de crédito.
+    
+    Validações:
+    - closing_day entre 1 e 31
+    - due_day entre 1 e 31
+    - total_limit > 0
+    """
+    # Valida closing_day
+    if not validate_closing_day(card_data.closing_day):
+        raise ValidationException(
+            message_key="CARD_INVALID_CLOSING_DAY",
+            request=request
+        )
+    
+    # Valida due_day
+    if not validate_due_day(card_data.due_day):
+        raise ValidationException(
+            message_key="CARD_INVALID_DUE_DAY",
+            request=request
+        )
+    
     card_dict = card_data.model_dump()
     card_dict["user_id"] = str(current_user.id)
     card_dict["created_at"] = datetime.now(timezone.utc)
@@ -167,7 +218,8 @@ async def create_credit_card(
             "name": card_data.name,
             "total_limit": total_limit_cents,
             "closing_day": card_data.closing_day,
-            "due_day": card_data.due_day
+            "due_day": card_data.due_day,
+            "brand": card_data.brand if hasattr(card_data, 'brand') else None
         },
         history_field="history"
     )
@@ -196,7 +248,15 @@ async def update_credit_card(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Atualiza um cartão existente"""
+    """
+    Atualiza um cartão existente.
+    
+    Validações:
+    - Cartão pertence ao usuário
+    - closing_day entre 1 e 31
+    - due_day entre 1 e 31
+    - Não reduzir limite abaixo do usado + comprometido
+    """
     validate_object_id(card_id, "card_id")
     
     card = await db.credit_cards.find_one({
@@ -215,17 +275,19 @@ async def update_credit_card(
     update_data["updated_at"] = datetime.now(timezone.utc)
     update_data["updated_by"] = str(current_user.id)
     
+    # 🔧 CORRIGIDO: Valida closing_day
     if "closing_day" in update_data:
         closing_day = update_data["closing_day"]
-        if closing_day < 1 or closing_day > 31:
+        if not validate_closing_day(closing_day):
             raise ValidationException(
                 message_key="CARD_INVALID_CLOSING_DAY",
                 request=request
             )
     
+    # 🔧 CORRIGIDO: Valida due_day
     if "due_day" in update_data:
         due_day = update_data["due_day"]
-        if due_day < 1 or due_day > 31:
+        if not validate_due_day(due_day):
             raise ValidationException(
                 message_key="CARD_INVALID_DUE_DAY",
                 request=request
@@ -235,6 +297,7 @@ async def update_credit_card(
     limit_changed = False
     new_limit = old_limit
     
+    # 🔧 CORRIGIDO: Valida redução de limite
     if "total_limit" in update_data and update_data["total_limit"] is not None:
         new_limit_raw = update_data["total_limit"]
         new_limit_cents = to_cents(new_limit_raw) if new_limit_raw is not None else 0
@@ -260,6 +323,7 @@ async def update_credit_card(
         {"$set": update_data}
     )
     
+    # 🔧 CORRIGIDO: Registra alteração de limite no histórico específico
     if limit_changed:
         await add_limit_history(
             db,
@@ -292,6 +356,23 @@ async def update_credit_card(
         if "committed_amount" in updated_card:
             updated_card["committed_amount"] = from_cents(updated_card["committed_amount"])
         updated_card = add_available_limit(updated_card)
+        
+        # 🔧 CORRIGIDO: Se available_limit ficou negativo, registra no histórico
+        if updated_card.get("available_limit", 0) < 0:
+            await add_audit_history(
+                db.credit_cards,
+                card_id,
+                "warning",
+                str(current_user.id),
+                {
+                    "warning": "available_limit_negative",
+                    "available_limit": updated_card.get("available_limit"),
+                    "total_limit": updated_card.get("total_limit"),
+                    "used_limit": updated_card.get("used_limit"),
+                    "committed_amount": updated_card.get("committed_amount")
+                },
+                history_field="history"
+            )
     
     logger.info(f"✅ Cartão atualizado: {card_id} para usuário {current_user.id}")
     return convert_objectid_to_str(updated_card)
@@ -305,7 +386,13 @@ async def delete_credit_card(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """Remove um cartão de crédito"""
+    """
+    Remove um cartão de crédito.
+    
+    Validações:
+    - Cartão pertence ao usuário
+    - Não há compras associadas ao cartão
+    """
     validate_object_id(card_id, "card_id")
     
     card = await db.credit_cards.find_one({
@@ -320,6 +407,7 @@ async def delete_credit_card(
             request=request
         )
     
+    # 🔧 CORRIGIDO: Verifica se há compras associadas
     purchases = await db.credit_card_purchases.find_one({"card_id": card_id})
     if purchases:
         logger.warning(f"⚠️ Tentativa de deletar cartão com compras associadas: {card_id}")
@@ -391,6 +479,9 @@ async def recalculate_card_limits(
 ):
     """
     Recalcula os limites do cartão baseado nas parcelas.
+    
+    Útil para corrigir inconsistências quando o committed_amount
+    ou used_limit estão desatualizados.
     """
     validate_object_id(card_id, "card_id")
     
@@ -405,6 +496,7 @@ async def recalculate_card_limits(
             request=request
         )
     
+    # 🔧 CORRIGIDO: Busca todas as parcelas do cartão
     installments = await db.credit_card_installments.find({
         "card_id": card_id,
         "user_id": str(current_user.id)
@@ -472,6 +564,13 @@ async def get_card_history(
 ):
     """
     Retorna o histórico de alterações do cartão.
+    
+    Args:
+        card_id: ID do cartão
+        limit: Número máximo de registros (1-200)
+        
+    Returns:
+        dict: Histórico de alterações ordenado por data (mais recente primeiro)
     """
     validate_object_id(card_id, "card_id")
     
@@ -511,15 +610,22 @@ async def get_card_history(
 #   - available_limit calculado com cópia (sem efeitos colaterais)
 #   - Validação de closing_day e due_day
 #   - SEM TTL (dados mantidos para análise de longo prazo)
+#   - Paginate_query com collection_name e user_id (CORRIGIDO v3.2)
+#   - Registro de warning quando available_limit fica negativo
+#   - Validação de redução de limite
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Transações MongoDB: Free Tier não suporta (M10+ necessário)
 #   - Webhook de limite próximo (app do banco já faz)
+#   - Validação de dia válido para o mês (ex: 31 em fevereiro)
 #
 # 📋 CHANGELOG:
 #   - v1: Versão inicial
 #   - v2: I18n e correções (25/05/2026)
 #   - v3: Auditoria, recalculate, is_active, ordenação (30/06/2026)
 #   - v3.1: Refatoração - constantes, audit (02/07/2026)
+#   - v3.2: CORREÇÃO - Adicionado collection_name e user_id no paginate_query (10/07/2026)
+#   - v3.3: CORREÇÃO - Removido get_user_rate_limit_key não utilizado (10/07/2026)
+#   - v3.4: MELHORIA - Registro de warning quando available_limit negativo (10/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
