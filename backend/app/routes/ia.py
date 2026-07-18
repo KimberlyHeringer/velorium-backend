@@ -20,8 +20,8 @@ Principais features:
 - Remoção de raw_text (dados sensíveis)
 - 🆕 Recomendações personalizadas baseadas no perfil financeiro
 
-Versão: v3.4 (correções de segurança)
-📅 ATUALIZADO EM: 14/07/2026
+Versão: v3.5 (correção do event loop)
+📅 ATUALIZADO EM: 17/07/2026
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -71,21 +71,25 @@ class IACache:
     Cache em memória para respostas da IA.
     Reduz custos e latência.
     
-    Limitações: reinicia quando o servidor reinicia.
-    Para produção, considerar Redis.
+    🔧 CORRIGIDO: A task de limpeza é criada via método start_cleanup()
+    que deve ser chamado no startup do app, NÃO no __init__.
     """
     
     def __init__(self):
         self._cache: Dict[str, dict] = {}
         self._ttl = CACHE_TTL_SECONDS
-        # ✅ CORRIGIDO: Salva a task para evitar garbage collection
-        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+        self._cleanup_task = None  # 🔧 Inicializado como None
     
-    def _start_cleanup(self):
-        """Inicia o loop de limpeza periódica do cache"""
-        # Mantido para compatibilidade, mas não é mais necessário
-        # A task já é criada no __init__
-        pass
+    async def start_cleanup(self):
+        """
+        Inicia o loop de limpeza periódica do cache.
+        DEVE ser chamado no startup do app (quando o event loop já está rodando).
+        """
+        if self._cleanup_task is None:
+            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+            logger.info("🧹 IACache: Task de limpeza iniciada")
+        else:
+            logger.debug("🧹 IACache: Task de limpeza já está rodando")
     
     async def _cleanup_loop(self):
         """
@@ -104,13 +108,15 @@ class IACache:
                     del self._cache[key]
                 if to_delete:
                     logger.debug(f"🧹 Limpeza de cache: {len(to_delete)} entradas removidas")
+            except asyncio.CancelledError:
+                logger.info("🧹 IACache: Task de limpeza cancelada")
+                break
             except Exception as e:
                 logger.error(f"❌ Erro na limpeza do cache: {e}")
     
     def _get_cache_key(self, user_id: str, question: str, context_hash: str) -> str:
         """Gera chave única para o cache"""
         content = f"{user_id}:{question}:{context_hash}"
-        # ✅ CORRIGIDO: Usa SHA-256 em vez de MD5
         return hashlib.sha256(content.encode()).hexdigest()
     
     def get(self, user_id: str, question: str, context_hash: str) -> Optional[str]:
@@ -247,7 +253,6 @@ Dados anônimos do usuário:
     return contexto
 
 
-# ✅ CORRIGIDO: Remove async (não usa await)
 def montar_contexto_ia_sem_consentimento() -> str:
     """Contexto genérico para usuários que não aceitaram o consentimento"""
     return """
@@ -411,6 +416,10 @@ Formato de resposta (JSON):
     return context
 
 
+# ================================================================
+# ENDPOINTS
+# ================================================================
+
 # ========== ENDPOINT PRINCIPAL (CHAT) ==========
 
 @router.post("/chat", response_model=ChatResponse)
@@ -477,9 +486,8 @@ async def chat(
             contexto = await montar_contexto_ia_completo_anonimizado(current_user, db, history_context)
         else:
             logger.debug(f"📊 Usando contexto genérico para usuário {current_user.id} (sem consentimento)")
-            contexto = montar_contexto_ia_sem_consentimento()  # ✅ CORRIGIDO: sem await
+            contexto = montar_contexto_ia_sem_consentimento()
         
-        # ✅ CORRIGIDO: Usa SHA-256
         context_hash = hashlib.sha256(contexto.encode()).hexdigest()
         cached_response = ia_cache.get(str(current_user.id), chat_request.pergunta, context_hash)
         
@@ -542,8 +550,6 @@ async def submit_feedback(
     """
     Recebe feedback do usuário sobre a resposta da IA.
     """
-    # ✅ REMOVIDO: language não usado (mantido apenas para compatibilidade com outras funções)
-    # language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     user_doc = await db.users.find_one({"_id": ObjectId(current_user.id)})
@@ -597,8 +603,6 @@ async def extract_from_text(
     """
     Extrai dados financeiros de um texto (notificação, screenshot, etc.)
     """
-    # ✅ REMOVIDO: language não usado
-    # language = getattr(request.state, "language", "pt")
     request.state.user_id = str(current_user.id)
     
     try:
@@ -697,12 +701,6 @@ async def get_recommendations(
 ):
     """
     🆕 Gera recomendações personalizadas baseadas no perfil financeiro do usuário.
-    
-    🔧 CARACTERÍSTICAS:
-    - Usa dados do perfil, score, gastos, metas e contas
-    - Gera recomendações acionáveis e personalizadas
-    - Retorna lista com título, descrição, prioridade e categoria
-    - Auditável para tracking de efetividade
     """
     language = getattr(request.state, "language", "pt")
     user_id = str(current_user.id)
@@ -711,7 +709,6 @@ async def get_recommendations(
     logger.info(f"📊 Gerando recomendações para usuário: {user_id}")
     
     try:
-        # Verifica consentimento
         user_doc = await db.users.find_one({"_id": ObjectId(current_user.id)})
         if not user_doc:
             raise NotFoundException(
@@ -725,7 +722,6 @@ async def get_recommendations(
                 request=request
             )
         
-        # ✅ CORRIGIDO: Valida focus_areas
         if rec_request.focus_areas:
             invalid = [f for f in rec_request.focus_areas if f not in VALID_FOCUS_AREAS]
             if invalid:
@@ -735,20 +731,15 @@ async def get_recommendations(
                     params={"invalid": ", ".join(invalid)}
                 )
         
-        # Busca dados do usuário
         user_data = await _get_user_profile_data(user_id, db)
-        
-        # Constrói prompt
         prompt = await _build_recommendations_prompt(user_data, rec_request.focus_areas)
         
-        # Chama IA
         resposta = await obter_resposta_ia_async(
             system_message=prompt,
             user_message="Gere recomendações personalizadas para melhorar a saúde financeira do usuário.",
             conversation_history=""
         )
         
-        # Parseia resposta
         try:
             clean_response = resposta.strip()
             if clean_response.startswith('```json'):
@@ -760,11 +751,9 @@ async def get_recommendations(
             
             data = json.loads(clean_response.strip())
             
-            # Valida estrutura
             recommendations = data.get('recommendations', [])
             summary = data.get('summary', 'Recomendações personalizadas para sua saúde financeira.')
             
-            # Log de auditoria
             audit_id = await add_audit_log(
                 db,
                 user_id,
@@ -786,7 +775,6 @@ async def get_recommendations(
             
         except json.JSONDecodeError as e:
             logger.error(f"❌ Erro ao parsear recomendações: {resposta} - Erro: {e}")
-            # Fallback: recomendações genéricas
             return RecommendationsResponse(
                 recommendations=[
                     {
@@ -846,7 +834,10 @@ if os.getenv("ENVIRONMENT", "development") != "production" and os.getenv("DEBUG"
         return ChatResponse(resposta=resposta, audit_id="test")
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
+# ================================================================
+# DECISÕES DOCUMENTADAS
+# ================================================================
+
 #
 # ✅ Implementado:
 #   - I18n completo (4 idiomas)
@@ -860,7 +851,7 @@ if os.getenv("ENVIRONMENT", "development") != "production" and os.getenv("DEBUG"
 #   - 🆕 Recomendações personalizadas baseadas no perfil
 #   - 🆕 Rate limiting específico para recommendations (5/min)
 #   - 🆕 Fallback para recomendações genéricas
-#   - 🔧 CORRIGIDO: asyncio.create_task com referência salva
+#   - 🔧 CORRIGIDO: asyncio.create_task movido para start_cleanup() (chamado no startup)
 #   - 🔧 CORRIGIDO: SHA-256 em vez de MD5 para cache
 #   - 🔧 CORRIGIDO: removido async desnecessário
 #   - 🔧 CORRIGIDO: validação de focus_areas
@@ -879,5 +870,6 @@ if os.getenv("ENVIRONMENT", "development") != "production" and os.getenv("DEBUG"
 #   - v3.2: Refatoração - constantes, rate_limiter, audit (02/07/2026)
 #   - v3.3: ADICIONADO - POST /ia/recommendations, recomendações personalizadas (14/07/2026)
 #   - v3.4: CORREÇÕES DE SEGURANÇA - asyncio task, SHA-256, validações (14/07/2026)
+#   - v3.5: CORREÇÃO CRÍTICA - asyncio.create_task movido para start_cleanup() (17/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
