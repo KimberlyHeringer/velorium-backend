@@ -27,7 +27,7 @@ Principais features:
 - Suporte a data limite (deadline)
 - Histórico de metas concluídas/arquivadas
 
-Versão: v4.1 (com validações de sub-metas)
+Versão: v4.3 (correção paginate_query com collection_name)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -285,8 +285,14 @@ async def list_goals(
     sort_field = sort_field_mapping.get(sort_by, "created_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.goals, query, params, sort=[(sort_field, sort_direction)]
+        collection=db.goals,
+        collection_name="goals",
+        query=query,
+        params=params,
+        user_id=str(current_user.id),
+        sort=[(sort_field, sort_direction)]
     )
     
     for item in items:
@@ -597,8 +603,14 @@ async def get_goal_history(
     sort_field = sort_field_mapping.get(sort_by, "completed_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.goals, query, params, sort=[(sort_field, sort_direction)]
+        collection=db.goals,
+        collection_name="goals_history",
+        query=query,
+        params=params,
+        user_id=str(current_user.id),
+        sort=[(sort_field, sort_direction)]
     )
     
     for item in items:
@@ -643,8 +655,14 @@ async def get_sub_goals(
     if completed is not None:
         query["completed"] = completed
     
+    # 🔧 CORRIGIDO: Adicionado collection_name e user_id
     items, total = await paginate_query(
-        db.goals, query, params, sort=[("created_at", 1)]
+        collection=db.goals,
+        collection_name="goals_sub",
+        query=query,
+        params=params,
+        user_id=str(current_user.id),
+        sort=[("created_at", 1)]
     )
     
     for item in items:
@@ -730,7 +748,7 @@ async def add_sub_goal(
 # ================================================================
 
 """
-📋 CHANGELOG - 12/07/2026
+📋 CHANGELOG - 18/07/2026
 ──────────────────────────────────────────────────────────────
 
 🆕 ADICIONADO:
@@ -745,10 +763,13 @@ async def add_sub_goal(
 ✅ CORRIGIDO:
    8. archive_completed_goal agora é utilizada
    9. Validação de parent_id existente em todos os endpoints
+   10. 🔧 CORRIGIDO: Chamada do paginate_query com collection_name (obrigatório)
+   11. 🔧 CORRIGIDO: Adicionado user_id em todas as chamadas do paginate_query
+   12. 🔧 CORRIGIDO: collection_name="goals", "goals_history", "goals_sub"
 
 📋 PENDÊNCIAS (PÓS-MVP):
    - Migração para adicionar campo description nas metas existentes
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
-📅 ÚLTIMA ATUALIZAÇÃO: 12/07/2026
+📅 ÚLTIMA ATUALIZAÇÃO: 18/07/2026
 """
