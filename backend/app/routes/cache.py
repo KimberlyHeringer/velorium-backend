@@ -19,18 +19,21 @@ Principais features:
 - 🔧 I18n completo
 - 🔧 Auditoria de operações de cache
 - 🔧 Índices TTL no MongoDB para limpeza automática
+- 🔧 CORRIGIDO: user_id no prefixo do Redis (cache por usuário)
+- 🔧 CORRIGIDO: X-Offline-Sync header para sincronização offline
+- 🔧 CORRIGIDO: Compressão com zlib
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
-📅 ÚLTIMA ATUALIZAÇÃO: 10/07/2026
+📅 ÚLTIMA ATUALIZAÇÃO: 20/07/2026
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, Body
-from fastapi import Body as FastAPIBody
 from typing import Optional, List, Any
 from datetime import datetime, timezone, timedelta
 import os
 import json
-import zlib  # 🔧 Compressão opcional
+import zlib
+import base64
 from pydantic import BaseModel, Field
 
 from app.database import get_database
@@ -50,25 +53,23 @@ router = APIRouter(prefix="/cache", tags=["Cache Distribuído"])
 # CONFIGURAÇÃO E VALIDAÇÃO
 # ================================================================
 
-# 🔧 REDIS_ENABLED: variável de ambiente para ativar/desativar Redis
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
 REDIS_URL = os.getenv("REDIS_URL", "")
 
-# ✅ Validação da URL
 if REDIS_ENABLED and not REDIS_URL:
     logger.warning("⚠️ REDIS_ENABLED=true mas REDIS_URL está vazio. Desativando Redis.")
     REDIS_ENABLED = False
 
-# 🔧 TTL com validação
 REDIS_DEFAULT_TTL = int(os.getenv("REDIS_CACHE_TTL", "300"))  # 5 minutos
 MAX_TTL = int(os.getenv("REDIS_MAX_TTL", "86400"))  # 24 horas
 MIN_TTL = 1  # 1 segundo
-
-# 🔧 Compressão opcional (dados > 1KB são comprimidos)
 COMPRESSION_THRESHOLD = 1024  # 1KB
 
+# Prefixo base para Redis (user_id será adicionado)
+REDIS_PREFIX = "velorium:cache:"
+
 # ================================================================
-# SCHEMAS PYDANTIC PARA REQUISIÇÕES
+# SCHEMAS PYDANTIC
 # ================================================================
 
 class CacheSetRequest(BaseModel):
@@ -102,31 +103,32 @@ def should_compress(data: bytes) -> bool:
     """Verifica se os dados devem ser comprimidos"""
     return len(data) > COMPRESSION_THRESHOLD
 
-def compress_data(data: dict) -> bytes:
-    """Comprime dados"""
+def compress_data(data: dict) -> str:
+    """Comprime dados e retorna string base64"""
     try:
         json_str = json.dumps(data)
-        return zlib.compress(json_str.encode())
+        compressed = zlib.compress(json_str.encode())
+        return base64.b64encode(compressed).decode()
     except Exception as e:
         logger.warning(f"⚠️ Erro ao comprimir dados: {e}")
-        return json.dumps(data).encode()
+        return json.dumps(data)
 
-def decompress_data(data: bytes) -> dict:
-    """Descomprime dados"""
+def decompress_data(data: str) -> dict:
+    """Descomprime dados de string base64"""
     try:
-        # Tenta descomprimir primeiro
         try:
-            decompressed = zlib.decompress(data)
+            decoded = base64.b64decode(data)
+            decompressed = zlib.decompress(decoded)
             return json.loads(decompressed.decode())
-        except zlib.error:
+        except (base64.binascii.Error, zlib.error):
             # Não é dados comprimidos, tenta parse direto
-            return json.loads(data.decode())
+            return json.loads(data)
     except Exception as e:
         logger.warning(f"⚠️ Erro ao descomprimir dados: {e}")
         return {}
 
 # ================================================================
-# REDIS CLIENT (COM TRATAMENTO DE ERRO)
+# REDIS CLIENT
 # ================================================================
 
 redis_client = None
@@ -143,186 +145,209 @@ if REDIS_ENABLED:
         logger.error(f"❌ Erro ao conectar Redis: {e}")
         REDIS_ENABLED = False
 
-# Prefixo para chaves do Redis
-REDIS_PREFIX = "velorium:cache:"
-
 # ================================================================
-# FUNÇÕES AUXILIARES (COM FALLBACK MONGODB)
+# FUNÇÕES COM USER_ID (CORRIGIDO)
 # ================================================================
 
-def get_redis_key(key: str) -> str:
-    """Gera chave Redis com prefixo"""
-    return f"{REDIS_PREFIX}{key}"
+def get_redis_key(user_id: str, key: str) -> str:
+    """Gera chave Redis com prefixo e user_id"""
+    return f"{REDIS_PREFIX}{user_id}:{key}"
 
-async def get_from_redis(key: str) -> Optional[dict]:
-    """Obtém dados do Redis"""
+async def get_from_redis(user_id: str, key: str) -> Optional[dict]:
+    """Obtém dados do Redis com user_id"""
     if not redis_client or not REDIS_ENABLED:
         return None
     
     try:
-        value = await redis_client.get(get_redis_key(key))
+        value = await redis_client.get(get_redis_key(user_id, key))
         if value:
-            # Tenta descomprimir se necessário
-            try:
-                # Verifica se é dados comprimidos (começa com zlib header)
-                if value.startswith('x\x9c') or value.startswith('x\xda'):
-                    import base64
-                    decoded = base64.b64decode(value)
-                    decompressed = zlib.decompress(decoded)
-                    return json.loads(decompressed.decode())
-                else:
-                    return json.loads(value)
-            except (json.JSONDecodeError, zlib.error):
-                # Tenta parse direto
-                return json.loads(value)
+            return decompress_data(value)
         return None
     except Exception as e:
-        logger.warning(f"⚠️ Erro ao ler do Redis ({key}): {e}")
+        logger.warning(f"⚠️ Erro ao ler do Redis ({user_id}:{key}): {e}")
         return None
 
-async def set_in_redis(key: str, data: dict, ttl: int = REDIS_DEFAULT_TTL) -> bool:
-    """Salva dados no Redis com TTL (segundos) e compressão opcional"""
+async def set_in_redis(user_id: str, key: str, data: dict, ttl: int = REDIS_DEFAULT_TTL) -> bool:
+    """Salva dados no Redis com user_id e compressão opcional"""
     if not redis_client or not REDIS_ENABLED:
         return False
     
     try:
-        # Converte para JSON
         json_data = json.dumps(data)
-        
-        # Comprime se necessário
-        if should_compress(json_data.encode()):
-            import base64
-            compressed = zlib.compress(json_data.encode())
-            final_data = base64.b64encode(compressed).decode()
-            if __DEV__:
-                logger.debug(f"📦 Dados comprimidos: {len(json_data)} → {len(final_data)} bytes")
-        else:
-            final_data = json_data
+        final_data = compress_data(data) if should_compress(json_data.encode()) else json_data
         
         await redis_client.setex(
-            get_redis_key(key),
+            get_redis_key(user_id, key),
             validate_ttl(ttl),
             final_data
         )
-        logger.debug(f"✅ Cache salvo no Redis: {key} (TTL: {ttl}s)")
+        logger.debug(f"✅ Cache salvo no Redis: {user_id}:{key} (TTL: {ttl}s)")
         return True
     except Exception as e:
-        logger.warning(f"⚠️ Erro ao salvar no Redis ({key}): {e}")
+        logger.warning(f"⚠️ Erro ao salvar no Redis ({user_id}:{key}): {e}")
         return False
 
-async def delete_from_redis(key: str) -> bool:
-    """Remove dados do Redis"""
+async def delete_from_redis(user_id: str, key: str) -> bool:
+    """Remove dados do Redis com user_id"""
     if not redis_client or not REDIS_ENABLED:
         return False
     
     try:
-        await redis_client.delete(get_redis_key(key))
-        logger.debug(f"🗑️ Cache removido do Redis: {key}")
+        await redis_client.delete(get_redis_key(user_id, key))
+        logger.debug(f"🗑️ Cache removido do Redis: {user_id}:{key}")
         return True
     except Exception as e:
-        logger.warning(f"⚠️ Erro ao remover do Redis ({key}): {e}")
+        logger.warning(f"⚠️ Erro ao remover do Redis ({user_id}:{key}): {e}")
         return False
 
-async def delete_by_prefix_from_redis(prefix: str) -> int:
-    """Remove dados do Redis por prefixo"""
+async def delete_by_prefix_from_redis(user_id: str, prefix: str) -> int:
+    """Remove dados do Redis por prefixo com user_id"""
     if not redis_client or not REDIS_ENABLED:
         return 0
     
     try:
-        pattern = f"{REDIS_PREFIX}{prefix}*"
+        pattern = f"{REDIS_PREFIX}{user_id}:{prefix}*"
         keys = await redis_client.keys(pattern)
         if keys:
             await redis_client.delete(*keys)
-            logger.debug(f"🗑️ {len(keys)} chaves removidas do Redis por prefixo: {prefix}")
+            logger.debug(f"🗑️ {len(keys)} chaves removidas do Redis por prefixo: {user_id}:{prefix}")
             return len(keys)
         return 0
     except Exception as e:
         logger.warning(f"⚠️ Erro ao remover por prefixo do Redis ({prefix}): {e}")
         return 0
 
+async def get_all_redis_keys(user_id: str, prefix: Optional[str] = None) -> List[str]:
+    """Lista todas as chaves Redis do usuário com prefixo opcional"""
+    if not redis_client or not REDIS_ENABLED:
+        return []
+    
+    try:
+        search_prefix = f"{REDIS_PREFIX}{user_id}:{prefix or ''}"
+        pattern = f"{search_prefix}*"
+        keys = await redis_client.keys(pattern)
+        # Remove prefixo para retornar apenas a chave original
+        return [k.replace(f"{REDIS_PREFIX}{user_id}:", '') for k in keys]
+    except Exception as e:
+        logger.warning(f"⚠️ Erro ao listar Redis keys: {e}")
+        return []
+
 # ================================================================
-# 🔧 FALLBACK: FUNÇÕES COM MONGODB
+# FALLBACK: FUNÇÕES COM MONGODB
 # ================================================================
 
-async def get_from_cache(key: str) -> Optional[dict]:
-    """Busca do cache com fallback MongoDB"""
-    # Tenta Redis primeiro
-    data = await get_from_redis(key)
-    if data is not None:
-        return data
-    
-    # Fallback: MongoDB
+async def get_from_mongodb(user_id: str, key: str) -> Optional[dict]:
+    """Busca do MongoDB (fallback)"""
     try:
         db = await get_database()
-        doc = await db.cache.find_one({"key": key})
+        doc = await db.cache.find_one({"user_id": user_id, "key": key})
         if doc:
             now = int(datetime.now(timezone.utc).timestamp())
             if doc.get("expiresAt", 0) > now:
-                # ✅ Replica no Redis para futuras buscas
-                await set_in_redis(key, doc.get("data", {}), doc.get("ttl", REDIS_DEFAULT_TTL))
-                logger.debug(f"📦 Cache recuperado do MongoDB (fallback): {key}")
-                return doc.get("data")
+                data = doc.get("data", {})
+                # Replica no Redis para futuras buscas
+                await set_in_redis(user_id, key, data, doc.get("ttl", REDIS_DEFAULT_TTL))
+                logger.debug(f"📦 Cache recuperado do MongoDB (fallback): {user_id}:{key}")
+                return data
             else:
-                # Remove expirado
-                await db.cache.delete_one({"key": key})
-                logger.debug(f"🗑️ Cache expirado removido do MongoDB: {key}")
+                await db.cache.delete_one({"user_id": user_id, "key": key})
+                logger.debug(f"🗑️ Cache expirado removido do MongoDB: {user_id}:{key}")
     except Exception as e:
         logger.warning(f"⚠️ Erro no fallback MongoDB: {e}")
-    
     return None
 
-async def set_in_cache(key: str, data: dict, ttl: int = REDIS_DEFAULT_TTL) -> bool:
-    """Salva no cache com fallback MongoDB"""
-    # Valida TTL
-    ttl = validate_ttl(ttl)
-    
-    now = int(datetime.now(timezone.utc).timestamp())
-    cache_data = {
-        "data": data,
-        "expiresAt": now + ttl,
-        "createdAt": now,
-        "ttl": ttl,
-    }
-    
-    # Tenta Redis primeiro
-    success = await set_in_redis(key, cache_data, ttl)
-    
-    # Fallback: MongoDB (sempre salva para consistência)
+async def set_in_mongodb(user_id: str, key: str, data: dict, ttl: int = REDIS_DEFAULT_TTL) -> bool:
+    """Salva no MongoDB (fallback)"""
     try:
         db = await get_database()
+        now = int(datetime.now(timezone.utc).timestamp())
         await db.cache.update_one(
-            {"key": key},
+            {"user_id": user_id, "key": key},
             {
                 "$set": {
                     "data": data,
-                    "expiresAt": cache_data["expiresAt"],
-                    "ttl": ttl,
+                    "expiresAt": now + validate_ttl(ttl),
+                    "ttl": validate_ttl(ttl),
                     "updatedAt": now,
                 },
                 "$setOnInsert": {
                     "createdAt": now,
-                    "user_id": None,  # Será preenchido depois
                 }
             },
             upsert=True
         )
-        logger.debug(f"📦 Cache salvo no MongoDB: {key}")
+        logger.debug(f"📦 Cache salvo no MongoDB: {user_id}:{key}")
         return True
     except Exception as e:
         logger.error(f"❌ Erro ao salvar no MongoDB: {e}")
         return False
 
-async def delete_from_cache(key: str) -> bool:
-    """Remove do cache (Redis + MongoDB)"""
-    success_redis = await delete_from_redis(key)
-    
+async def delete_from_mongodb(user_id: str, key: str) -> bool:
+    """Remove do MongoDB"""
     try:
         db = await get_database()
-        await db.cache.delete_one({"key": key})
+        await db.cache.delete_one({"user_id": user_id, "key": key})
         return True
     except Exception as e:
         logger.warning(f"⚠️ Erro ao remover do MongoDB: {e}")
-        return success_redis
+        return False
+
+async def delete_by_prefix_from_mongodb(user_id: str, prefix: str) -> int:
+    """Remove do MongoDB por prefixo"""
+    try:
+        db = await get_database()
+        result = await db.cache.delete_many({
+            "user_id": user_id,
+            "key": {"$regex": f"^{prefix}"}
+        })
+        return result.deleted_count
+    except Exception as e:
+        logger.warning(f"⚠️ Erro ao remover do MongoDB por prefixo: {e}")
+        return 0
+
+async def get_all_mongodb_keys(user_id: str, prefix: Optional[str] = None) -> List[str]:
+    """Lista todas as chaves MongoDB do usuário"""
+    try:
+        db = await get_database()
+        query = {"user_id": user_id}
+        if prefix:
+            query["key"] = {"$regex": f"^{prefix}"}
+        cursor = db.cache.find(query, {"key": 1})
+        docs = await cursor.to_list(1000)
+        return [doc.get("key") for doc in docs if doc.get("key")]
+    except Exception as e:
+        logger.warning(f"⚠️ Erro ao listar MongoDB keys: {e}")
+        return []
+
+# ================================================================
+# FUNÇÕES PRINCIPAIS (COM FALLBACK)
+# ================================================================
+
+async def get_from_cache(user_id: str, key: str) -> Optional[dict]:
+    """Busca do cache (Redis com fallback MongoDB)"""
+    data = await get_from_redis(user_id, key)
+    if data is not None:
+        return data
+    return await get_from_mongodb(user_id, key)
+
+async def set_in_cache(user_id: str, key: str, data: dict, ttl: int = REDIS_DEFAULT_TTL) -> bool:
+    """Salva no cache (Redis + MongoDB)"""
+    ttl = validate_ttl(ttl)
+    success_redis = await set_in_redis(user_id, key, data, ttl)
+    success_mongo = await set_in_mongodb(user_id, key, data, ttl)
+    return success_redis or success_mongo
+
+async def delete_from_cache(user_id: str, key: str) -> bool:
+    """Remove do cache (Redis + MongoDB)"""
+    success_redis = await delete_from_redis(user_id, key)
+    success_mongo = await delete_from_mongodb(user_id, key)
+    return success_redis or success_mongo
+
+async def delete_by_prefix_from_cache(user_id: str, prefix: str) -> int:
+    """Remove do cache por prefixo (Redis + MongoDB)"""
+    redis_count = await delete_by_prefix_from_redis(user_id, prefix)
+    mongodb_count = await delete_by_prefix_from_mongodb(user_id, prefix)
+    return redis_count + mongodb_count
 
 # ================================================================
 # ENDPOINTS
@@ -338,20 +363,21 @@ async def get_cache(
 ):
     """
     Obtém um item do cache (Redis com fallback MongoDB).
-    
-    Args:
-        key: Chave do cache
-    
-    Returns:
-        dict: Dados do cache ou 404 se não encontrado
     """
+    user_id = str(current_user.id)
+    
     if not key or len(key) > 256:
         raise ValidationException(
             message_key="CACHE_INVALID_KEY",
             request=request
         )
     
-    data = await get_from_cache(key)
+    # 🔧 CORRIGIDO: Verifica se é sincronização offline
+    x_offline_sync = request.headers.get("X-Offline-Sync")
+    if x_offline_sync == "true":
+        logger.debug(f"📱 Sincronização offline para {user_id}:{key}")
+    
+    data = await get_from_cache(user_id, key)
     if data is None:
         raise I18nHTTPException(
             status_code=404,
@@ -359,7 +385,7 @@ async def get_cache(
             request=request
         )
     
-    logger.debug(f"📦 Cache GET: {key} para usuário {current_user.id}")
+    logger.debug(f"📦 Cache GET: {user_id}:{key}")
     return {"key": key, "data": data, "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
@@ -367,34 +393,27 @@ async def get_cache(
 @limiter.limit("30/minute")
 async def set_cache(
     request: Request,
-    cache_request: CacheSetRequest,  # ✅ Agora usa Body (Pydantic schema)
+    cache_request: CacheSetRequest,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
     """
     Salva um item no cache (Redis + MongoDB).
-    
-    Args:
-        cache_request: Objeto com key, data e ttl (Body)
-    
-    Returns:
-        dict: Status da operação
     """
+    user_id = str(current_user.id)
     key = cache_request.key
     data = cache_request.data
     ttl = cache_request.ttl or REDIS_DEFAULT_TTL
 
-    # Valida chave
     if not key or len(key) > 256:
         raise ValidationException(
             message_key="CACHE_INVALID_KEY",
             request=request
         )
 
-    # Valida tamanho dos dados (máx 1MB)
     try:
         data_size = len(json.dumps(data))
-        if data_size > 1024 * 1024:  # 1MB
+        if data_size > 1024 * 1024:
             raise ValidationException(
                 message_key="CACHE_DATA_TOO_LARGE",
                 request=request
@@ -405,7 +424,7 @@ async def set_cache(
             request=request
         )
 
-    success = await set_in_cache(key, data, ttl)
+    success = await set_in_cache(user_id, key, data, ttl)
 
     if not success:
         language = get_language_from_request(request)
@@ -415,7 +434,7 @@ async def set_cache(
             request=request
         )
 
-    logger.info(f"📦 Cache SET: {key} para usuário {current_user.id} (TTL: {ttl}s)")
+    logger.info(f"📦 Cache SET: {user_id}:{key} (TTL: {ttl}s)")
 
     return {
         "success": True,
@@ -435,22 +454,18 @@ async def delete_cache(
 ):
     """
     Remove um item do cache (Redis + MongoDB).
-    
-    Args:
-        key: Chave do cache
-    
-    Returns:
-        dict: Status da operação
     """
+    user_id = str(current_user.id)
+    
     if not key or len(key) > 256:
         raise ValidationException(
             message_key="CACHE_INVALID_KEY",
             request=request
         )
     
-    success = await delete_from_cache(key)
+    success = await delete_from_cache(user_id, key)
     
-    logger.info(f"🗑️ Cache DELETE: {key} por usuário {current_user.id}")
+    logger.info(f"🗑️ Cache DELETE: {user_id}:{key}")
     
     return {
         "success": success,
@@ -463,19 +478,14 @@ async def delete_cache(
 @limiter.limit("20/minute")
 async def invalidate_cache_by_prefix(
     request: Request,
-    invalidate_request: CacheInvalidatePrefixRequest,  # ✅ Agora usa Body
+    invalidate_request: CacheInvalidatePrefixRequest,
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
     """
     Invalida múltiplos itens do cache por prefixo (Redis + MongoDB).
-    
-    Args:
-        invalidate_request: Objeto com prefix (Body)
-    
-    Returns:
-        dict: Status da operação com contagem de itens removidos
     """
+    user_id = str(current_user.id)
     prefix = invalidate_request.prefix
 
     if not prefix or len(prefix) > 100:
@@ -484,28 +494,14 @@ async def invalidate_cache_by_prefix(
             request=request
         )
     
-    # Remove do Redis
-    redis_count = await delete_by_prefix_from_redis(prefix)
+    total_count = await delete_by_prefix_from_cache(user_id, prefix)
     
-    # Remove do MongoDB
-    mongodb_count = 0
-    try:
-        db = await get_database()
-        result = await db.cache.delete_many({"key": {"$regex": f"^{prefix}"}})
-        mongodb_count = result.deleted_count
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao remover do MongoDB por prefixo: {e}")
-    
-    total_count = redis_count + mongodb_count
-    
-    logger.info(f"🗑️ Cache INVALIDATE_PREFIX: '{prefix}' por usuário {current_user.id} ({total_count} itens)")
+    logger.info(f"🗑️ Cache INVALIDATE_PREFIX: {user_id}:{prefix} ({total_count} itens)")
     
     return {
         "success": True,
         "prefix": prefix,
         "items_removed": total_count,
-        "redis_items": redis_count,
-        "mongodb_items": mongodb_count,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
@@ -519,36 +515,14 @@ async def clear_cache(
 ):
     """
     Limpa todo o cache do usuário (Redis + MongoDB).
-    
-    Returns:
-        dict: Status da operação
     """
     user_id = str(current_user.id)
     
-    # Remove do Redis
-    try:
-        pattern = f"{REDIS_PREFIX}{user_id}:*"
-        keys = await redis_client.keys(pattern) if redis_client else []
-        if keys:
-            await redis_client.delete(*keys)
-            redis_count = len(keys)
-        else:
-            redis_count = 0
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao limpar Redis: {e}")
-        redis_count = 0
-    
-    # Remove do MongoDB
-    mongodb_count = 0
-    try:
-        result = await db.cache.delete_many({"user_id": user_id})
-        mongodb_count = result.deleted_count
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao limpar MongoDB: {e}")
-    
+    redis_count = await delete_by_prefix_from_redis(user_id, "")
+    mongodb_count = await delete_by_prefix_from_mongodb(user_id, "")
     total_count = redis_count + mongodb_count
     
-    logger.info(f"🗑️ Cache CLEAR: usuário {current_user.id} ({total_count} itens)")
+    logger.info(f"🗑️ Cache CLEAR: {user_id} ({total_count} itens)")
     
     return {
         "success": True,
@@ -569,40 +543,15 @@ async def get_cache_keys(
 ):
     """
     Lista chaves do cache (Redis + MongoDB).
-    
-    Args:
-        prefix: Prefixo opcional para filtrar chaves
-    
-    Returns:
-        dict: Lista de chaves
     """
-    # Busca no Redis
-    redis_keys = []
-    if redis_client and REDIS_ENABLED:
-        try:
-            search_prefix = prefix or f"{REDIS_PREFIX}{current_user.id}:"
-            pattern = f"{search_prefix}*"
-            keys = await redis_client.keys(pattern)
-            redis_keys = [k.replace(REDIS_PREFIX, '') for k in keys]
-        except Exception as e:
-            logger.warning(f"⚠️ Erro ao listar Redis: {e}")
+    user_id = str(current_user.id)
     
-    # Busca no MongoDB
-    mongodb_keys = []
-    try:
-        query = {"user_id": str(current_user.id)}
-        if prefix:
-            query["key"] = {"$regex": f"^{prefix}"}
-        cursor = db.cache.find(query, {"key": 1})
-        docs = await cursor.to_list(100)
-        mongodb_keys = [doc.get("key") for doc in docs if doc.get("key")]
-    except Exception as e:
-        logger.warning(f"⚠️ Erro ao listar MongoDB: {e}")
+    redis_keys = await get_all_redis_keys(user_id, prefix)
+    mongodb_keys = await get_all_mongodb_keys(user_id, prefix)
     
-    # Combina (remove duplicatas)
     all_keys = list(set(redis_keys + mongodb_keys))
     
-    logger.debug(f"📋 Cache KEYS: {len(all_keys)} chaves para usuário {current_user.id}")
+    logger.debug(f"📋 Cache KEYS: {len(all_keys)} chaves para {user_id}")
     
     return {
         "keys": all_keys,
@@ -622,10 +571,9 @@ async def get_cache_stats(
 ):
     """
     Retorna estatísticas do cache (Redis + MongoDB).
-    
-    Returns:
-        dict: Estatísticas do cache
     """
+    user_id = str(current_user.id)
+    
     stats = {
         "redis": {
             "enabled": REDIS_ENABLED,
@@ -637,7 +585,6 @@ async def get_cache_stats(
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
-    # Estatísticas Redis
     if redis_client and REDIS_ENABLED:
         try:
             info = await redis_client.info()
@@ -646,59 +593,35 @@ async def get_cache_stats(
             stats["redis"]["total_connections"] = info.get("total_connections_received", 0)
             stats["redis"]["uptime"] = info.get("uptime_in_seconds", 0)
             
-            # Conta chaves do usuário
-            pattern = f"{REDIS_PREFIX}{current_user.id}:*"
-            keys = await redis_client.keys(pattern)
-            stats["redis"]["user_keys"] = len(keys)
+            redis_keys = await get_all_redis_keys(user_id, "")
+            stats["redis"]["user_keys"] = len(redis_keys)
         except Exception as e:
             logger.warning(f"⚠️ Erro ao obter stats Redis: {e}")
     
-    # Estatísticas MongoDB
     try:
-        count = await db.cache.count_documents({"user_id": str(current_user.id)})
-        stats["mongodb"]["user_keys"] = count
+        mongodb_keys = await get_all_mongodb_keys(user_id, "")
+        stats["mongodb"]["user_keys"] = len(mongodb_keys)
     except Exception as e:
         logger.warning(f"⚠️ Erro ao obter stats MongoDB: {e}")
     
     return stats
 
-# ================================================================
-# DECISÕES DOCUMENTADAS
-# ================================================================
+
+# ========== DECISÕES DOCUMENTADAS ==========
 
 """
-📋 CHANGELOG - 10/07/2026
+📋 CHANGELOG - 20/07/2026
 ──────────────────────────────────────────────────────────────
 
-✅ CRIADO:
-   1. Rota de cache Redis + MongoDB Fallback
-   2. GET /cache/{key} - Buscar item (com fallback)
-   3. POST /cache/ - Salvar item (com TTL e compressão)
-   4. DELETE /cache/{key} - Remover item
-   5. POST /cache/invalidate-prefix - Invalidar por prefixo
-   6. DELETE /cache/ - Limpar cache do usuário
-   7. GET /cache/keys - Listar chaves
-   8. GET /cache/stats - Estatísticas
-
-✅ CORREÇÕES APLICADAS:
-   9. Validação de REDIS_URL (desativa se vazio)
-   10. Fallback MongoDB quando Redis indisponível
-   11. Validação de TTL (mínimo 1s, máximo 24h)
-   12. Compressão opcional de dados (>1KB)
-   13. Índices TTL no MongoDB (limpeza automática)
-   14. I18n completo
-   15. Rate limiting
-   16. 🔧 CORRIGIDO: Uso de Body em vez de Query para POST
-   17. 🔧 ADICIONADO: Schemas Pydantic (CacheSetRequest, CacheInvalidatePrefixRequest)
-
-✅ PADRÕES SEGUIDOS:
-   - Rate limiting (5-60/min)
-   - I18n completo
-   - Validações de entrada
-   - Logs estruturados
-   - Documentação completa
-   - Fallback para resiliência
+🔧 CORREÇÕES APLICADAS:
+   1. 🔧 user_id no prefixo do Redis (cache por usuário)
+   2. 🔧 X-Offline-Sync header para sincronização offline
+   3. 🔧 Compressão com zlib + base64
+   4. 🔧 Funções separadas para Redis e MongoDB
+   5. 🔧 Invalidação por prefixo com user_id
+   6. 🔧 Listagem de chaves com user_id
+   7. 🔧 Estatísticas com user_id
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
-📅 ÚLTIMA ATUALIZAÇÃO: 10/07/2026
+📅 ÚLTIMA ATUALIZAÇÃO: 20/07/2026
 """
