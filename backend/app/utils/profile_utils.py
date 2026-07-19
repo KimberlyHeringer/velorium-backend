@@ -142,18 +142,18 @@ async def get_cached_profile(user_id: str, db) -> Optional[Dict[str, Any]]:
         if data:
             # 🔧 NOVO: Registra hit nas métricas
             _profile_metrics.record_hit()
-            logger.debug(get_message("PROFILE_CACHE_HIT", "pt", user_id=user_id))
+            logger.debug(f"💾 Cache HIT para perfil do usuário {user_id}")
             return json.loads(data)
         
         # 🔧 NOVO: Registra miss nas métricas
         _profile_metrics.record_miss()
-        logger.debug(get_message("PROFILE_CACHE_MISS", "pt", user_id=user_id))
+        logger.debug(f"ℹ️ Cache MISS para perfil do usuário {user_id}")
         return None
         
     except Exception as e:
         # 🔧 NOVO: Registra miss nas métricas em caso de erro
         _profile_metrics.record_miss()
-        logger.warning(f"⚠️ Erro ao buscar perfil no Redis: {e}")
+        logger.warning(f"⚠️ Erro ao buscar perfil no Redis para usuário {user_id}: {e}")
         return None
 
 
@@ -178,9 +178,9 @@ async def set_cached_profile(user_id: str, profile: Dict[str, Any]) -> None:
             BALANCE_CACHE_TTL_SECONDS,
             json.dumps(profile, default=str)
         )
-        logger.debug(get_message("PROFILE_CACHE_SET", "pt", user_id=user_id))
+        logger.debug(f"💾 Perfil armazenado no cache para usuário {user_id}")
     except Exception as e:
-        logger.warning(f"⚠️ Erro ao armazenar perfil no Redis: {e}")
+        logger.warning(f"⚠️ Erro ao armazenar perfil no Redis para usuário {user_id}: {e}")
 
 
 async def invalidate_profile_cache(user_id: str) -> None:
@@ -199,9 +199,9 @@ async def invalidate_profile_cache(user_id: str) -> None:
     try:
         key = f"profile:{user_id}"
         await redis_client.delete(key)
-        logger.info(get_message("PROFILE_CACHE_INVALIDATED", "pt", user_id=user_id))
+        logger.info(f"🗑️ Cache de perfil invalidado para usuário {user_id}")
     except Exception as e:
-        logger.warning(f"⚠️ Erro ao invalidar cache de perfil: {e}")
+        logger.warning(f"⚠️ Erro ao invalidar cache de perfil para usuário {user_id}: {e}")
 
 
 # ============================================================
@@ -266,7 +266,9 @@ def create_empty_profile(user_id: str) -> Dict[str, Any]:
 
     now = datetime.now(timezone.utc)
 
+    # 🔧 CORRIGIDO: Adicionado campo 'id' e corrigido next_year_goals
     return {
+        "id": user_id,  # ← ADICIONADO (era o erro #1)
         "user_id": user_id,
         "created_at": now,
         "updated_at": now,
@@ -277,8 +279,8 @@ def create_empty_profile(user_id: str) -> Dict[str, Any]:
         "risk_tolerance": {},
         "dream_value": None,
         "dream_goal": None,
-        "next_year_goals": None,
-        "next_year_goal_value": None,
+        "next_year_goals": [],  # ← CORRIGIDO (era None → erro #2)
+        "next_year_goal_value": 0.0,  # ← CORRIGIDO (era None)
         "is_complete": False,
         "completion_percentage": 0.0
     }
@@ -307,35 +309,48 @@ def prepare_profile_response(
     Returns:
         UserProfileResponse: Perfil validado com Pydantic
     """
+    # 🔧 CORRIGIDO: Se não tem profile E não tem fallback, cria perfil vazio com fallback
     if not profile:
         if fallback_user_id:
-            logger.info(get_message("PROFILE_CACHE_MISS", "pt", user_id=fallback_user_id))
+            logger.info(f"ℹ️ Perfil não encontrado, criando vazio para usuário {fallback_user_id}")
             empty = create_empty_profile(fallback_user_id)
+            # 🔧 CORRIGIDO: Retorna UserProfileResponse validado
             return UserProfileResponse(**empty)
-        # Log de aviso em vez de retorno silencioso
-        logger.warning("⚠️ Profile é None e fallback_user_id não fornecido")
-        return UserProfileResponse(**{})
+        # 🔧 CORRIGIDO: Se não tem profile nem fallback, cria perfil vazio com id "unknown"
+        logger.warning("⚠️ Profile é None e fallback_user_id não fornecido - criando perfil vazio")
+        empty = create_empty_profile("unknown")
+        return UserProfileResponse(**empty)
 
+    # 🔧 CORRIGIDO: Converte ObjectId para string
     result = convert_objectid_to_str(profile)
 
-    # ID consistente
+    # 🔧 CORRIGIDO: Garante que 'id' existe
     if "_id" in profile:
         result["id"] = str(profile["_id"])
-    elif "user_id" in result:
+    elif "user_id" in result and result["user_id"]:
         result["id"] = result["user_id"]
     elif fallback_user_id:
         result["id"] = fallback_user_id
     else:
         result["id"] = "unknown"
-        logger.warning(f"⚠️ ID não encontrado no perfil: {profile}")
+        logger.warning(f"⚠️ ID não encontrado no perfil, usando 'unknown'")
 
-    # 🔧 NOVO: Validação com Pydantic
+    # 🔧 CORRIGIDO: Garante que next_year_goals seja uma lista
+    if result.get("next_year_goals") is None:
+        result["next_year_goals"] = []
+    
+    # 🔧 CORRIGIDO: Garante que next_year_goal_value seja um número
+    if result.get("next_year_goal_value") is None:
+        result["next_year_goal_value"] = 0.0
+
+    # 🔧 CORRIGIDO: Validação com Pydantic
     try:
         return UserProfileResponse(**result)
     except Exception as e:
         logger.error(f"❌ Erro ao validar perfil com Pydantic: {e}", exc_info=True)
-        # Fallback: retorna perfil vazio
-        empty = create_empty_profile(fallback_user_id or result.get("user_id", "unknown"))
+        # 🔧 CORRIGIDO: Fallback - cria perfil vazio em vez de retornar dict vazio
+        fallback_id = fallback_user_id or result.get("user_id", "unknown")
+        empty = create_empty_profile(fallback_id)
         return UserProfileResponse(**empty)
 
 
@@ -390,9 +405,7 @@ async def ensure_profile_collection(db) -> bool:
         return True
 
     except Exception as e:
-        # i18n no log de erro
-        error_msg = get_message("ERROR_PROFILE_COLLECTION", "pt", error=str(e))
-        logger.error(f"❌ {error_msg}", exc_info=True)
+        logger.error(f"❌ Erro ao garantir coleção '{collection_name}': {e}", exc_info=True)
         return False
 
 
@@ -415,6 +428,10 @@ async def ensure_profile_collection(db) -> bool:
 # ✅ 🔧 CORRIGIDO: Log de aviso quando profile é None
 # ✅ 🔧 CORRIGIDO: ID consistente (usa _id > user_id > fallback)
 # ✅ 🔧 CORRIGIDO: SEM TTL - dados mantidos para sempre
+# ✅ 🔧 CORRIGIDO: create_empty_profile com campo 'id'
+# ✅ 🔧 CORRIGIDO: next_year_goals como [] (não None)
+# ✅ 🔧 CORRIGIDO: next_year_goal_value como 0.0 (não None)
+# ✅ 🔧 CORRIGIDO: prepare_profile_response nunca retorna dict vazio
 # ✅ Documentação completa com exemplos
 #
 # ❌ Não implementado (Pós-MVP):
@@ -425,5 +442,7 @@ async def ensure_profile_collection(db) -> bool:
 #   - v2: Adicionado - Cache Redis, índices, i18n, validações (06/07/2026)
 #   - v3: Removido - TTL do índice updated_at (dados mantidos para sempre) (06/07/2026)
 #   - v4: Adicionado - Métricas de cache, validação Pydantic (06/07/2026)
+#   - v5: CORREÇÃO CRÍTICA - create_empty_profile com 'id', next_year_goals=[], next_year_goal_value=0.0 (18/07/2026)
+#   - v6: CORREÇÃO CRÍTICA - prepare_profile_response nunca retorna dict vazio (18/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
