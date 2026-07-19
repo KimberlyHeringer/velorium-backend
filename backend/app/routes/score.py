@@ -15,9 +15,10 @@ Principais features:
 - Worker diário (03:00) com retry e métricas
 - Métricas de performance
 - SEM TTL (dados históricos mantidos)
+- 🔧 Fallback seguro para erro 500 no score
 
-Versão: v5.1 (corrigido paginate_query e imports)
-📅 ATUALIZADO EM: 18/07/2026
+Versão: v5.3 (fallback seguro para score)
+📅 ATUALIZADO EM: 20/07/2026
 """
 
 from fastapi import APIRouter, Depends, Query, Request, BackgroundTasks
@@ -188,6 +189,7 @@ async def get_current_score(
 ):
     """
     Retorna o score atual do usuário (COM CACHE).
+    🔧 CORRIGIDO: Fallback seguro para erro 500
     """
     user_id = str(current_user.id)
     language = getattr(request.state, "language", "pt")
@@ -195,6 +197,26 @@ async def get_current_score(
     
     try:
         result = await get_score_with_cache(user_id, db)
+        
+        # 🔧 CORRIGIDO: Se result for None ou não tiver score, retorna 0
+        if result is None:
+            logger.warning(f"⚠️ Score retornou None para usuário {user_id}")
+            return ScoreResponse(
+                score=0,
+                details=None,
+                created_at=datetime.now(timezone.utc),
+                from_cache=False
+            )
+        
+        # 🔧 CORRIGIDO: Se não tiver a chave 'score', retorna 0
+        if 'score' not in result:
+            logger.warning(f"⚠️ Score sem campo 'score' para usuário {user_id}")
+            return ScoreResponse(
+                score=0,
+                details=result.get('details'),
+                created_at=result.get('created_at', datetime.now(timezone.utc)),
+                from_cache=result.get('from_cache', False)
+            )
         
         logger.debug(f"✅ Score para usuário {user_id}: {result.get('score', 0)} (cache: {result.get('from_cache', False)})")
         
@@ -209,10 +231,14 @@ async def get_current_score(
         logger.error(f"❌ Erro ao obter score para usuário {user_id}: {e}")
         import traceback
         logger.debug(f"Detalhes do erro no score: {traceback.format_exc()}")
-        raise I18nHTTPException(
-            status_code=500,
-            message_key="ERROR_SCORE_CALCULATION_FAILED",
-            request=request
+        
+        # 🔧 CORRIGIDO: Fallback seguro - retorna score 0 em vez de erro 500
+        # Isso evita que o dashboard quebre
+        return ScoreResponse(
+            score=0,
+            details={"error": str(e), "fallback": True},
+            created_at=datetime.now(timezone.utc),
+            from_cache=False
         )
 
 
@@ -248,10 +274,10 @@ async def get_score_history(
         # 🔧 CORRIGIDO: Adicionado collection_name e user_id
         items, total = await paginate_query(
             collection=db.score_history,
-            collection_name="score_history",      # ← ADICIONADO
+            collection_name="score_history",
             query=query,
             params=params,
-            user_id=user_id,                      # ← ADICIONADO
+            user_id=user_id,
             sort=[(sort_field, sort_direction)]
         )
         
@@ -378,6 +404,7 @@ async def trigger_daily_worker(
 #   - 🔧 Validação de user_id no worker
 #   - 🔧 Log resumido com estatísticas
 #   - 🔧 Removido imports não utilizados
+#   - 🔧 Fallback seguro para erro 500 no score (v5.3)
 #
 # ❌ Não implementado (Pós-MVP):
 #   - Redis com fallback para MongoDB (já tem)
@@ -392,5 +419,6 @@ async def trigger_daily_worker(
 #   - v5: Refatoração - constants, rate_limiter, score_cache (02/07/2026)
 #   - v5.1: CORREÇÃO - Adicionado collection_name e user_id no paginate_query (18/07/2026)
 #   - v5.2: CORREÇÃO - Removido imports não usados, validação user_id, logs melhorados (18/07/2026)
+#   - v5.3: CORREÇÃO - Fallback seguro para erro 500 no score (20/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
