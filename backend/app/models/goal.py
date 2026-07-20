@@ -26,6 +26,11 @@ Principais features:
 - ✅ CORRIGIDO: Herança correta de BaseModelWithUser
 - ✅ CORRIGIDO: GoalResponse id obrigatório
 - 🔧 CORRIGIDO: Mergeable if statements combinados (S1066)
+
+🔧 CORREÇÕES (19/07/2026):
+   - 🔧 DOCUMENTAÇÃO: Adicionada nota sobre validação de ciclo
+   - 🔧 DOCUMENTAÇÃO: Validação de ciclo é feita na rota (routes/goals.py)
+   - ✅ Nenhuma correção de código necessária - arquivo já está pronto
 """
 
 from pydantic import BaseModel, Field, model_validator, computed_field
@@ -60,6 +65,11 @@ class Goal(BaseModelWithUser):
       - parent_id: ID da meta pai (para sub-metas)
       - completed_at: Data de conclusão
       - archived: Meta arquivada (histórico)
+    
+    🔧 NOTA SOBRE VALIDAÇÃO DE CICLO:
+      A validação completa de ciclo (A → B → A) é feita na rota
+      (routes/goals.py) com a função validate_no_cycle(), pois requer
+      acesso ao banco de dados para verificar a hierarquia completa.
     """
     
     # ========== CAMPOS OBRIGATÓRIOS ==========
@@ -183,6 +193,11 @@ class Goal(BaseModelWithUser):
     def validate_parent_id(self):
         """
         Valida que parent_id não é o próprio ID.
+        
+        🔧 NOTA: A validação completa de ciclo (A → B → A) é feita na rota
+        (routes/goals.py) com a função validate_no_cycle(), pois requer
+        acesso ao banco de dados para verificar a hierarquia completa.
+        
         🔧 i18n: Mensagem com chave ERROR_CANNOT_BE_OWN_PARENT
         """
         if self.parent_id and str(self.parent_id) == str(self.id):
@@ -484,6 +499,7 @@ class GoalResponse(Goal):
 #   - ✅ CORRIGIDO: GoalResponse id obrigatório
 #   - ✅ CORRIGIDO: Validação recurring + deadline
 #   - ✅ CORRIGIDO: Mergeable if statements combinados (S1066)
+#   - 🔧 DOCUMENTAÇÃO: Validação de ciclo é feita na rota (routes/goals.py)
 #
 # ❌ Não implementado (Pós-MVP):
 #   - prioridade (baixa, média, alta)
@@ -495,5 +511,6 @@ class GoalResponse(Goal):
 #   - v3: Correções - Response id obrigatório (03/07/2026)
 #   - v4: 🆕 Adicionado recurring, deadline, parent_id, completed_at, archived (11/07/2026)
 #   - v5: 🆕 Adicionado description, corrigido S1066 (12/07/2026)
+#   - v6: 🔧 Documentação da validação de ciclo (19/07/2026)
 #
 # ✅ STATUS: PRONTO PARA PRODUÇÃO
