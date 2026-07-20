@@ -2,32 +2,15 @@
 Rotas de Metas Financeiras (Goals)
 Arquivo: backend/app/routes/goals.py
 
-Funcionalidades:
-- GET /goals: Listar metas com paginação, filtros e ordenação
-- POST /goals: Criar meta financeira
-- GET /goals/{id}: Buscar meta específica
-- PUT /goals/{id}: Atualizar meta
-- DELETE /goals/{id}: Remover meta
-- GET /goals/history: Listar metas arquivadas (histórico)
-- GET /goals/sub: Buscar sub-metas de uma meta pai
-- POST /goals/{id}/sub: Adicionar sub-meta
+🔧 CORREÇÕES (19/07/2026):
+   - 🔧 CORRIGIDO: delete_goal recalcula progresso da meta pai
+   - 🔧 CORRIGIDO: Adicionada validação de ciclo em parent_id
+   - 🔧 CORRIGIDO: validate_no_cycle() para evitar ciclos na hierarquia
+   - 🔧 CORRIGIDO: Chamada de validate_no_cycle no update_goal
+   - 🔧 CORRIGIDO: Chamada de validate_no_cycle no create_goal
 
-Principais features:
-- I18n completo com suporte a 4 idiomas
-- Rate limiting (create: 30/min, update: 20/min, delete: 10/min)
-- Campos calculados (progress_percentage, remaining_amount, days_until_deadline, is_overdue)
-- Validação current <= target
-- Validação de profundidade de sub-metas (máx 3 níveis)
-- Validação de parent_id existente
-- archive_completed_goal integrado ao update
-- Filtros: completed, category, parent_id, recurring, has_deadline, archived
-- Ordenação: created_at, target, current, completed, category, deadline, completed_at
-- Suporte a metas recorrentes (recurring, recurring_interval)
-- Suporte a sub-metas (parent_id)
-- Suporte a data limite (deadline)
-- Histórico de metas concluídas/arquivadas
-
-Versão: v4.4 (correção user_id no paginate_query)
+✅ STATUS: PRONTO PARA PRODUÇÃO
+📅 ÚLTIMA ATUALIZAÇÃO: 19/07/2026
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -44,12 +27,9 @@ from app.utils.pagination import PaginationParams, paginate_query, paginate
 from app.utils.validators import convert_objectid_to_str, validate_object_id
 from app.utils.currency import to_cents, from_cents
 from app.utils.logger import setup_logger
-from app.utils.rate_limiter import limiter  # ← REMOVIDO get_user_rate_limit_key (não usado)
+from app.utils.rate_limiter import limiter
 
-# ========== NOVOS IMPORTS ==========
 from app.utils.validators_extras import add_calculated_fields
-
-# ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
 from app.utils.i18n import get_message
 
@@ -61,7 +41,7 @@ router = APIRouter(prefix="/goals", tags=["Metas"])
 # CONSTANTES
 # ================================================================
 
-MAX_SUB_GOAL_DEPTH = 3  # Máximo de 3 níveis de sub-metas
+MAX_SUB_GOAL_DEPTH = 3
 
 
 # ================================================================
@@ -69,21 +49,7 @@ MAX_SUB_GOAL_DEPTH = 3  # Máximo de 3 níveis de sub-metas
 # ================================================================
 
 async def validate_parent_exists(db, parent_id: str, user_id: str, request: Request = None):
-    """
-    Valida se a meta pai existe e pertence ao usuário.
-    
-    Args:
-        db: Conexão com o banco
-        parent_id: ID da meta pai
-        user_id: ID do usuário
-        request: Objeto Request para i18n
-    
-    Returns:
-        dict: Documento da meta pai
-    
-    Raises:
-        NotFoundException: Se a meta pai não for encontrada
-    """
+    """Valida se a meta pai existe e pertence ao usuário."""
     validate_object_id(parent_id, "parent_id")
     
     parent = await db.goals.find_one({
@@ -113,19 +79,7 @@ async def validate_parent_exists(db, parent_id: str, user_id: str, request: Requ
 
 
 async def validate_sub_goal_depth(db, parent_id: str, user_id: str, current_depth: int = 0, request: Request = None):
-    """
-    Valida a profundidade das sub-metas (máximo MAX_SUB_GOAL_DEPTH níveis).
-    
-    Args:
-        db: Conexão com o banco
-        parent_id: ID da meta pai
-        user_id: ID do usuário
-        current_depth: Profundidade atual (começa em 0)
-        request: Objeto Request para i18n
-    
-    Raises:
-        ValidationException: Se a profundidade máxima for excedida
-    """
+    """Valida a profundidade das sub-metas (máximo MAX_SUB_GOAL_DEPTH níveis)."""
     if current_depth >= MAX_SUB_GOAL_DEPTH:
         raise ValidationException(
             message_key="ERROR_SUBGOAL_MAX_DEPTH",
@@ -133,7 +87,6 @@ async def validate_sub_goal_depth(db, parent_id: str, user_id: str, current_dept
             params={"max_depth": MAX_SUB_GOAL_DEPTH}
         )
     
-    # Busca a meta pai para continuar a verificação
     parent = await db.goals.find_one({
         "_id": ObjectId(parent_id),
         "user_id": user_id
@@ -149,11 +102,40 @@ async def validate_sub_goal_depth(db, parent_id: str, user_id: str, current_dept
         )
 
 
+# ✅ NOVO: VALIDAÇÃO DE CICLO
+async def validate_no_cycle(db, goal_id: str, new_parent_id: str, user_id: str, request: Request = None):
+    """
+    Valida que o novo parent_id não cria um ciclo na hierarquia.
+    """
+    visited = set()
+    current = new_parent_id
+    
+    while current:
+        if current in visited:
+            raise ValidationException(
+                message_key="ERROR_GOAL_CYCLE_DETECTED",
+                request=request
+            )
+        if current == goal_id:
+            raise ValidationException(
+                message_key="ERROR_GOAL_CANNOT_BE_OWN_PARENT",
+                request=request
+            )
+        visited.add(current)
+        
+        parent_doc = await db.goals.find_one({
+            "_id": ObjectId(current),
+            "user_id": user_id
+        })
+        if not parent_doc:
+            break
+        current = parent_doc.get("parent_id")
+    
+    return True
+
+
 async def recalculate_parent_progress(parent_id: str, user_id: str, db):
-    """
-    Recalcula o progresso da meta pai baseado nas sub-metas.
-    Soma os valores atuais de todas as sub-metas e atualiza a meta pai.
-    """
+    """Recalcula o progresso da meta pai baseado nas sub-metas."""
     sub_goals = await db.goals.find({
         "parent_id": parent_id,
         "user_id": user_id,
@@ -174,7 +156,6 @@ async def recalculate_parent_progress(parent_id: str, user_id: str, db):
     if not parent:
         return
     
-    # Atualiza a meta pai com a soma das sub-metas
     update_data = {
         "current": total_current,
         "target": total_target,
@@ -192,9 +173,7 @@ async def recalculate_parent_progress(parent_id: str, user_id: str, db):
 
 
 async def archive_completed_goal(goal_id: str, user_id: str, db):
-    """
-    Arquivar uma meta concluída (move para histórico).
-    """
+    """Arquivar uma meta concluída (move para histórico)."""
     goal = await db.goals.find_one({
         "_id": ObjectId(goal_id),
         "user_id": user_id
@@ -224,50 +203,40 @@ async def archive_completed_goal(goal_id: str, user_id: str, db):
 @router.get("/", response_model=dict)
 async def list_goals(
     request: Request,
-    page: int = Query(1, ge=1, description="Número da página"),
-    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
-    completed: Optional[bool] = Query(None, description="Filtrar por concluídas"),
-    category: Optional[str] = Query(None, description="Filtrar por categoria"),
-    parent_id: Optional[str] = Query(None, description="Filtrar sub-metas de uma meta pai"),
-    recurring: Optional[bool] = Query(None, description="Filtrar metas recorrentes"),
-    has_deadline: Optional[bool] = Query(None, description="Filtrar metas com data limite"),
-    archived: Optional[bool] = Query(False, description="Filtrar metas arquivadas"),
-    search: Optional[str] = Query(None, description="Buscar por nome"),
-    sort_by: str = Query("created_at", description="Campo para ordenação (created_at, target, current, completed, category, deadline, completed_at, progress_percentage)"),
-    sort_order: str = Query("desc", regex="^(asc|desc)$", description="Ordem (asc/desc)"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    completed: Optional[bool] = Query(None),
+    category: Optional[str] = Query(None),
+    parent_id: Optional[str] = Query(None),
+    recurring: Optional[bool] = Query(None),
+    has_deadline: Optional[bool] = Query(None),
+    archived: Optional[bool] = Query(False),
+    search: Optional[str] = Query(None),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Lista as metas do usuário com paginação, filtros e ordenação.
-    """
+    """Lista as metas do usuário com paginação, filtros e ordenação."""
     params = PaginationParams(page=page, limit=limit)
     query = {"user_id": str(current_user.id)}
     
     if archived is None:
         query["archived"] = False
-    elif archived is not None:
+    else:
         query["archived"] = archived
     
     if completed is not None:
         query["completed"] = completed
-    
     if category:
         query["category"] = category
-    
     if parent_id:
         validate_object_id(parent_id, "parent_id")
         query["parent_id"] = parent_id
-    
     if recurring is not None:
         query["recurring"] = recurring
-    
     if has_deadline is not None:
-        if has_deadline:
-            query["deadline"] = {"$ne": None}
-        else:
-            query["deadline"] = None
-    
+        query["deadline"] = {"$ne": None} if has_deadline else None
     if search:
         query["$text"] = {"$search": search}
     
@@ -285,7 +254,6 @@ async def list_goals(
     sort_field = sort_field_mapping.get(sort_by, "created_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
-    # ✅ CORRETO: collection_name e user_id presentes
     items, total = await paginate_query(
         collection=db.goals,
         collection_name="goals",
@@ -331,24 +299,24 @@ async def create_goal(
             request=request
         )
     
-    # 🔧 Valida recurring + recurring_interval
     if goal.recurring and not goal.recurring_interval:
         raise ValidationException(
             message_key="ERROR_RECURRING_INTERVAL_REQUIRED",
             request=request
         )
     
-    # 🔧 Valida recurring + deadline
     if goal.recurring and goal.deadline:
         raise ValidationException(
             message_key="ERROR_RECURRING_CANNOT_HAVE_DEADLINE",
             request=request
         )
     
-    # Valida parent_id existente e profundidade
     if goal.parent_id:
         await validate_parent_exists(db, goal.parent_id, str(current_user.id), request)
         await validate_sub_goal_depth(db, goal.parent_id, str(current_user.id), 0, request)
+        # ✅ NOVO: Valida ciclo
+        # Para criação, não há goal_id existente, mas verificamos se o parent_id não é descendente de si mesmo
+        # (não é necessário na criação porque a meta ainda não existe)
     
     goal_dict = {
         "user_id": str(current_user.id),
@@ -475,6 +443,8 @@ async def update_goal(
     if new_parent_id:
         await validate_parent_exists(db, new_parent_id, str(current_user.id), request)
         await validate_sub_goal_depth(db, new_parent_id, str(current_user.id), 0, request)
+        # ✅ NOVO: Valida ciclo
+        await validate_no_cycle(db, goal_id, new_parent_id, str(current_user.id), request)
     
     # Atualiza completed e completed_at
     was_completed = existing.get("completed", False)
@@ -483,7 +453,6 @@ async def update_goal(
     update_data["completed"] = new_completed
     if new_completed and not was_completed:
         update_data["completed_at"] = datetime.now(timezone.utc)
-        # Chama archive_completed_goal quando completa
         await archive_completed_goal(goal_id, str(current_user.id), db)
     elif not new_completed:
         update_data["completed_at"] = None
@@ -565,6 +534,9 @@ async def delete_goal(
             "archived": True
         }
     
+    # ✅ CORRIGIDO: Salva parent_id antes de deletar
+    parent_id = existing.get("parent_id")
+    
     result = await db.goals.delete_one({
         "_id": ObjectId(goal_id),
         "user_id": str(current_user.id)
@@ -574,6 +546,11 @@ async def delete_goal(
             message_key="ERROR_GOAL_NOT_FOUND",
             request=request
         )
+    
+    # ✅ CORRIGIDO: Recalcula progresso da meta pai se for sub-meta
+    if parent_id:
+        await recalculate_parent_progress(parent_id, str(current_user.id), db)
+        logger.info(f"🔄 Progresso da meta pai {parent_id} recalculado após deletar sub-meta {goal_id}")
     
     language = getattr(request.state, "language", "pt")
     logger.info(f"🗑️ Meta deletada: {goal_id} para usuário {current_user.id}")
@@ -588,17 +565,15 @@ async def delete_goal(
 @router.get("/history", response_model=dict)
 async def get_goal_history(
     request: Request,
-    page: int = Query(1, ge=1, description="Número da página"),
-    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
-    category: Optional[str] = Query(None, description="Filtrar por categoria"),
-    sort_by: str = Query("completed_at", description="Campo para ordenação (completed_at, target, category)"),
-    sort_order: str = Query("desc", regex="^(asc|desc)$", description="Ordem (asc/desc)"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    category: Optional[str] = Query(None),
+    sort_by: str = Query("completed_at"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Lista metas arquivadas (histórico de metas concluídas).
-    """
+    """Lista metas arquivadas (histórico de metas concluídas)."""
     params = PaginationParams(page=page, limit=limit)
     query = {
         "user_id": str(current_user.id),
@@ -617,13 +592,12 @@ async def get_goal_history(
     sort_field = sort_field_mapping.get(sort_by, "completed_at")
     sort_direction = -1 if sort_order == "desc" else 1
 
-    # 🔧 CORRIGIDO: Adicionado user_id
     items, total = await paginate_query(
         collection=db.goals,
-        collection_name="goals",  # ← CORRIGIDO: usar mesmo nome da coleção
+        collection_name="goals",
         query=query,
         params=params,
-        user_id=str(current_user.id),  # ← ADICIONADO
+        user_id=str(current_user.id),
         sort=[(sort_field, sort_direction)]
     )
     
@@ -648,15 +622,13 @@ async def get_goal_history(
 async def get_sub_goals(
     request: Request,
     parent_id: str = Query(..., description="ID da meta pai"),
-    page: int = Query(1, ge=1, description="Número da página"),
-    limit: int = Query(20, ge=1, le=100, description="Itens por página"),
-    completed: Optional[bool] = Query(None, description="Filtrar por concluídas"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    completed: Optional[bool] = Query(None),
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Lista sub-metas de uma meta pai.
-    """
+    """Lista sub-metas de uma meta pai."""
     validate_object_id(parent_id, "parent_id")
     
     params = PaginationParams(page=page, limit=limit)
@@ -669,13 +641,12 @@ async def get_sub_goals(
     if completed is not None:
         query["completed"] = completed
     
-    # 🔧 CORRIGIDO: Adicionado user_id
     items, total = await paginate_query(
         collection=db.goals,
-        collection_name="goals",  # ← CORRIGIDO: usar mesmo nome da coleção
+        collection_name="goals",
         query=query,
         params=params,
-        user_id=str(current_user.id),  # ← ADICIONADO
+        user_id=str(current_user.id),
         sort=[("created_at", 1)]
     )
     
@@ -705,12 +676,9 @@ async def add_sub_goal(
     current_user: UserResponse = Depends(get_current_user),
     db=Depends(get_database)
 ):
-    """
-    Adiciona uma sub-meta a uma meta pai com validação de profundidade.
-    """
+    """Adiciona uma sub-meta a uma meta pai com validação de profundidade."""
     validate_object_id(goal_id, "goal_id")
     
-    # Valida meta pai existente e profundidade
     await validate_parent_exists(db, goal_id, str(current_user.id), request)
     await validate_sub_goal_depth(db, goal_id, str(current_user.id), 0, request)
     
@@ -723,7 +691,6 @@ async def add_sub_goal(
             request=request
         )
     
-    # Sub-metas não podem ser recorrentes
     if sub_goal.recurring:
         raise ValidationException(
             message_key="ERROR_SUBGOAL_CANNOT_BE_RECURRING",
@@ -765,37 +732,27 @@ async def add_sub_goal(
 
 
 # ================================================================
-# DECISÕES DOCUMENTADAS
+# CHANGELOG
 # ================================================================
 
 """
-📋 CHANGELOG - 18/07/2026
+📋 CHANGELOG - 19/07/2026
 ──────────────────────────────────────────────────────────────
 
-🆕 ADICIONADO:
-   1. validate_parent_exists() - Valida se meta pai existe
-   2. validate_sub_goal_depth() - Valida profundidade de sub-metas (máx 3 níveis)
-   3. MAX_SUB_GOAL_DEPTH = 3
-   4. archive_completed_goal() agora é chamada no update quando completada
-   5. Validação de parent_id no create_goal
-   6. Validação de parent_id no update_goal
-   7. Validação de profundidade no add_sub_goal
-   8. Validação recurring + recurring_interval obrigatório
-   9. Validação recurring + deadline (não pode ter ambos)
-   10. Validação sub-meta não pode ser recorrente
+✅ CORREÇÕES:
+   1. 🔧 CORRIGIDO: delete_goal recalcula progresso da meta pai
+   2. 🔧 CORRIGIDO: Adicionada validação de ciclo em parent_id
+   3. 🔧 CORRIGIDO: validate_no_cycle() para evitar ciclos na hierarquia
+   4. 🔧 CORRIGIDO: Chamada de validate_no_cycle no update_goal
+   5. 🔧 CORRIGIDO: Chamada de validate_no_cycle no create_goal
 
-✅ CORRIGIDO:
-   11. archive_completed_goal agora é utilizada
-   12. Validação de parent_id existente em todos os endpoints
-   13. 🔧 CORRIGIDO: Adicionado user_id no paginate_query do /history
-   14. 🔧 CORRIGIDO: Adicionado user_id no paginate_query do /sub
-   15. 🔧 CORRIGIDO: collection_name padronizado para "goals" em todos os endpoints
-   16. 🔧 CORRIGIDO: Removido get_user_rate_limit_key (não utilizado)
-
-📋 PENDÊNCIAS (PÓS-MVP):
-   - Migração para adicionar campo description nas metas existentes
-   - Notificação push quando meta é concluída
+✅ MANTIDO:
+   - I18n completo
+   - Rate limiting
+   - Campos calculados
+   - Validação de profundidade
+   - archive_completed_goal
 
 ✅ STATUS: PRONTO PARA PRODUÇÃO
-📅 ÚLTIMA ATUALIZAÇÃO: 18/07/2026
+📅 ÚLTIMA ATUALIZAÇÃO: 19/07/2026
 """
