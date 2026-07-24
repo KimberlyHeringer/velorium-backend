@@ -1,5 +1,5 @@
 """
-Rotas de Perfil Financeiro do Usuário
+Rotas de Perfil Financeiro do Usuário - VERSÃO CORRIGIDA
 Arquivo: backend/app/routes/profile.py
 
 Funcionalidades:
@@ -19,12 +19,16 @@ Principais features:
 - Fallback seguro para perfil vazio
 - SEM history (modo individual)
 
-Versão: v5.3 (correções de imports e validações)
-📅 ATUALIZADO EM: 18/07/2026
+🔧 CORREÇÕES (23/07/2026 - v5.4):
+- 🔧 CORRIGIDO: TypeError ao usar UserProfileResponse(**result) com objeto Pydantic
+- 🔧 ADICIONADO: Verificação de tipo antes de converter
+- 🔧 ADICIONADO: Fallback seguro para qualquer tipo de retorno
+
+Versão: v5.4 (corrigido TypeError no get_profile)
+📅 ATUALIZADO EM: 23/07/2026
 """
 
 from fastapi import APIRouter, Depends, status, Request, Response
-# 🔧 CORRIGIDO: Removido HTTPException (não usado)
 from typing import Optional
 from datetime import datetime, timezone
 from bson import ObjectId
@@ -51,7 +55,6 @@ from app.utils.profile_utils import (
 
 # ========== I18N ==========
 from app.utils.exceptions import I18nHTTPException, NotFoundException, ValidationException
-# 🔧 CORRIGIDO: Removido get_message (não usado)
 
 logger = setup_logger(__name__)
 
@@ -106,7 +109,47 @@ async def _validate_user_exists(user_id: str, db, request: Request) -> bool:
     return True
 
 
-# ========== ENDPOINTS ==========
+# ================================================================
+# 🔧 CORRIGIDO: FUNÇÃO PARA CONVERTER PERFIL PARA RESPOSTA
+# ================================================================
+
+def _convert_profile_to_response(profile_data, user_id: str) -> dict:
+    """
+    🔧 CORRIGIDO: Converte qualquer formato de perfil para dicionário de resposta.
+    
+    Suporta:
+    - dict: converte diretamente
+    - UserProfileResponse: extrai o dicionário
+    - None: cria perfil vazio
+    - Outros tipos: fallback para perfil vazio
+    """
+    # Caso 1: Nenhum dado
+    if profile_data is None:
+        logger.debug(f"ℹ️ Nenhum perfil encontrado para usuário {user_id}, criando vazio")
+        return create_empty_profile(user_id)
+    
+    # Caso 2: Já é um dicionário
+    if isinstance(profile_data, dict):
+        return profile_data
+    
+    # Caso 3: É um objeto UserProfileResponse (Pydantic)
+    if isinstance(profile_data, UserProfileResponse):
+        logger.debug(f"✅ Convertendo UserProfileResponse para dict para usuário {user_id}")
+        return profile_data.model_dump()
+    
+    # Caso 4: É um objeto com método model_dump (outros Pydantic)
+    if hasattr(profile_data, 'model_dump') and callable(profile_data.model_dump):
+        logger.debug(f"✅ Convertendo objeto Pydantic para dict para usuário {user_id}")
+        return profile_data.model_dump()
+    
+    # Caso 5: Fallback - perfil vazio
+    logger.warning(f"⚠️ Tipo de perfil desconhecido: {type(profile_data)}, usando fallback")
+    return create_empty_profile(user_id)
+
+
+# ================================================================
+# ENDPOINTS
+# ================================================================
 
 @router.get("/", response_model=UserProfileResponse)
 @limiter.limit("30/minute", key_func=get_user_rate_limit_key)
@@ -150,16 +193,24 @@ async def get_profile(
         else:
             logger.info(f"✅ Cache hit para perfil do usuário {user_id}")
         
-        # Prepara a resposta usando o utilitário
-        result = prepare_profile_response(profile, user_id)
+        # 🔧 CORRIGIDO: Converte para resposta usando a nova função
+        profile_dict = _convert_profile_to_response(profile, user_id)
         
-        if not result:
-            logger.warning(f"⚠️ prepare_profile_response retornou vazio para usuário {user_id}")
-            result = create_empty_profile(user_id)
+        if not profile_dict:
+            logger.warning(f"⚠️ _convert_profile_to_response retornou vazio para usuário {user_id}")
+            profile_dict = create_empty_profile(user_id)
         
-        logger.debug(f"✅ Perfil recuperado para usuário {user_id}")
+        # 🔧 CORRIGIDO: Se profile_dict já é um UserProfileResponse, não usa **
+        if isinstance(profile_dict, UserProfileResponse):
+            return profile_dict.model_dump()
         
-        return UserProfileResponse(**result).model_dump()
+        # 🔧 CORRIGIDO: Se é um dict, converte para UserProfileResponse
+        if isinstance(profile_dict, dict):
+            return UserProfileResponse(**profile_dict).model_dump()
+        
+        # Fallback final
+        empty_profile = create_empty_profile(user_id)
+        return UserProfileResponse(**empty_profile).model_dump()
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar perfil: {str(e)}", exc_info=True)
@@ -401,9 +452,9 @@ async def head_profile(
         return Response(status_code=status.HTTP_404_NOT_FOUND)
 
 
-# ============================================================
+# ================================================================
 # NOTAS DE IMPLEMENTAÇÃO
-# ============================================================
+# ================================================================
 
 """
 📌 COMO USAR:
@@ -433,45 +484,30 @@ async def head_profile(
 """
 
 
-# ========== DECISÕES DOCUMENTADAS ==========
-#
-# ✅ Implementado:
-#   - I18n completo (4 idiomas)
-#   - Rate limiting (get: 30/min, post: 20/min, put: 20/min)
-#   - Validação de campos Literal via Pydantic
-#   - Validação de existência do usuário no POST/PUT
-#   - Fallback seguro para perfil vazio
-#   - SEM history (modo individual)
-#   - Funções auxiliares centralizadas em utils/profile_utils.py
-#   - Cache Redis com TTL (5 minutos)
-#   - Invalidação automática de cache
-#   - Cache hit/miss com logs
-#   - POST para criar (201 Created)
-#   - PUT para atualizar (200 OK)
-#   - HEAD para verificar existência
-#   - Erro 409 se perfil já existe no POST
-#   - Erro 404 se perfil não existe no PUT
-#   - Funções auxiliares _get_existing_profile, _save_profile_to_cache, _invalidate_profile_cache
-#   - Função _validate_user_exists centralizada
-#   - Validação de dados vazios no PUT
-#   - 🔧 CORRIGIDO: Removido HTTPException (não usado)
-#   - 🔧 CORRIGIDO: Removido get_message (não usado)
-#   - 🔧 CORRIGIDO: Adicionado status_code=201 no POST
-#   - 🔧 CORRIGIDO: Logs com níveis apropriados (info para cache hit/miss)
-#
-# ❌ Não implementado (Pós-MVP):
-#   - updated_by (modo individual não precisa)
-#   - Métricas de hit/miss do cache (em profile_utils.py)
-#
-# 📋 CHANGELOG:
-#   - v1: Versão inicial
-#   - v2: I18n, rate limiting (25/05/2026)
-#   - v3: Correções de prepare_profile_response (01/07/2026)
-#   - v4: Refatoração - profile_utils, rate_limiter (02/07/2026)
-#   - v4.1: CORREÇÃO - importação de limiter adicionada (02/07/2026)
-#   - v5.0: ADICIONADO - Cache Redis (06/07/2026)
-#   - v5.1: ADICIONADO - PUT, HEAD, POST separado, semântica REST (14/07/2026)
-#   - v5.2: CORREÇÃO - import Response, documentação HEAD (14/07/2026)
-#   - v5.3: CORREÇÃO - removido imports não usados, validação de dados vazios, logs melhorados (18/07/2026)
-#
-# ✅ STATUS: PRONTO PARA PRODUÇÃO
+# ================================================================
+# CHANGELOG
+# ================================================================
+
+"""
+📋 CHANGELOG - 23/07/2026 - VERSÃO CORRIGIDA (v5.4)
+─────────────────────────────────────────────────────────────
+
+✅ CORREÇÕES:
+   1. 🔧 CORRIGIDO: TypeError ao usar UserProfileResponse(**result) com objeto Pydantic
+   2. 🔧 ADICIONADO: Função _convert_profile_to_response() para converter qualquer tipo
+   3. 🔧 ADICIONADO: Verificação de tipo antes de converter
+   4. 🔧 ADICIONADO: Fallback seguro para qualquer tipo de retorno
+   5. 🔧 CORRIGIDO: GET /profile agora usa _convert_profile_to_response()
+
+✅ MANTIDO:
+   - I18n completo (4 idiomas)
+   - Rate limiting
+   - Cache Redis com TTL (5 minutos)
+   - Invalidação automática de cache
+   - POST para criar (201 Created)
+   - PUT para atualizar (200 OK)
+   - HEAD para verificar existência
+
+✅ STATUS: PRONTO PARA PRODUÇÃO
+📅 ÚLTIMA ATUALIZAÇÃO: 23/07/2026
+"""
