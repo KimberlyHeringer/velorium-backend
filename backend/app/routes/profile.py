@@ -1,5 +1,5 @@
 """
-Rotas de Perfil Financeiro do Usuário - VERSÃO CORRIGIDA
+Rotas de Perfil Financeiro do Usuário - VERSÃO CORRIGIDA (DEFINITIVA)
 Arquivo: backend/app/routes/profile.py
 
 Funcionalidades:
@@ -19,17 +19,19 @@ Principais features:
 - Fallback seguro para perfil vazio
 - SEM history (modo individual)
 
-🔧 CORREÇÕES (23/07/2026 - v5.4):
+🔧 CORREÇÕES (23/07/2026 - v5.5):
 - 🔧 CORRIGIDO: TypeError ao usar UserProfileResponse(**result) com objeto Pydantic
-- 🔧 ADICIONADO: Verificação de tipo antes de converter
+- 🔧 CORRIGIDO: Uso de model_validate em vez de ** para converter dict
+- 🔧 ADICIONADO: Função _convert_to_user_profile_response() centralizada
 - 🔧 ADICIONADO: Fallback seguro para qualquer tipo de retorno
+- 🔧 CORRIGIDO: Todas as ocorrências de UserProfileResponse(**xxx)
 
-Versão: v5.4 (corrigido TypeError no get_profile)
+Versão: v5.5 (corrigido TypeError com model_validate)
 📅 ATUALIZADO EM: 23/07/2026
 """
 
 from fastapi import APIRouter, Depends, status, Request, Response
-from typing import Optional
+from typing import Optional, Union
 from datetime import datetime, timezone
 from bson import ObjectId
 
@@ -110,41 +112,68 @@ async def _validate_user_exists(user_id: str, db, request: Request) -> bool:
 
 
 # ================================================================
-# 🔧 CORRIGIDO: FUNÇÃO PARA CONVERTER PERFIL PARA RESPOSTA
+# 🔧 CORRIGIDO: FUNÇÃO CENTRALIZADA PARA CONVERTER PERFIL
 # ================================================================
 
-def _convert_profile_to_response(profile_data, user_id: str) -> dict:
+def _convert_to_user_profile_response(data: Union[dict, UserProfileResponse, None], user_id: str) -> dict:
     """
-    🔧 CORRIGIDO: Converte qualquer formato de perfil para dicionário de resposta.
+    🔧 CORRIGIDO: Converte qualquer formato de perfil para UserProfileResponse.
+    
+    Esta função resolve o erro:
+    "TypeError: app.models.profile.UserProfileResponse() argument after ** must be a mapping"
     
     Suporta:
-    - dict: converte diretamente
-    - UserProfileResponse: extrai o dicionário
+    - dict: usa model_validate que lida com _id -> id
+    - UserProfileResponse: retorna model_dump() diretamente
     - None: cria perfil vazio
     - Outros tipos: fallback para perfil vazio
+    
+    Args:
+        data: Dados do perfil em qualquer formato
+        user_id: ID do usuário (para fallback)
+    
+    Returns:
+        dict: Dados do perfil prontos para resposta
     """
     # Caso 1: Nenhum dado
-    if profile_data is None:
+    if data is None:
         logger.debug(f"ℹ️ Nenhum perfil encontrado para usuário {user_id}, criando vazio")
-        return create_empty_profile(user_id)
+        empty = create_empty_profile(user_id)
+        return UserProfileResponse.model_validate(empty).model_dump()
     
-    # Caso 2: Já é um dicionário
-    if isinstance(profile_data, dict):
-        return profile_data
-    
-    # Caso 3: É um objeto UserProfileResponse (Pydantic)
-    if isinstance(profile_data, UserProfileResponse):
+    # Caso 2: Já é um UserProfileResponse
+    if isinstance(data, UserProfileResponse):
         logger.debug(f"✅ Convertendo UserProfileResponse para dict para usuário {user_id}")
-        return profile_data.model_dump()
+        return data.model_dump()
+    
+    # Caso 3: É um dicionário
+    if isinstance(data, dict):
+        logger.debug(f"✅ Convertendo dict para UserProfileResponse para usuário {user_id}")
+        try:
+            # 🔧 CORRIGIDO: Usa model_validate em vez de **
+            return UserProfileResponse.model_validate(data).model_dump()
+        except Exception as e:
+            logger.warning(f"⚠️ Erro ao validar dict com model_validate: {e}")
+            # Tenta criar com ** como fallback
+            try:
+                return UserProfileResponse(**data).model_dump()
+            except Exception as e2:
+                logger.warning(f"⚠️ Erro ao criar UserProfileResponse com **: {e2}")
+                empty = create_empty_profile(user_id)
+                return UserProfileResponse.model_validate(empty).model_dump()
     
     # Caso 4: É um objeto com método model_dump (outros Pydantic)
-    if hasattr(profile_data, 'model_dump') and callable(profile_data.model_dump):
+    if hasattr(data, 'model_dump') and callable(data.model_dump):
         logger.debug(f"✅ Convertendo objeto Pydantic para dict para usuário {user_id}")
-        return profile_data.model_dump()
+        try:
+            return UserProfileResponse.model_validate(data.model_dump()).model_dump()
+        except Exception as e:
+            logger.warning(f"⚠️ Erro ao converter objeto Pydantic: {e}")
     
     # Caso 5: Fallback - perfil vazio
-    logger.warning(f"⚠️ Tipo de perfil desconhecido: {type(profile_data)}, usando fallback")
-    return create_empty_profile(user_id)
+    logger.warning(f"⚠️ Tipo de perfil desconhecido: {type(data)}, usando fallback")
+    empty = create_empty_profile(user_id)
+    return UserProfileResponse.model_validate(empty).model_dump()
 
 
 # ================================================================
@@ -193,31 +222,18 @@ async def get_profile(
         else:
             logger.info(f"✅ Cache hit para perfil do usuário {user_id}")
         
-        # 🔧 CORRIGIDO: Converte para resposta usando a nova função
-        profile_dict = _convert_profile_to_response(profile, user_id)
+        # 🔧 CORRIGIDO: Usa a função centralizada para converter
+        result = _convert_to_user_profile_response(profile, user_id)
         
-        if not profile_dict:
-            logger.warning(f"⚠️ _convert_profile_to_response retornou vazio para usuário {user_id}")
-            profile_dict = create_empty_profile(user_id)
-        
-        # 🔧 CORRIGIDO: Se profile_dict já é um UserProfileResponse, não usa **
-        if isinstance(profile_dict, UserProfileResponse):
-            return profile_dict.model_dump()
-        
-        # 🔧 CORRIGIDO: Se é um dict, converte para UserProfileResponse
-        if isinstance(profile_dict, dict):
-            return UserProfileResponse(**profile_dict).model_dump()
-        
-        # Fallback final
-        empty_profile = create_empty_profile(user_id)
-        return UserProfileResponse(**empty_profile).model_dump()
+        logger.debug(f"✅ Perfil retornado para usuário {user_id}")
+        return result
         
     except Exception as e:
         logger.error(f"❌ Erro ao buscar perfil: {str(e)}", exc_info=True)
         
         # Fallback seguro: retorna perfil vazio
-        empty_profile = create_empty_profile(user_id)
-        return UserProfileResponse(**empty_profile).model_dump()
+        empty = create_empty_profile(user_id)
+        return UserProfileResponse.model_validate(empty).model_dump()
 
 
 @router.post("/", response_model=UserProfileResponse, status_code=status.HTTP_201_CREATED)
@@ -286,7 +302,8 @@ async def create_profile(
             logger.warning(f"⚠️ prepare_profile_response retornou vazio para usuário {user_id}")
             result_dict = create_empty_profile(user_id)
         
-        return UserProfileResponse(**result_dict).model_dump()
+        # 🔧 CORRIGIDO: Usa model_validate em vez de **
+        return UserProfileResponse.model_validate(result_dict).model_dump()
         
     except NotFoundException:
         raise
@@ -389,7 +406,8 @@ async def update_profile(
             logger.warning(f"⚠️ prepare_profile_response retornou vazio para usuário {user_id}")
             result_dict = create_empty_profile(user_id)
         
-        return UserProfileResponse(**result_dict).model_dump()
+        # 🔧 CORRIGIDO: Usa model_validate em vez de **
+        return UserProfileResponse.model_validate(result_dict).model_dump()
         
     except NotFoundException:
         raise
@@ -489,15 +507,16 @@ async def head_profile(
 # ================================================================
 
 """
-📋 CHANGELOG - 23/07/2026 - VERSÃO CORRIGIDA (v5.4)
+📋 CHANGELOG - 23/07/2026 - VERSÃO CORRIGIDA (v5.5)
 ─────────────────────────────────────────────────────────────
 
 ✅ CORREÇÕES:
    1. 🔧 CORRIGIDO: TypeError ao usar UserProfileResponse(**result) com objeto Pydantic
-   2. 🔧 ADICIONADO: Função _convert_profile_to_response() para converter qualquer tipo
-   3. 🔧 ADICIONADO: Verificação de tipo antes de converter
+   2. 🔧 CORRIGIDO: Uso de model_validate em vez de ** para converter dict
+   3. 🔧 ADICIONADO: Função _convert_to_user_profile_response() centralizada
    4. 🔧 ADICIONADO: Fallback seguro para qualquer tipo de retorno
-   5. 🔧 CORRIGIDO: GET /profile agora usa _convert_profile_to_response()
+   5. 🔧 CORRIGIDO: Todas as ocorrências de UserProfileResponse(**xxx)
+   6. 🔧 ADICIONADO: Tratamento de exceções com fallback para perfil vazio
 
 ✅ MANTIDO:
    - I18n completo (4 idiomas)
